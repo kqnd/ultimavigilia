@@ -123,3 +123,10 @@ Resultados: preencher aqui (data, versões do Windows, ping médio da Radmin, ob
   (os números estão centralizados em `src/shared/config/` e explicados em `BALANCEAMENTO.md`).
 - v0.2: o executável distribuído continua sendo o da v0.1 (pedido explícito de não gerar/publicar
   pacote). Clientes v0.1 e v0.2 não se conectam entre si (protocolo 2).
+
+## v1.3
+- `npm test` (inclui `tests/v13.test.ts` e o teste de rede `v1.3 em rede`).
+- `node --import tsx tools/sim.ts <classe> 20 <semente> --immortal [--src] [--tele]` — bot headless; mede cura, dano, tempo com vida baixa.
+- `node --import tsx tools/specials.ts 20 1` — frequência dos três especiais até as ondas 10/20/30.
+- `xvfb-run node tools/e2e.mjs v13 <pasta>` — capturas de seleção, F1, Q carregado, casca, Safra, Ferida (bloqueio e redução), atordoamento, telegraph da Ferida, fogueira/altar críticos e cartas.
+- `xvfb-run node tools/e2e.mjs showcase <pasta> lapanha` — habilidades do Lapanha.

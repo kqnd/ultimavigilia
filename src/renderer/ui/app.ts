@@ -7,7 +7,7 @@ import { DEFAULT_KEYS, type HostStartResult, type Keybinds, type NetInterfaceInf
 import { CHAPTERS, type Climate, ROUTE, TRAVEL_SECONDS } from '../../shared/config/chapters.js';
 import { CLASS_IDS, CLASSES, type ClassId } from '../../shared/config/classes.js';
 import { ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
-import { FORKS, UPGRADE_BY_ID } from '../../shared/config/upgrades.js';
+import { CAP_TEXT, FORKS, KIND_INFO, RARITY_INFO, UPGRADE_BY_ID, UPGRADE_CAPS, type UpgradeDef } from '../../shared/config/upgrades.js';
 import { TOTAL_WAVES, WAVES } from '../../shared/config/waves.js';
 import { DEFAULT_PORT, GAME_VERSION, MAX_PLAYERS, VIEW_H, VIEW_W } from '../../shared/constants.js';
 import type { GameEvent, LobbyPlayer, WaveInfo } from '../../shared/protocol.js';
@@ -22,10 +22,31 @@ import { classSprite, h, iconEl, stars } from './dom.js';
 
 type Screen = 'menu' | 'host' | 'join' | 'connecting' | 'lobby' | 'match' | 'results';
 
+/** Dica de mecânica exibida na apresentação de cada chefe/minichefe. */
+const BOSS_TIPS: Partial<Record<string, string>> = {
+  moonDevourer: 'Quebre as Luas Falsas para expô-lo.',
+  frostBride: 'Fuja dos espinhos de gelo e da nova; os estilhaços vêm em leque.',
+  patriarch: 'Derrube os três Totens do Abismo para romper a proteção.',
+  alphaWolf: 'Esquive do bote: o Alfa salta sobre quem mantém distância.',
+  highAcolyte: 'Interrompa as runas; os orbes vêm em leque.',
+  elderFather: 'O chinelo vai e volta: saia da trajetória duas vezes.',
+};
+
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
 const DIAG =
   'Dicas:\n· Confira IP e porta com o anfitrião (ele vê o endereço no lobby).\n· Na Radmin VPN, os dois precisam estar na mesma rede e aparecer como online.\n· No PC do anfitrião, permita o Última Vigília no Firewall do Windows. A Radmin VPN costuma ser classificada como rede Pública: marque também essa opção, ou libere só a porta TCP escolhida. Não é preciso desativar o firewall.';
+
+/** Comparação simples na carta: valor atual → valor com mais um acúmulo. */
+function compareLine(u: UpgradeDef, have: number): string {
+  const sh = u.show;
+  if (!sh) return '';
+  const fmt = (n: number): string => {
+    const v = sh.pct ? Math.round(n * 1000) / 10 : Math.round(n * 100) / 100;
+    return `${sh.sign}${v}${sh.pct ? '%' : sh.unit}`;
+  };
+  return `${sh.label}: ${have > 0 ? fmt(u.value * have) : '0'} → ${fmt(u.value * (have + 1))}`;
+}
 
 export class App {
   private root: HTMLElement;
@@ -220,8 +241,8 @@ export class App {
         const p = this.toLogical(e.clientX, e.clientY);
         this.input.mouseX = Math.max(0, Math.min(640, p.x));
         this.input.mouseY = Math.max(0, Math.min(360, p.y));
-        const cam = this.game.cameras.main;
-        this.game.setMoveTarget(Math.round(cam.scrollX + this.input.mouseX), Math.round(cam.scrollY + this.input.mouseY));
+        const wp = this.game.screenToWorld(this.input.mouseX, this.input.mouseY);
+        this.game.setMoveTarget(Math.round(wp.x), Math.round(wp.y));
         e.preventDefault();
       }
       if (this.screen === 'match' && e.button === 0 && e.target instanceof HTMLCanvasElement) {
@@ -277,6 +298,12 @@ export class App {
       else if (this.screen === 'host' || this.screen === 'join') this.go('menu');
       return;
     }
+    if (code === 'F9' && down && !e.repeat) {
+      // depuração da mira: cursor no mundo, linha da mira, direção enviada e trajetória
+      this.game.aimDebug = !this.game.aimDebug;
+      this.toast(this.game.aimDebug ? 'Depuração da mira ligada (F9)' : 'Depuração da mira desligada');
+      return;
+    }
     if (code === 'F1') {
       if (!down) this.hideSkills();
       else if (!e.repeat && this.screen === 'match' && !this.pauseOpen && !this.settingsOpen && !this.introId) this.showSkills();
@@ -288,8 +315,8 @@ export class App {
       if (!down) this.hideTab();
     }
     if (code === k.ping && down && !e.repeat) {
-      const cam = this.game.cameras.main;
-      this.session.send({ t: 'ping', x: Math.round(cam.scrollX + this.input.mouseX), y: Math.round(cam.scrollY + this.input.mouseY) });
+      const wp = this.game.screenToWorld(this.input.mouseX, this.input.mouseY);
+      this.session.send({ t: 'ping', x: Math.round(wp.x), y: Math.round(wp.y) });
     }
     if (code === k.dodge && down) {
       const me = this.session.latest()?.p.find((p) => p.id === this.session.myId);
@@ -711,6 +738,7 @@ export class App {
   /** Carta destacada (ainda não confirmada) e envio pendente de confirmação. */
   private upSel: string | null = null;
   private upSent: string | null = null;
+  private rareSoundFor = '';
   private upKey = '';
   private upTimer = 0;
 
@@ -735,7 +763,7 @@ export class App {
     };
     const panel = h('div', { class: 'panel gold upgrades fade-in', style: `left:${off.options.length > 3 ? 70 : 110}px;top:62px;width:${off.options.length > 3 ? 500 : 420}px` });
     panel.append(h('h2', { text: locked ? 'Melhoria confirmada — aguardando a equipe' : 'Escolha uma melhoria e confirme' }));
-    if (off.bonus) panel.append(h('div', { class: 'ok', style: 'margin:-3px 0 4px', text: off.bonus }));
+    if (off.bonus) panel.append(h('div', { class: 'ok', style: 'margin:-3px 0 4px', text: `Carta extra nesta escolha: ${off.bonus}` }));
     const row = h('div', { class: 'row', style: 'align-items:stretch' });
     const confirm = h('button', { class: 'btn primary', style: 'margin-top:6px', disabled: locked || !this.upSel || !!this.upSent }, locked ? '✓ Escolha confirmada' : this.upSent ? 'Enviando…' : this.upSel ? `Confirmar escolha: ${UPGRADE_BY_ID.get(this.upSel)?.name ?? ''}` : 'Confirmar escolha');
     for (const id of off.options) {
@@ -749,10 +777,13 @@ export class App {
       const rivals = u.fork ? [...UPGRADE_BY_ID.values()].filter((o) => o.fork === u.fork && o.id !== id).map((o) => o.name) : [];
       const card = h(
         'div',
-        { class: `upcard${chosen ? ' sel' : dim ? ' dim' : ''}`, style: blocked ? 'cursor:not-allowed' : '' },
+        { class: `upcard rar-${u.rarity}${chosen ? ' sel' : dim ? ' dim' : ''}`, style: blocked ? 'cursor:not-allowed' : '' },
+        h('div', { class: `rarity-tag rar-${u.rarity}`, text: `${RARITY_INFO[u.rarity].name} · ${KIND_INFO[u.kind]}` }),
         h('div', { class: 'row' }, h('div', { style: 'flex:0 0 34px' }, iconEl(u.icon, 2)), h('div', {}, h('div', { class: 'amber', text: u.name }), h('div', { class: 'hint', text: u.cls ? CLASSES[u.cls].name : 'Geral' }))),
         u.fork ? h('div', { class: blocked ? 'red' : 'mag', style: 'margin-top:3px', text: blocked ? `Incompatível: você seguiu ${blocked}` : `${forkName} — exclui ${rivals.join(', ')}` }) : null,
         h('div', { style: 'margin-top:4px;min-height:36px', text: u.desc.replace(/^BIFURCAÇÃO:\s*/, '') }),
+        compareLine(u, have) ? h('div', { class: 'ok', text: compareLine(u, have) }) : null,
+        u.cap ? h('div', { class: 'hint', text: `Teto global de ${CAP_TEXT[u.cap]}: ${Math.round(UPGRADE_CAPS[u.cap] * 100)}%` }) : null,
         h('div', { class: 'hint', text: `Acúmulos: ${have} → ${have + 1} (máx. ${u.maxStacks})` }),
         chosen ? h('div', { class: locked ? 'ok' : 'amber', style: 'margin-top:2px', text: locked ? '✓ confirmada' : '› selecionada' }) : null,
       );
@@ -782,6 +813,13 @@ export class App {
     this.upTimer = window.setInterval(tick, 250);
     panel.append(row, confirm, timer);
     this.overlay.append(panel);
+    // cartas fortes chamam atenção uma vez por oferta (sem pausar além do normal)
+    const best = off.options.map((id) => UPGRADE_BY_ID.get(id)?.rarity).find((r) => r === 'legendary') ?? off.options.map((id) => UPGRADE_BY_ID.get(id)?.rarity).find((r) => r === 'rare');
+    const offerKey = off.options.join(',');
+    if (best && this.rareSoundFor !== offerKey) {
+      this.rareSoundFor = offerKey;
+      audio.play(best === 'legendary' ? 'cardLegendary' : 'cardRare');
+    }
   }
 
   // ---------------------------------------------------------------- rota entre capítulos
@@ -983,25 +1021,32 @@ export class App {
     if (!type) return;
     const def = ENEMIES[type];
     const mini = !!def.miniboss;
+    // retrato em escala inteira (sem reamostragem): pixel art nítida como o resto da interface
     const [tex, fr] = tf(`${type}_walk_down_0`);
     const frame = this.game.textures.getFrame(tex, fr);
-    const portrait = h('canvas', { class: 'boss-intro-portrait' });
+    const portrait = h('canvas', { class: 'boss-card-portrait' });
     if (frame) {
+      const scale = frame.cutHeight <= 40 ? 2 : 1;
       portrait.width = frame.cutWidth;
       portrait.height = frame.cutHeight;
+      portrait.style.width = `${frame.cutWidth * scale}px`;
+      portrait.style.height = `${frame.cutHeight * scale}px`;
       portrait.getContext('2d')?.drawImage(frame.source.image as CanvasImageSource, frame.cutX, frame.cutY, frame.cutWidth, frame.cutHeight, 0, 0, frame.cutWidth, frame.cutHeight);
     }
+    const chapter = ['', 'I', 'II', 'III'][this.session.phase.ch] ?? '';
     const panel = h('div', { id: 'boss-intro', class: `boss-intro${mini ? ' mini' : ''}` },
-      h('div', { class: 'boss-intro-shade' }),
       h('div', { class: 'boss-intro-bar top' }),
-      h('div', { class: 'boss-intro-focus' }, portrait),
-      h('div', { class: 'boss-intro-copy' },
-        h('div', { class: 'boss-intro-kicker', text: mini ? 'AMEAÇA ELITE' : 'CHEFE DO CAPÍTULO' }),
-        h('div', { class: 'boss-intro-name', text: def.name.toUpperCase() }),
-        h('div', { class: 'boss-intro-rule' }),
-        h('div', { class: 'boss-intro-sub', text: mini ? 'A horda para. O perigo desperta.' : 'A noite tem um novo senhor.' }),
+      h('div', { class: 'boss-intro-bar bottom' }),
+      h('div', { class: 'panel gold boss-card' },
+        h('div', { class: 'boss-card-frame' }, portrait),
+        h('div', { class: 'boss-card-copy' },
+          h('div', { class: 'hint', text: mini ? `MINICHEFE · ONDA ${this.session.phase.wave}` : `CHEFE DO CAPÍTULO ${chapter} · ONDA ${this.session.phase.wave}` }),
+          h('div', { class: 'boss-card-name', text: def.name.toUpperCase() }),
+          h('div', { class: 'boss-card-rule' }),
+          h('div', { class: 'amber', text: BOSS_TIPS[type] ?? 'Leia os ataques antes de agir.' }),
+          h('div', { class: 'hint', text: 'Persegue quem ataca de longe. Provocar muda o alvo.' }),
+        ),
       ),
-      h('div', { class: 'boss-intro-bar bottom' }, h('span', { text: `ONDA ${this.session.phase.wave}` }), h('span', { text: 'PREPARE-SE' })),
     );
     this.overlay.append(panel);
   }

@@ -4,8 +4,8 @@
  * distâncias em pixels; ângulos de arco em graus.
  */
 
-export type ClassId = 'hunter' | 'mage' | 'tank' | 'vampire' | 'berserker' | 'dog' | 'necromancer';
-export const CLASS_IDS: readonly ClassId[] = ['hunter', 'mage', 'tank', 'vampire', 'berserker', 'dog', 'necromancer'];
+export type ClassId = 'hunter' | 'mage' | 'tank' | 'vampire' | 'berserker' | 'dog' | 'necromancer' | 'lapanha';
+export const CLASS_IDS: readonly ClassId[] = ['hunter', 'mage', 'tank', 'vampire', 'berserker', 'dog', 'necromancer', 'lapanha'];
 
 export interface Timing {
   windup: number;
@@ -54,6 +54,8 @@ export interface ClassBase {
   /** Rótulo curto (cartas do lobby). */
   tag: string;
   difficulty: 1 | 2 | 3;
+  /** Barra de suprema com nome próprio (ex.: Polpa do Lapanha). */
+  ultName?: string;
   blurb: string;
   weakness: string;
   hp: number;
@@ -69,6 +71,14 @@ export interface ClassBase {
   /** Cor de destaque (HUD, indicadores). */
   color: number;
 }
+
+/** Alcance de combate de cada classe (prioridade dos chefes e das ameaças anti-kite). */
+export type CombatRange = 'melee' | 'mid' | 'ranged';
+export const CLASS_RANGE: Record<ClassId, CombatRange> = {
+  hunter: 'ranged', mage: 'ranged', necromancer: 'ranged', dog: 'mid', lapanha: 'mid', tank: 'melee', vampire: 'melee', berserker: 'melee',
+};
+/** Classes corpo a corpo recebem menos dano: compensa ter de ficar dentro do alcance da horda. */
+export const MELEE_RULES = { damageTakenMul: 0.88 } as const;
 
 const DODGE_STD: DodgeSpec = { cost: 22, speed: 270, ticks: 9, iframes: 7, cooldown: 4 };
 
@@ -103,17 +113,63 @@ export const TANK = {
 } as const;
 
 // ---------------------------------------------------------------- VAMPIRO
+/**
+ * v1.3: a cura passa pela função central (HEAL_RULES): usa só dano válido (sem excesso sobre
+ * alvos quase mortos, sem objetivos/invulneráveis), com retorno decrescente por alvo extra na
+ * mesma ação, teto por uso e teto por segundo. O dano continua generoso; a cura é que ficou
+ * dependente de acertar bem e de esquivar.
+ */
 export const VAMPIRE = {
-  claws: { windup: 3, active: 2, recovery: 5, damage: 10, range: 28, arc: 95, poise: 5, knockback: 20, stamina: 6, moveMul: 0.8 },
+  claws: { windup: 3, active: 2, recovery: 5, damage: 13, range: 30, arc: 115, poise: 6, knockback: 20, stamina: 6, moveMul: 0.8 },
   chainWindow: 10,
-  /** Mordida em cone curto: cada inimigo atingido cura, com teto por uso e teto por segundo. */
-  bite: { cooldown: 5.5, windup: 6, active: 2, recovery: 8, damage: 30, range: 42, arc: 110, poise: 14, knockback: 20, stamina: 12, moveMul: 0.55, healRatio: 0.35, healCapPerUse: 32 },
-  mist: { cooldown: 7, stamina: 18, distance: 104, ticks: 7, iframes: 7 },
-  feast: { windup: 6, recovery: 6, duration: 8, damageBonus: 0.35, lifesteal: 0.15 },
-  thirst: { maxStacks: 5, window: 2.0, damagePerStack: 0.06, speedPerStack: 0.03 },
-  /** Teto de cura por segundo do Vampiro (mordida + Banquete). */
-  healPerSecondCap: 36,
+  /** Mordida em cone curto: cura 28% do dano válido (1º alvo integral, extras decrescentes), teto por uso. */
+  bite: { cooldown: 5.5, windup: 6, active: 2, recovery: 8, damage: 34, range: 44, arc: 120, poise: 16, knockback: 20, stamina: 12, moveMul: 0.55, healRatio: 0.28, healCapPerUse: 24 },
+  /**
+   * E — Redemoinho Rubro: gira no lugar liberando pulsos de sangue em 360°.
+   * Anda devagar durante o giro, recebe menos dano e cada pulso que acerta gera Sede e cura pouco.
+   */
+  vortex: {
+    cooldown: 8, stamina: 16, windup: 4, pulses: 5, pulseEvery: 6, recovery: 6, radius: 72, damage: 12,
+    poise: 6, pull: 45, moveMul: 0.6, damageTaken: 0.75, healRatio: 0.12, healCapPerCast: 16,
+  },
+  /** R — Banquete: explode em sangue ao conjurar (360°) e depois dá bônus de dano e roubo de vida. */
+  feast: { windup: 6, recovery: 6, duration: 8, damageBonus: 0.35, lifesteal: 0.11, burstRadius: 96, burstDamage: 42, burstHealPerHit: 6, burstHealCap: 24 },
+  thirst: { maxStacks: 5, window: 2.4, damagePerStack: 0.06, speedPerStack: 0.03 },
+  /** Teto de cura por segundo do Vampiro (mordida + redemoinho + Banquete + explosão). */
+  healPerSecondCap: 28,
 } as const;
+
+// ---------------------------------------------------------------- CURA (função central)
+/** Fontes de cura de jogador (telemetria e regras de teto). */
+export type HealSource = 'bite' | 'vortex' | 'feast' | 'feastBurst' | 'pickup' | 'reward' | 'bastion' | 'reaper' | 'harvest' | 'harvestHit' | 'perk';
+/** Fontes "de combate" (roubo de vida/cura por acerto): consomem o teto por segundo da classe. */
+export const COMBAT_HEAL: ReadonlySet<HealSource> = new Set<HealSource>(['bite', 'vortex', 'feast', 'feastBurst', 'harvestHit', 'reaper']);
+export const HEAL_RULES = {
+  /** Retorno decrescente por alvo na mesma ação: 1º, 2º, 3º e cada um dos demais. */
+  multiTarget: [1, 0.6, 0.35, 0.15] as readonly number[],
+  /** Bônus de dano acima de +25% (Sede, Banquete, cartas) não aumentam a cura. */
+  basisCapMul: 1.25,
+  /** Teto de cura "de combate" por segundo, por classe. */
+  combatPerSecond: { hunter: 12, mage: 12, tank: 12, vampire: VAMPIRE.healPerSecondCap, berserker: 12, dog: 12, necromancer: 10, lapanha: 8 } as Record<ClassId, number>,
+  /** Janela usada para medir "cura recente" (alvo preferido da Ferida Profana), em segundos. */
+  recentWindow: 3,
+} as const;
+
+/** Controle sofrido pelo jogador: atordoamentos raros, anunciados e com resistência temporária. */
+export const PLAYER_CC = {
+  /** Duração máxima de qualquer atordoamento em jogador (s). */
+  maxStun: 0.75,
+  /** Depois de um atordoamento: resistência forte por este tempo (s). */
+  resist: 2.5,
+  /** Durante a resistência, novos atordoamentos viram lentidão curta. */
+  resistSlowMul: 0.6,
+  resistSlowSeconds: 0.8,
+  /** Lentidão genérica recebida (golpes de área/detonações inimigas). */
+  slowFloor: 0.4,
+} as const;
+
+/** Escudos temporários de jogador (cartas): absorvem dano de inimigos, nunca o custo de vida. */
+export const PLAYER_SHIELD = { max: 40 } as const;
 
 // ---------------------------------------------------------------- BERSERKER
 export const BERSERKER = {
@@ -129,7 +185,7 @@ export const BERSERKER = {
   /** E — Salto Brutal: salta até o ponto mirado e esmaga ao pousar. */
   leap: { cooldown: 7, stamina: 18, maxRange: 150, ticks: 12, iframes: 8, radius: 46, damage: 28, poise: 42, knockback: 160, recovery: 10 },
   /** R — Loucura: força máxima com custo claro (dano recebido e exaustão ao final). */
-  madness: { windup: 8, recovery: 6, castMoveMul: 0.2, duration: 8, damageBonus: 0.35, attackSpeed: 0.3, damageTaken: 0.2, exhaustion: 3, exhaustSpeedMul: 0.6 },
+  madness: { windup: 8, recovery: 6, castMoveMul: 0.2, duration: 8, damageBonus: 0.35, attackSpeed: 0.3, damageTaken: 0.2, ironDamageTaken: 0.1, exhaustion: 3, exhaustSpeedMul: 0.6 },
   /** Passiva — Fúria (0–100): sobe ao causar e ao receber dano; alta Fúria = mais dano e velocidade, mas mais dano recebido. */
   fury: { max: 100, perDamageDealt: 0.35, perDamageTaken: 0.9, decayDelay: 2.5, decayPerSecond: 8, high: 60, maxDamageBonus: 0.35, maxAttackSpeed: 0.2, maxDamageTaken: 0.25, staminaCostMul: 1.25 },
 } as const;
@@ -142,6 +198,8 @@ export const DOG = {
   polarity: { cooldown: 12, windup: 6, recovery: 8, maxRange: 210, radius: 104, duration: 2.5, pullCommon: 105, pullElite: 35 },
   endScream: { windup: 10, pulses: 3, interval: 15, radius: 150, damage: 40, knockback: 280, poise: 80, recovery: 14 },
   resonance: { max: 20, rangeMul: 1.6, damageMul: 2.0, knockbackMul: 2.0 },
+  /** Ímã Forte: raio extra por acúmulo (px). */
+  magnetRadiusPerStack: 15,
 } as const;
 
 // ---------------------------------------------------------------- NECROMANTE
@@ -158,7 +216,11 @@ export const NECRO = {
   /** E — Mão da Sepultura. */
   hand: { cooldown: 10, castWindup: 6, windup: 12, recovery: 8, maxRange: 220, radius: 54, duration: 3, rootCommon: 1.6, slowElite: 0.4, slowBoss: 0.2, tickInterval: 0.5, tickDamage: 4, markedTickDamage: 10 },
   /** R — Exército dos Sem Nome: consome toda a Essência. */
-  army: { windup: 16, recovery: 10, base: 2, perEssence: 1, maxUnits: 9, hp: 40, duration: 9, speed: 120, damage: 9, explodeRadius: 38, explodeDamage: 30, bossDamageMul: 0.35, bossDamageCapPerCast: 360 },
+  army: { windup: 16, recovery: 10, base: 1, perEssence: 1, maxUnits: 6, hp: 30, duration: 6, speed: 120, damage: 7, explodeRadius: 34, explodeDamage: 20, bossDamageMul: 0.3, bossDamageCapPerCast: 220,
+    /** Tempo limite: depois de conjurar, a suprema do Necromante não recarrega por este tempo (s). */
+    ultLockSeconds: 22 },
+  /** Dano causado por servos gera só esta fração de suprema (evita suprema em cadeia). */
+  minionUltMul: 0.35,
   /** Limites de entidades: por necromante e globais. */
   maxMinions: 12,
   /** Senhor dos Mortos: segundos extras de duração por acúmulo (a vida extra vem do valor da melhoria). */
@@ -166,6 +228,71 @@ export const NECRO = {
   /** Velocidade de movimento durante cada conjuração. */
   moveMul: { bone: 0.65, raise: 0.4, hand: 0.4, army: 0.2 },
 } as const;
+
+// ---------------------------------------------------------------- LAPANHA
+/**
+ * Artilharia de sacrifício: melancias em arco (dano em área com centro e borda), custo de vida
+ * voluntário que fortalece as habilidades (retorno decrescente) e uma suprema de regeneração.
+ * Tempos em ticks; custos de vida em fração da vida máxima.
+ */
+export const LAPANHA = {
+  /** Ataque básico: melancia pequena em arco (colisão 2D; a altura é só visual). */
+  melon: {
+    windup: 7, active: 1, recovery: 12, stamina: 9, moveMul: 0.7,
+    speed: 290, range: 260, radius: 5, arcHeight: 22,
+    centerDamage: 18, edgeDamage: 10, blastRadius: 30, centerRadius: 11,
+    poise: 8, edgePoise: 4, knockback: 25,
+  },
+  /** Q — Melancia Madura: segure para carregar e escolher quanto da vida sacrificar. */
+  ripe: {
+    cooldown: 6.5, interruptedCooldown: 2,
+    chargeMinTicks: 9, chargeMaxTicks: 36, autoThrowTicks: 15,
+    minCost: 0.03, maxCost: 0.12, cancelCostFrac: 0.4,
+    minDamage: 28, maxDamage: 70, minRadius: 36, maxRadius: 58, centerRadius: 14, edgeMul: 0.55,
+    minPoise: 22, maxPoise: 60, minKnockback: 40, maxKnockback: 110,
+    /** Curva do bônus (fração da carga)^curve: pequeno sacrifício rende mais por ponto de vida. */
+    curve: 0.7,
+    maxRange: 240, speed: 230, arcHeight: 40, moveMul: 0.45, throwWindup: 3, throwRecovery: 12,
+    /** Chefes/minichefes: só metade do bônus da carga e teto por lançamento. */
+    bossBonusMul: 0.5, bossDamageCap: 55,
+  },
+  /** E — Casca Traiçoeira: armadilha de escorregão; E de novo esmaga a casca com vida. */
+  peel: {
+    cooldown: 8, windup: 5, recovery: 6, duration: 7, maxActive: 2, triggerRadius: 15, throwRange: 110, armSeconds: 0.3,
+    slideSpeed: 200, slideTicks: 16, eliteSlideMul: 0.5, bumpDamage: 4, bumpPoise: 10,
+    vulnerableSeconds: 0.6, vulnerableMul: 1.15, staggerPoise: 12,
+    eliteSlow: 0.75, eliteSlowSeconds: 1.5, minibossSlow: 0.7, minibossSlowSeconds: 1.2, minibossPoise: 25,
+    bossSlow: 0.8, bossSlowSeconds: 1, bossPoise: 20,
+    crush: { costFrac: 0.05, damage: 22, radius: 38, slow: 0.7, slowSeconds: 1.2, poise: 14 },
+    /** Cascata de Cascas: casca secundária menor, curta e não detonável. */
+    cascade: { duration: 3, triggerRadius: 11 },
+  },
+  /** R — Safra Abençoada: come um pedaço e regenera ao longo do tempo (mais forte com pouca vida). */
+  harvest: {
+    windup: 20, recovery: 6, moveMul: 0.35, duration: 8,
+    baseRegen: 0.04, lowHpBonus: 0.02, maxRegen: 0.06, tickEvery: 6,
+    attackSpeed: 0.15, costMul: 0.75, centerHeal: 2, hitHealPerSecond: 8,
+    /** Último Pedaço: abaixo de 20% a regeneração sobe até passar de 35%. */
+    lastPiece: { below: 0.2, until: 0.35 },
+  },
+  /** Polpa (0–100): carrega a suprema. Não vem de cura, de dano sofrido nem do próprio sacrifício além do teto. */
+  pulp: { max: 100, center: 3, edge: 1, bigMul: 1.5, perActionCap: 8, perHpSacrificed: 0.5, sacrificeCapPerAction: 6 },
+  /** Cartas específicas. */
+  cards: {
+    frozenSlow: 0.8, frozenSeconds: 1,
+    seeds: { count: 3, damage: 4, range: 60, speed: 200 },
+    heartMin: 4, heartShield: 12, heartSeconds: 4, heartCooldown: 10,
+    precise: { center: 0.2, edge: -0.2 },
+    wetFloor: { radius: 22, seconds: 2.5, slow: 0.7, maxActive: 3 },
+    lastPieceBonus: 0.015,
+    fair: { wideRadius: 1.35, wideDamage: 0.8, denseRadius: 0.75, denseCenter: 1.25 },
+  },
+} as const;
+
+/** Custo de vida (fração da vida máxima) da Melancia Madura para uma carga 0–1. */
+export const ripeCostFrac = (charge: number): number => LAPANHA.ripe.minCost + (LAPANHA.ripe.maxCost - LAPANHA.ripe.minCost) * Math.max(0, Math.min(1, charge));
+/** Força (0–1) da Melancia Madura com retorno decrescente. */
+export const ripePower = (charge: number): number => Math.pow(Math.max(0, Math.min(1, charge)), LAPANHA.ripe.curve);
 
 export const CLASSES: Record<ClassId, ClassBase> = {
   hunter: {
@@ -247,11 +374,11 @@ export const CLASSES: Record<ClassId, ClassBase> = {
     id: 'vampire',
     tag: 'Sustento',
     name: 'Vampiro',
-    role: 'Agressividade, mobilidade e sustentação',
+    role: 'Brigador corpo a corpo: dano em área e sustentação',
     difficulty: 2,
     blurb: 'Capa escura, olhos vermelhos e garras. Vive do sangue que arranca da horda.',
-    weakness: 'Não regenera sozinho: precisa se expor para curar. Cura limitada por segundo.',
-    hp: 110,
+    weakness: `Não regenera sozinho: precisa acertar para curar. Vários alvos curam cada vez menos e o total é limitado a ${VAMPIRE.healPerSecondCap} por segundo.`,
+    hp: 125,
     stamina: 100,
     staminaRegen: 36,
     staminaDelay: 0.45,
@@ -262,9 +389,9 @@ export const CLASSES: Record<ClassId, ClassBase> = {
     color: 0xc0283c,
     texts: {
       basic: { name: 'Garras', desc: `Sequência rápida de garras: ${VAMPIRE.claws.damage} de dano por golpe.` },
-      q: { name: 'Mordida', desc: `Mordida em cone (${VAMPIRE.bite.arc}°, ${VAMPIRE.bite.range}px): ${VAMPIRE.bite.damage} de dano em cada inimigo; cura ${Math.round(VAMPIRE.bite.healRatio * 100)}% do dano (máx. ${VAMPIRE.bite.healCapPerUse} por uso e ${VAMPIRE.healPerSecondCap}/s). Recarga ${VAMPIRE.bite.cooldown}s.` },
-      e: { name: 'Névoa Rubra', desc: `Avanço de ${VAMPIRE.mist.distance}px invulnerável por ${(VAMPIRE.mist.iframes / 30).toFixed(2)}s. Recarga ${VAMPIRE.mist.cooldown}s.` },
-      r: { name: 'Banquete', desc: `Por ${VAMPIRE.feast.duration}s: +${VAMPIRE.feast.damageBonus * 100}% de dano e ${VAMPIRE.feast.lifesteal * 100}% de roubo de vida.` },
+      q: { name: 'Mordida', desc: `Mordida em cone (${VAMPIRE.bite.arc}°, ${VAMPIRE.bite.range}px): ${VAMPIRE.bite.damage} de dano em cada inimigo. Cura ${Math.round(VAMPIRE.bite.healRatio * 100)}% do dano válido no 1º alvo; os seguintes curam ${HEAL_RULES.multiTarget.slice(1).map((m) => `${Math.round(m * 100)}%`).join(', ')} disso (máx. ${VAMPIRE.bite.healCapPerUse} por uso). Recarga ${VAMPIRE.bite.cooldown}s.` },
+      e: { name: 'Redemoinho Rubro', desc: `Gira liberando ${VAMPIRE.vortex.pulses} pulsos de sangue em 360° (${VAMPIRE.vortex.radius}px): ${VAMPIRE.vortex.damage} de dano cada (${VAMPIRE.vortex.pulses * VAMPIRE.vortex.damage} no total), puxa os inimigos, gera Sede e cura ${Math.round(VAMPIRE.vortex.healRatio * 100)}% do dano válido (máx. ${VAMPIRE.vortex.healCapPerCast} por giro). Recebe -${Math.round((1 - VAMPIRE.vortex.damageTaken) * 100)}% de dano durante o giro. Recarga ${VAMPIRE.vortex.cooldown}s.` },
+      r: { name: 'Banquete', desc: `Explode em sangue (${VAMPIRE.feast.burstRadius}px, ${VAMPIRE.feast.burstDamage} de dano, cura até ${VAMPIRE.feast.burstHealCap}). Depois, por ${VAMPIRE.feast.duration}s: +${VAMPIRE.feast.damageBonus * 100}% de dano e ${Math.round(VAMPIRE.feast.lifesteal * 100)}% de roubo de vida corpo a corpo. Toda cura do Vampiro respeita ${VAMPIRE.healPerSecondCap} por segundo.` },
       passive: { name: 'Sede', desc: `Golpes seguidos acumulam Sede (máx. ${VAMPIRE.thirst.maxStacks}): +${VAMPIRE.thirst.damagePerStack * 100}% de dano e +${VAMPIRE.thirst.speedPerStack * 100}% de velocidade cada.` },
     },
   },
@@ -341,6 +468,32 @@ export const CLASSES: Record<ClassId, ClassBase> = {
       e: { name: 'Mão da Sepultura', desc: `Após ${(NECRO.hand.windup / 30).toFixed(1)}s, mãos prendem comuns por ${NECRO.hand.rootCommon}s e desaceleram elites (${NECRO.hand.slowElite * 100}%) por ${NECRO.hand.duration}s. Marcados sofrem ${NECRO.hand.markedTickDamage} por pulso e rendem +${NECRO.essence.markedBonus} de Essência. Recarga ${NECRO.hand.cooldown}s.` },
       r: { name: 'Exército dos Sem Nome', desc: `Consome toda a Essência: ${NECRO.army.base} + 1 por Essência (máx. ${NECRO.army.maxUnits}) mortos avançam por ${NECRO.army.duration}s e explodem (${NECRO.army.explodeDamage}). Contra chefes o dano é limitado.` },
       passive: { name: 'Restos Mortais', desc: `Mortes a até ${NECRO.essence.radius}px geram Essência (comum +${NECRO.essence.perCommon}, elite +${NECRO.essence.perElite}; máx. ${NECRO.essence.max}). Mortes de aliados não contam.` },
+    },
+  },
+  lapanha: {
+    id: 'lapanha',
+    tag: 'Artilharia',
+    name: 'Lapanha',
+    role: 'Artilharia de sacrifício e dano em área',
+    difficulty: 3,
+    ultName: 'Polpa',
+    blurb: 'Jovem de Salvador, sorriso aberto e um cesto de melancias. Troca um pouco da própria vida por arremessos que abrem a horda — e ri no meio do caos.',
+    weakness: `Sustentação baixa fora da suprema. Cada Melancia Madura custa de ${Math.round(LAPANHA.ripe.minCost * 100)}% a ${Math.round(LAPANHA.ripe.maxCost * 100)}% da vida máxima; mediano contra chefes (bônus da carga pela metade, máx. ${LAPANHA.ripe.bossDamageCap} por lançamento).`,
+    hp: 105,
+    stamina: 100,
+    staminaRegen: 32,
+    staminaDelay: 0.5,
+    speed: 105,
+    radius: 7,
+    dodge: DODGE_STD,
+    ultPerDamage: 0,
+    color: 0x5fae4a,
+    texts: {
+      basic: { name: 'Arremesso de Melancia', desc: `Melancia em arco até ${LAPANHA.melon.range}px que estoura no primeiro inimigo, parede ou no fim do alcance: ${LAPANHA.melon.centerDamage} de dano no centro e ${LAPANHA.melon.edgeDamage} na borda (${LAPANHA.melon.blastRadius}px). Custa ${LAPANHA.melon.stamina} de stamina; quebra caixas e barris.` },
+      q: { name: 'Melancia Madura', desc: `Segure para carregar (até ${(LAPANHA.ripe.chargeMaxTicks / 30).toFixed(1)}s) e solte para lançar no ponto mirado (até ${LAPANHA.ripe.maxRange}px). Custa de ${Math.round(LAPANHA.ripe.minCost * 100)}% a ${Math.round(LAPANHA.ripe.maxCost * 100)}% da vida máxima e causa de ${LAPANHA.ripe.minDamage} a ${LAPANHA.ripe.maxDamage} no centro, raio de ${LAPANHA.ripe.minRadius} a ${LAPANHA.ripe.maxRadius}px. Nunca deixa você abaixo de 1 de vida. Recarga ${LAPANHA.ripe.cooldown}s.` },
+      e: { name: 'Casca Traiçoeira', desc: `Joga uma casca (até ${LAPANHA.peel.throwRange}px, dura ${LAPANHA.peel.duration}s, máx. ${LAPANHA.peel.maxActive}): o primeiro inimigo que pisa escorrega na direção em que andava e fica vulnerável (+${Math.round((LAPANHA.peel.vulnerableMul - 1) * 100)}% de dano) por ${LAPANHA.peel.vulnerableSeconds}s. Elites deslizam menos; chefes só ficam lentos. Aperte E de novo para esmagar a casca: ${Math.round(LAPANHA.peel.crush.costFrac * 100)}% da vida, ${LAPANHA.peel.crush.damage} de dano em ${LAPANHA.peel.crush.radius}px e lentidão. Recarga ${LAPANHA.peel.cooldown}s.` },
+      r: { name: 'Safra Abençoada', desc: `Precisa de Polpa cheia. Come um pedaço e regenera por ${LAPANHA.harvest.duration}s: ${Math.round(LAPANHA.harvest.baseRegen * 100)}% da vida máxima por segundo, até ${Math.round(LAPANHA.harvest.maxRegen * 100)}% se ativada com pouca vida. Arremessos +${Math.round(LAPANHA.harvest.attackSpeed * 100)}% mais rápidos, custos de vida -${Math.round((1 - LAPANHA.harvest.costMul) * 100)}% e acertos no centro curam ${LAPANHA.harvest.centerHeal} (máx. ${LAPANHA.harvest.hitHealPerSecond}/s). Sem invulnerabilidade; a Polpa não enche durante a Safra.` },
+      passive: { name: 'Coração Maduro', desc: `Sacrificar vida fortalece a habilidade com retorno decrescente e nunca derruba você (mínimo 1 de vida). O sacrifício não conta como dano recebido. Acertos no centro geram ${LAPANHA.pulp.center} de Polpa, na borda ${LAPANHA.pulp.edge} (elites e chefes ×${LAPANHA.pulp.bigMul}).` },
     },
   },
 };

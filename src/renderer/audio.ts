@@ -425,6 +425,118 @@ const ALERTS = new Set(['bossWarn', 'waveStart', 'howl', 'transform', 'telegraph
 const UI_SOUNDS = new Set(['uiClick', 'uiHover', 'uiBack', 'upgrade']);
 
 const RECIPES: Record<string, Recipe> = {
+  // --- v1.2: Redemoinho Rubro
+  vortex: (a, t, o) => {
+    a.noise(t, 0.9, o, { f0: 300, f1: 1400, q: 1.1, gain: 0.3, attack: 0.08 });
+    a.tone(t, 0.9, o, { type: 'sawtooth', f0: 90, f1: 140, gain: 0.08, lp: 700, vib: 9 });
+  },
+  vortexPulse: (a, t, o) => a.noise(t, 0.12, o, { type: 'bandpass', f0: 900, f1: 500, q: 2, gain: 0.3 }),
+  // --- Acólito Sombrio: início, crescimento, sucesso e interrupção da Marcha Sombria
+  marchStart: (a, t, o) => a.tone(t, 0.5, o, { type: 'triangle', f0: 180, f1: 240, gain: 0.12, attack: 0.1, vib: 6 }),
+  marchGrow: (a, t, o) => {
+    a.tone(t, 0.6, o, { type: 'triangle', f0: 240, f1: 360, gain: 0.12, attack: 0.05, vib: 10 });
+    a.noise(t, 0.6, o, { type: 'lowpass', f0: 500, gain: 0.12, attack: 0.2 });
+  },
+  marchDone: (a, t, o) => {
+    a.tone(t, 0.35, o, { type: 'square', f0: 120, f1: 60, gain: 0.14, lp: 900 });
+    a.noise(t, 0.3, o, { type: 'lowpass', f0: 800, f1: 200, gain: 0.35 });
+  },
+  marchBreak: (a, t, o) => {
+    a.noise(t, 0.18, o, { type: 'highpass', f0: 2500, gain: 0.35 });
+    a.tone(t, 0.25, o, { type: 'triangle', f0: 520, f1: 140, gain: 0.12 });
+  },
+  // --- Caçador de Névoa: aviso espacial curto (vem do lado do salto) e pouso
+  mistCue: (a, t, o) => {
+    a.noise(t, 0.22, o, { f0: 2400, f1: 900, q: 1.5, gain: 0.3, attack: 0.02 });
+    a.tone(t, 0.18, o, { type: 'triangle', f0: 880, f1: 1320, gain: 0.07 });
+  },
+  mistLand: (a, t, o) => {
+    a.noise(t, 0.22, o, { type: 'lowpass', f0: 900, f1: 200, gain: 0.45 });
+    a.tone(t, 0.18, o, { f0: 110, f1: 60, gain: 0.25 });
+  },
+  // --- Portador do Ossário: bloqueio seco e quebra forte
+  shieldBlock: (a, t, o) => {
+    a.noise(t, 0.05, o, { type: 'bandpass', f0: 1800, q: 3, gain: 0.45 });
+    a.tone(t, 0.07, o, { type: 'square', f0: 320, f1: 260, gain: 0.08, lp: 1500 });
+  },
+  shieldBreak: (a, t, o) => {
+    a.noise(t, 0.45, o, { type: 'bandpass', f0: 1200, f1: 300, q: 1.2, gain: 0.7 });
+    a.tone(t, 0.35, o, { f0: 140, f1: 50, gain: 0.35 });
+    a.noise(t + 0.08, 0.3, o, { type: 'highpass', f0: 3000, gain: 0.2 });
+  },
+  // --- Lapanha: arremesso (sopro), estouro de polpa (úmido e grave, sem tom cômico), carga, casca e Safra
+  melonThrow: (a, t, o) => {
+    a.noise(t, 0.14, o, { type: 'bandpass', f0: 700, f1: 1400, q: 1.2, gain: 0.22 });
+    a.tone(t, 0.1, o, { type: 'triangle', f0: 220, f1: 330, gain: 0.05 });
+  },
+  melonBurst: (a, t, o) => {
+    a.noise(t, 0.22, o, { type: 'lowpass', f0: 1400, f1: 300, gain: 0.5 });
+    a.tone(t, 0.14, o, { f0: 140, f1: 70, gain: 0.2 });
+    a.noise(t + 0.04, 0.12, o, { type: 'bandpass', f0: 2600, q: 2, gain: 0.12 });
+  },
+  melonBurstBig: (a, t, o) => {
+    a.noise(t, 0.45, o, { type: 'lowpass', f0: 1100, f1: 160, gain: 0.8 });
+    a.tone(t, 0.35, o, { f0: 90, f1: 40, gain: 0.4 });
+    a.noise(t + 0.06, 0.25, o, { type: 'bandpass', f0: 2200, q: 1.5, gain: 0.2 });
+  },
+  melonCharge: (a, t, o) => a.tone(t, 1.1, o, { type: 'triangle', f0: 140, f1: 300, gain: 0.07, attack: 0.3, vib: 5 }),
+  melonChargeMax: (a, t, o) => {
+    a.tone(t, 0.2, o, { type: 'square', f0: 330, f1: 330, gain: 0.06, lp: 1400 });
+    a.noise(t, 0.12, o, { type: 'highpass', f0: 3000, gain: 0.12 });
+  },
+  melonHeavyThrow: (a, t, o) => {
+    a.noise(t, 0.25, o, { type: 'bandpass', f0: 500, f1: 1100, q: 1, gain: 0.35 });
+    a.tone(t, 0.2, o, { type: 'triangle', f0: 160, f1: 240, gain: 0.08 });
+  },
+  peelPlace: (a, t, o) => a.noise(t, 0.08, o, { type: 'bandpass', f0: 900, q: 2.5, gain: 0.3 }),
+  slip: (a, t, o) => {
+    a.noise(t, 0.2, o, { type: 'bandpass', f0: 1600, f1: 500, q: 2, gain: 0.35 });
+    a.noise(t + 0.18, 0.1, o, { type: 'lowpass', f0: 600, gain: 0.4 });
+  },
+  peelBurst: (a, t, o) => {
+    a.noise(t, 0.3, o, { type: 'lowpass', f0: 1200, f1: 250, gain: 0.55 });
+    a.noise(t + 0.03, 0.2, o, { type: 'bandpass', f0: 3000, q: 2, gain: 0.15 });
+  },
+  harvestStart: (a, t, o) => {
+    a.noise(t, 0.12, o, { type: 'bandpass', f0: 1200, q: 2, gain: 0.25 });
+    a.tone(t + 0.35, 0.5, o, { type: 'triangle', f0: 330, f1: 495, gain: 0.08, attack: 0.08 });
+  },
+  harvestEnd: (a, t, o) => a.tone(t, 0.35, o, { type: 'triangle', f0: 440, f1: 260, gain: 0.07 }),
+  // --- Ferida Profana, atordoamento, cerco e escolta
+  woundCharge: (a, t, o) => a.tone(t, 0.9, o, { type: 'sawtooth', f0: 110, f1: 180, gain: 0.07, lp: 900, attack: 0.2, vib: 7 }),
+  woundCast: (a, t, o) => a.noise(t, 0.18, o, { type: 'bandpass', f0: 1400, f1: 700, q: 3, gain: 0.3 }),
+  woundHit: (a, t, o) => {
+    a.tone(t, 0.45, o, { type: 'sawtooth', f0: 220, f1: 90, gain: 0.12, lp: 1200 });
+    a.noise(t, 0.25, o, { type: 'bandpass', f0: 800, q: 2, gain: 0.25 });
+  },
+  stun: (a, t, o) => {
+    a.tone(t, 0.3, o, { type: 'triangle', f0: 1200, f1: 900, gain: 0.07, vib: 14 });
+    a.noise(t, 0.15, o, { type: 'lowpass', f0: 700, gain: 0.35 });
+  },
+  siegeCharge: (a, t, o) => a.tone(t, 1.2, o, { type: 'triangle', f0: 90, f1: 150, gain: 0.08, attack: 0.4, vib: 4 }),
+  siegeHit: (a, t, o) => {
+    a.noise(t, 0.3, o, { type: 'lowpass', f0: 900, f1: 200, gain: 0.45 });
+    a.tone(t, 0.25, o, { type: 'square', f0: 110, f1: 70, gain: 0.1, lp: 700 });
+  },
+  assaultHorn: (a, t, o) => {
+    a.tone(t, 1.1, o, { type: 'sawtooth', f0: 110, f1: 104, gain: 0.14, lp: 700, attack: 0.15 });
+    a.tone(t + 0.05, 1.0, o, { type: 'sawtooth', f0: 165, f1: 156, gain: 0.08, lp: 700, attack: 0.15 });
+  },
+  ambushWarn: (a, t, o) => {
+    a.tone(t, 0.25, o, { type: 'triangle', f0: 660, f1: 520, gain: 0.08 });
+    a.tone(t + 0.3, 0.25, o, { type: 'triangle', f0: 660, f1: 520, gain: 0.08 });
+  },
+  survivorAlarm: (a, t, o) => a.tone(t, 0.3, o, { type: 'square', f0: 880, f1: 700, gain: 0.05, lp: 2200 }),
+  cardRare: (a, t, o) => {
+    a.tone(t, 0.18, o, { type: 'triangle', f0: 523, f1: 523, gain: 0.07 });
+    a.tone(t + 0.12, 0.3, o, { type: 'triangle', f0: 784, f1: 784, gain: 0.07 });
+  },
+  cardLegendary: (a, t, o) => {
+    a.tone(t, 0.2, o, { type: 'triangle', f0: 392, f1: 392, gain: 0.08 });
+    a.tone(t + 0.14, 0.2, o, { type: 'triangle', f0: 523, f1: 523, gain: 0.08 });
+    a.tone(t + 0.28, 0.6, o, { type: 'triangle', f0: 784, f1: 784, gain: 0.09, vib: 5 });
+    a.noise(t + 0.28, 0.4, o, { type: 'highpass', f0: 4000, gain: 0.08 });
+  },
   guardianGuard: (a, t, o) => {
     a.tone(t, 0.36, o, { type: 'triangle', f0: 280, f1: 430, gain: 0.13, attack: 0.03, vib: 5 });
     a.noise(t, 0.2, o, { type: 'bandpass', f0: 900, f1: 1800, gain: 0.1 });

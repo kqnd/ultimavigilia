@@ -11,6 +11,10 @@ import { isFiniteNum } from './math.js';
 /** Códigos de ação de jogadores (animação + lógica). */
 export const ACTIONS = [
   'idle', 'basic1', 'basic2', 'basic3', 'basic4', 'q', 'e', 'r', 'block', 'guardBreak', 'hurt', 'cast', 'revive',
+  /** Lapanha: carga da Melancia Madura, arremesso pesado, comer (Safra), casca e esmagar a casca. */
+  'charge', 'throw', 'eat', 'peel', 'crush',
+  /** Atordoado (golpes raros e anunciados). */
+  'stun',
 ] as const;
 export type ActionName = (typeof ACTIONS)[number];
 export const actionCode = (a: ActionName): number => ACTIONS.indexOf(a);
@@ -37,6 +41,17 @@ export const PLAYER_FLAGS = {
   burn: 8192,
   /** No ar (Salto Brutal). */
   airborne: 16384,
+  /** Atordoado; resistência a novo atordoamento; lento (resistência convertida). */
+  stunned: 32768,
+  stunResist: 65536,
+  slowed: 131072,
+  /** Ferida Profana: cura reduzida; fase de bloqueio total. */
+  wounded: 262144,
+  woundBlock: 524288,
+  /** Lapanha: Safra Abençoada ativa. */
+  harvest: 1048576,
+  /** Escudo temporário (cartas). */
+  shielded: 2097152,
 } as const;
 
 export const ENEMY_STATES = ['spawn', 'move', 'windup', 'active', 'recover', 'stagger', 'air', 'dead', 'roar'] as const;
@@ -46,6 +61,9 @@ export const enemyStateCode = (s: EnemyStateName): number => ENEMY_STATES.indexO
 export const ENEMY_ATTACKS = [
   'none', 'swipe', 'lunge', 'pounce', 'claw', 'orb', 'rune', 'slam', 'slipper', 'leap', 'claws', 'howl', 'crescent', 'eruption', 'sweep', 'summon', 'burst', 'dash', 'transform',
   'shards', 'nova', 'spikes', 'frostSummon', 'channel', 'roll',
+  'march', 'mistLeap', 'bash',
+  /** Ferida Profana (Acólito Sombrio) e canalização contra objetivo (fogueira/altar). */
+  'wound', 'siege',
 ] as const;
 export type EnemyAttackName = (typeof ENEMY_ATTACKS)[number];
 export const enemyAttackCode = (s: EnemyAttackName): number => ENEMY_ATTACKS.indexOf(s);
@@ -67,14 +85,35 @@ export const ENEMY_FLAGS = {
   priority: 1024,
   /** Afetado por maldição (Ritualista). */
   cursed: 2048,
+  /** Acelerado pela Marcha Sombria. */
+  hasted: 4096,
+  /** Velado pela névoa (Caçador de Névoa longe e fora de ataque). */
+  veiled: 8192,
+  /** Função de ocupar/atacar o objetivo (fogueira, altar). */
+  siege: 16384,
+  /** Caçando o sobrevivente da escolta. */
+  raider: 32768,
+  /** Origem de uma Ferida Profana ativa em algum jogador. */
+  wounding: 65536,
+  /** Vulnerável depois de escorregar (Casca Traiçoeira). */
+  vulnerable: 131072,
+  /** Escorregando. */
+  sliding: 262144,
 } as const;
 
-export const PROJECTILE_KINDS = ['bolt', 'pierceBolt', 'missile', 'empMissile', 'orb', 'slipper', 'abyssOrb', 'bone', 'iceShard'] as const;
+export const PROJECTILE_KINDS = [
+  'bolt', 'pierceBolt', 'missile', 'empMissile', 'orb', 'slipper', 'abyssOrb', 'bone', 'iceShard',
+  'melon', 'melonWide', 'melonDense', 'bigMelon', 'seed', 'woundBolt',
+] as const;
+/** Projéteis desenhados em arco (altura só visual; a colisão continua no plano do chão). */
+export const LOB_KINDS: ReadonlySet<string> = new Set(['melon', 'melonWide', 'melonDense', 'bigMelon']);
 export type ProjectileKind = (typeof PROJECTILE_KINDS)[number];
 
 export const ZONE_KINDS = [
   'trap', 'glacial', 'bastion', 'polarity', 'rupture', 'rain', 'rune', 'eruption', 'leapMark', 'spawnWarn', 'screamPulse',
   'graveHand', 'moonPulse', 'nova', 'iceSpike', 'leapLand',
+  /** Lapanha: casca no chão e piso molhado; avisos de assalto e de emboscada. */
+  'peel', 'wetFloor', 'assaultWarn', 'ambushWarn',
 ] as const;
 export type ZoneKind = (typeof ZONE_KINDS)[number];
 
@@ -101,7 +140,11 @@ export type ClientMessage =
   | { t: 'again' }
   | { t: 'bye' }
   /** Somente com UV_DEBUG=1 no servidor (ferramenta de desenvolvimento/testes visuais). */
-  | { t: 'dbg'; c: 'wave' | 'ult' | 'god' | 'kill' | 'spawn' | 'phase'; n: number; s: string };
+  | { t: 'dbg'; c: DebugCommand; n: number; s: string };
+
+/** Comandos de depuração (somente com UV_DEBUG=1). */
+export const DEBUG_COMMANDS = ['wave', 'ult', 'god', 'kill', 'spawn', 'phase', 'hold', 'tele', 'wound', 'event', 'challenge', 'stun', 'hp'] as const;
+export type DebugCommand = (typeof DEBUG_COMMANDS)[number];
 
 const isStr = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max;
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
@@ -163,8 +206,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     case 'bye':
       return { t: 'bye' };
     case 'dbg':
-      if (!(m.c === 'wave' || m.c === 'ult' || m.c === 'god' || m.c === 'kill' || m.c === 'spawn' || m.c === 'phase') || !inRange(m.n, 0, 200) || !isStr(m.s, 24)) return null;
-      return { t: 'dbg', c: m.c, n: Math.floor(m.n), s: m.s };
+      if (!(typeof m.c === 'string' && (DEBUG_COMMANDS as readonly string[]).includes(m.c)) || !inRange(m.n, 0, 200) || !isStr(m.s, 24)) return null;
+      return { t: 'dbg', c: m.c as DebugCommand, n: Math.floor(m.n), s: m.s };
     default:
       return null;
   }
@@ -207,10 +250,20 @@ export interface SnapPlayer {
   cd: [number, number];
   cm: [number, number];
   u: number;
+  /** Suprema selada (s restantes; Necromante após o Exército). */
+  ul: number;
   k: number;
   cn: number;
   /** Tick da última esquiva (animação). */
   dg: number;
+  /** Ferida Profana: décimos de segundo restantes, décimos de bloqueio total e Acólito de origem. */
+  wd: number;
+  wb: number;
+  wo: number;
+  /** Escudo temporário (vida). */
+  sh: number;
+  /** Lapanha: carga da Melancia Madura 0–100 (-1 fora da carga). */
+  ch: number;
 }
 
 export interface SnapYou {
@@ -229,7 +282,11 @@ export interface SnapYou {
 }
 
 /** [id, tipo, x, y, hp, mhp, estado, ataque, ticksNoEstado, facing×100, tx, ty, flags, afixo, marcas, marcadoPor] */
-export type EnemyTuple = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
+/**
+ * [id, tipo, x, y, hp, mhp, estado, ataque, tEstado, facing×100, tx, ty, flags, afixo, marcas, marcadoPor,
+ *  escudo% (-1 = não tem), direçãoEscudo×100, jogadorAlvoDoTelegraph (0 = nenhum)]
+ */
+export type EnemyTuple = [number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number, number];
 /** Servos e aliados não jogadores: [id, tipo, x, y, hp, mhp, estado, facing×100, dono, vidaRestante%] */
 export type MinionTuple = [number, number, number, number, number, number, number, number, number, number];
 export const MINION_KINDS = ['thrall', 'horde', 'survivor'] as const;
@@ -240,15 +297,15 @@ export type MinionState = (typeof MINION_STATES)[number];
 export type PickupTuple = [number, number, number, number];
 /** Quebráveis danificados ou destruídos: [índice, vida%] (0 = destruído). */
 export type BreakTuple = [number, number];
-/** [id, tipo, x, y, vx, vy, dono] */
-export type ProjTuple = [number, number, number, number, number, number, number];
+/** [id, tipo, x, y, vx, vy, dono, progressoDoArco 0–100 (-1 = reto)] */
+export type ProjTuple = [number, number, number, number, number, number, number, number];
 /** [id, tipo, x, y, raio, ticksRestantes, dono, extra] */
 export type ZoneTuple = [number, number, number, number, number, number, number, number];
 
 export type DenyReason = 'cd' | 'st' | 'range' | 'ult' | 'busy' | 'essence' | 'corpse' | 'blocked';
 
 export type GameEvent =
-  | { id: number; k: 'dmg'; tg: 'e' | 'p'; ti: number; v: number; x: number; y: number; c: 'n' | 'crit' | 'blk' | 'par' | 'heal'; s: number }
+  | { id: number; k: 'dmg'; tg: 'e' | 'p'; ti: number; v: number; x: number; y: number; c: 'n' | 'crit' | 'blk' | 'par' | 'heal' | 'sac' | 'shd'; s: number }
   | { id: number; k: 'die'; ei: number; et: number; x: number; y: number }
   | { id: number; k: 'fx'; n: string; x: number; y: number; a: number; o: number; r: number }
   | { id: number; k: 'sfx'; n: string; x: number; y: number }
@@ -264,7 +321,9 @@ export type GameEvent =
   /** Objeto do mapa quebrado (índice) e se deixou item. */
   | { id: number; k: 'break'; bi: number; x: number; y: number; drop: boolean }
   /** Item coletado. */
-  | { id: number; k: 'pickup'; pi: number; x: number; y: number; v: number };
+  | { id: number; k: 'pickup'; pi: number; x: number; y: number; v: number }
+  /** Fala curta de personagem jogável (balão sobre a cabeça). */
+  | { id: number; k: 'say'; pi: number; txt: string };
 
 export type GameEventBody = GameEvent extends infer E ? (E extends GameEvent ? Omit<E, 'id'> : never) : never;
 
@@ -280,6 +339,9 @@ export interface ObjectiveInfo {
   /** Posição (px) quando o objetivo tem um lugar no mapa (altar). */
   x?: number;
   y?: number;
+  /** Inimigos pressionando o objetivo agora e nível de perigo (0 seguro, 1 ameaçado, 2 crítico). */
+  n?: number;
+  d?: number;
 }
 
 export interface WaveInfo {
@@ -312,6 +374,8 @@ export interface MatchStats {
   damage: number;
   downs: number;
   revives: number;
+  /** Vida sacrificada (Lapanha), separada do dano recebido. */
+  sac?: number;
 }
 
 export type ServerMessage =

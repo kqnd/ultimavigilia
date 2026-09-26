@@ -225,3 +225,88 @@ Os bots só andam até o alvo mais próximo e apertam botões em ciclo — serve
 estabilidade e duração, não dificuldade real. O ajuste fino com pessoas continua recomendado,
 principalmente: tempo da luta do Patriarca com totens, Noiva do Inverno com 5–7 jogadores e o
 Necromante em mãos humanas.
+
+## v1.2 — Anti-kite, Vampiro, Necromante e chefes
+
+Todos os números vivem em `src/shared/config/enemies.ts` (ATK.shadowAcolyte / mistStalker / ossuaryBearer, SPECIAL_CAPS, BOSS_AI) e `classes.ts` (VAMPIRE, NECRO, MELEE_RULES, CLASS_RANGE).
+
+| Inimigo | Tier | Vida | Vel. | Custo | Papel |
+|---|---|---|---|---|---|
+| Acólito Sombrio | comum | 58 | 60 | 4,5 | Canaliza "Marcha" (5 s, raio 150): +20% vel. comuns / +10% elites / +8% chefes; interrompível; foge de melee; virote 7 dano |
+| Caçador de Névoa | elite | 95 | 100 | 5,5 | Caça quem atira: salto 20 dano (70–175 px, previsão 0,45 s), recuperação longa com poise ×2 vulnerável; garras 9 |
+| Portador do Ossário | elite | 190 | 36 | 7 | Escudo frontal 160 (arco 120°): projéteis 10% no corpo, melee 40%, área 60%; quebrado → vel. 64 e recargas ×0,6; golpe 16 |
+
+Limites simultâneos: 2 Acólitos, 2 Caçadores, 3 Portadores. Introdução: O4 Acólito, O6 Portador, O8 Caçador, O19 trio; nunca em ondas de chefe/minichefe.
+
+Chefes/minichefes: prioridade ranged 3 > médio 2 > melee 1 (peso de distância 0,004); alvo travado até morrer/sair; Provocar transfere e trava 6 s; se o alvo fica > 200 px por 1,5 s, perseguição ×1,3.
+Melee recebe 12% menos dano (MELEE_RULES).
+
+Vampiro (125 HP): E = Redemoinho Rubro (cd 8 s, 5 pulsos × 12 dano, raio 72, puxa 45, cura 18% capada em 30, -30% dano recebido durante); R Banquete com explosão 42 em raio 96 e cura 6/alvo (máx. 36); mordida 34.
+Necromante: exército até 6 unidades por 6 s, dano a chefes ×0,3 (teto 220); Suprema selada 22 s após uso; carga de Suprema por lacaios ×0,35.
+
+## v1.3 — Dificuldade, Vampiro, Ferida Profana, missões e Lapanha
+
+### Por que o Vampiro se sustentava demais
+- A Mordida curava 35% do dano **bruto** de cada inimigo do cone, sem retorno decrescente: 3 alvos ≈ 3× a cura de 1.
+- Dano excedente sobre alvos quase mortos contava como cura; Sede e Banquete (+35%) aumentavam o dano e, junto, a cura.
+- O teto de 40/s era alto o bastante para Mordida + Redemoinho + explosão do Banquete não se limitarem na prática.
+
+Agora toda cura passa por `healPlayer` (`src/server/world/healing.ts`), nesta ordem: dano válido → retorno decrescente
+(100% / 60% / 35% / 15%) → bônus de cartas (somados, teto) → Ferida Profana → teto por uso → teto por segundo → vida máxima.
+Bônus de dano acima de +25% não aumentam a cura. Objetivos e alvos imunes (Luas Falsas, Totens) não curam.
+
+| Vampiro | antes | agora |
+|---|---|---|
+| Mordida: cura do dano | 35% (bruto, cada alvo) | 28% do dano válido, 1º alvo integral e extras 60/35/15% |
+| Mordida: teto por uso | 34 | 24 |
+| Teto de cura/s | 40 | 28 |
+| Banquete: roubo de vida | 15% | 11% (respeita o teto por segundo) |
+| Banquete: cura máx. da explosão | 36 | 24 |
+| Vida | 125 | 125 (sem mudança: a sustentação foi corrigida primeiro) |
+| Presas Afiadas | +8 dano, +6 teto | +6 dano, +3 teto |
+| Banquete Longo | +3s | +1,5s |
+| Redemoinho Faminto | +20% raio, -1s | +15% raio, -0,5s (teto de área) |
+
+Simulação (bot sem esquiva, `tools/sim.ts vampire 20 <seed> --immortal`, 5 sementes, até a onda 20):
+cura/min 196–240 → 156–181; cura/dano 0,78–0,81 → 0,54–0,67; tempo abaixo de 30% 4,5–7,1% → 9–17%.
+
+### Ferida Profana (Acólito Sombrio)
+Canaliza 0,9 s (símbolo sobre o alvo + linha até o Acólito), trava a mira nos últimos 7 ticks e lança um pulso reto
+(230 px/s, 260 px, não teleguiado). Acerto: 0,75 s de bloqueio total, depois -70% de cura até 4 s. Não acumula,
+só renova; recarga 11 s; nunca junto com a Marcha; dois Acólitos não miram o mesmo jogador. Prefere quem curou ≥ 6
+nos últimos 3 s. Não afeta escudo, sacrifício, reviver, invulnerabilidade; some ao cair, na troca de onda e de mapa.
+
+### Atordoamento (raro)
+Pouso direto do Caçador de Névoa (0,5 s, a até 12 px do centro), golpe do Portador sem escudo (0,5 s, preparação maior)
+e golpes de minichefes com telegraph longo (0,6 s). Máximo 0,75 s. Depois: 2,5 s de resistência (novos viram lentidão).
+
+### Especiais (frequência média em 20 sementes, 1 jogador)
+| até a onda | v1.2 (Acólito/Caçador/Portador) | v1.3 |
+|---|---|---|
+| 10 | 2 / 1 / 2 | 3,0 / 1,0 / 2,0 |
+| 20 | 4 / 4 / 5 | 9,8 / 8,1 / 8,7 |
+| 30 | 7 / 8 / 10 | 19,0 / 16,0 / 18,4 |
+Ondas comuns 9–29 sem nenhum especial: 160/340 → 0/340. Limites solo 2/2/3, +1 a cada 2 jogadores extras.
+
+### Missões
+- Fogueira: vida 100 → 140; pressão por categoria (comum 1, elite 2,2, minichefe 3,5), rampa 0,6→1,6 em 6 s dentro da área,
+  teto 10/s (solo), recuperação lenta após 2,5 s limpa; assaltos anunciados em 30% e 70% da onda.
+- Altar: vida 80 → 120; teto 8/s; assalto a partir da onda 12; canalização à distância interrompível a partir da onda 12.
+- Escolta: sobrevivente 120 → 150; regeneração só fora de combate (até 70%); 40% dos comuns caçam o sobrevivente;
+  emboscadas anunciadas (2,5 s) em 30/60/85% da rota, a última mais pesada, com 5 s de calma entre elas.
+- Estados SEGURO / AMEAÇADO / CRÍTICO no círculo e no HUD, com o número de inimigos pressionando.
+
+### Lapanha (105 de vida, 100 de stamina, 32/s, velocidade 105)
+- Básico: 18 no centro (11 px), 10 na borda (30 px), 9 de stamina, 260 px, 290 px/s, arco só visual.
+- Q Melancia Madura: segura até 1,2 s; custo 3–12% da vida máxima (nunca abaixo de 1); dano 28–70, raio 36–58 px,
+  curva de força ^0,7; chefes: metade do bônus e teto de 55 por lançamento; soltar antes da carga mínima não custa.
+- E Casca Traiçoeira: 8 s, 7 s no chão, máx. 2; comuns escorregam 16 ticks e ficam +15% vulneráveis por 0,6 s;
+  elites escorregam metade e ficam 25% lentos; minichefes e chefes só ficam lentos. E de novo: esmaga por 5% da vida (22 em 38 px).
+- R Safra Abençoada: 8 s de regeneração, 4% a 6% da vida máxima por segundo (mais com pouca vida), +15% de velocidade
+  de arremesso, custos de vida -25%, acerto central cura 2 (máx. 8/s); Ferida reduz normalmente; não gera Polpa.
+- Polpa: centro 3, borda 1 (elite/chefe ×1,5), teto 8 por ação; sacrifício dá 0,5 por ponto de vida (máx. 6 por ação).
+
+### Cartas
+Raridades comum 60% · incomum 27% · rara 11% · lendária 2%; no máximo 1 lendária por build; nenhuma oferta repete família.
+Tetos globais: recarga 25%, velocidade 15%, velocidade de ataque 12%, dano de cartas 30%, redução de dano 16%,
+bônus de cura 20%, alcance 15%, área 30%.

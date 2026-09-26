@@ -417,6 +417,84 @@ const DOG_SIDE = [
   '......pppp......',
 ];
 
+// Lapanha: jovem de Salvador, cabelo curto encaracolado, bandana verde com listra vermelha,
+// sorriso largo, regata clara com faixa verde, bermuda verde-casca e cesto de melancias no quadril.
+const LAP_DOWN = [
+  '................',
+  '.....hhhhhh.....',
+  '....hhhhhhhh....',
+  '...hhhhhhhhhh...',
+  '...gggggggggg...',
+  '...gRggggggRgg..',
+  '...hssssssssh.g.',
+  '...ssessssess...',
+  '....ssssssss....',
+  '....sMwwwwMs....',
+  '.....ssssss.....',
+  '..sssbcccccsss..',
+  '..ssccbcccccss..',
+  '..sscGGbGGccss..',
+  '..ssccccbcccss..',
+  '..s.cccccbcc.s..',
+  '..s.rrrrrrbKKs..',
+  '....oooooKkRKk..',
+  '....ooooo.kkkk..',
+  '....ooo..ooo....',
+];
+
+const LAP_SIDE = [
+  '................',
+  '.......hhhh.....',
+  '.....hhhhhhhh...',
+  '....hhhhhhhhhh..',
+  '....gggggggggg..',
+  '..gRgggggggggg..',
+  '..g.hhhhhssssS..',
+  '....hhhhsssess..',
+  '....hhhhssssss..',
+  '.....hhhssssMw..',
+  '......sssssss...',
+  '....kkccccccss..',
+  '...kKKccccccss..',
+  '...kKRcGGGGcss..',
+  '...kkkccccccs...',
+  '....k.ccccccs...',
+  '......rrrrrr....',
+  '......oooooo....',
+  '......oooooo....',
+  '......ooo.oo....',
+];
+
+/** Comemoração (vitória): braços para cima, sorriso aberto. */
+const LAP_CHEER = [
+  '..ss........ss..',
+  '..ss.hhhhhh.ss..',
+  '..s.hhhhhhhh.s..',
+  '..shhhhhhhhhhs..',
+  '..sggggggggggs..',
+  '..sgRggggggRgs..',
+  '..shssssssssh.g.',
+  '..sssessssesss..',
+  '..s.ssssssss.s..',
+  '..s.sMwwwwMs.s..',
+  '...s.sMMMMs.s...',
+  '....sbcccccs....',
+  '....ccbccccc....',
+  '....cGGbGGcc....',
+  '....ccccbccc....',
+  '....cccccbcc....',
+  '....rrrrrrbKK...',
+  '....oooooKkRKk..',
+  '....ooooo.kkkk..',
+  '....ooo..ooo....',
+];
+
+const LAP_PAL: Record<string, Color> = {
+  h: 0x1c1512, g: 0x3f9a3a, R: 0xd23a3a, s: 0x8f5b3d, S: 0x6f4330, e: P.ink, M: 0x6a1c1c, w: 0xf4efe4,
+  c: 0xe6dfcb, G: 0x3f9a3a, b: 0x6b4a2f, r: 0xc23434, o: 0x2f6e3a, k: 0xb8894a, K: 0x3f9a3a,
+  p: 0x8f5b3d, P: 0x6f4330, q: 0x6f4330, d: 0x4a3322,
+};
+
 const ARTS: Record<ClassId, ClassArt> = {
   hunter: {
     pal: { h: P.grn4, H: P.grn2, s: P.skin2, S: P.skin1, e: P.ink, a: P.red3, c: P.brn3, C: P.brn2, t: P.brn1, g: P.sil1, p: P.gray2, P: P.gray1, q: P.gray1, b: P.brn2, d: P.brn1 },
@@ -475,7 +553,42 @@ const ARTS: Record<ClassId, ClassArt> = {
     kid: true,
     noShade: 'eym',
   },
+  lapanha: {
+    pal: LAP_PAL,
+    down: LAP_DOWN,
+    side: LAP_SIDE,
+    up: back(LAP_DOWN, 11, { s: 'h', e: 'h', M: 'h', w: 'h', S: 'h' }),
+    legs: 'adult',
+    noShade: 'ewMR',
+  },
 };
+
+/** Quadros extras do Lapanha: comer a melancia (Safra) e comemorar (vitória). */
+function lapanhaExtras(sb: SheetBuilder): void {
+  const art = ARTS.lapanha;
+  // comer: fatia de melancia na boca (vermelha com sementes, casca branca e verde), mãos segurando
+  for (let k = 0; k < 2; k++) {
+    const c = composeArt(art, { dir: 'down', leg: 0, dx: 0, dy: k }, 'lapanha');
+    const y = 12 + k;
+    c.rect(12, y - 1, 8, 1, P.outline);
+    c.rect(11, y, 10, 3, P.outline);
+    c.rect(12, y, 8, 1, 0xe04848);
+    if (k === 1) {
+      // mordida: falta um pedaço no topo
+      c.set(15, y, P.outline);
+      c.set(16, y, P.outline);
+    }
+    c.set(14, y, P.ink);
+    c.set(18, y, P.ink);
+    c.rect(12, y + 1, 8, 1, 0xf0ead8);
+    c.rect(13, y + 2, 6, 1, 0x3f9a3a);
+    c.set(11, y + 1, LAP_PAL.s as Color);
+    c.set(20, y + 1, LAP_PAL.s as Color);
+    sb.add(`lapanha_eat_${k}`, c);
+  }
+  const cheerArt: ClassArt = { ...art, down: LAP_CHEER };
+  for (let k = 0; k < 2; k++) sb.add(`lapanha_cheer_${k}`, composeArt(cheerArt, { dir: 'down', leg: k * 2, dx: 0, dy: -k }, 'lapanha'));
+}
 
 // ---------------------------------------------------------------- montagem
 
@@ -538,7 +651,7 @@ export function composeArt(art: ClassArt, o: FrameOpts, cls: ClassId | null = nu
   autoShade(c, skip);
   if (o.cast) {
     // brilho nas mãos (habilidade)
-    const glow = o.glow ?? (cls === 'mage' ? P.arc3 : cls === 'dog' ? P.mag2 : cls === 'vampire' ? P.red5 : cls === 'hunter' ? P.sil2 : cls === 'necromancer' ? 0xa8d05a : cls === 'berserker' ? P.red5 : P.amb4);
+    const glow = o.glow ?? (cls === 'mage' ? P.arc3 : cls === 'dog' ? P.mag2 : cls === 'vampire' ? P.red5 : cls === 'hunter' ? P.sil2 : cls === 'necromancer' ? 0xa8d05a : cls === 'berserker' ? P.red5 : cls === 'lapanha' ? 0xff7a6a : P.amb4);
     const hy = upperY + o.dy + (kid ? 9 : 12);
     if (o.dir === 'side') {
       c.set(8 + o.dx + 14, hy, glow);
@@ -581,6 +694,7 @@ export function buildClassSheet(cls: ClassId): SheetBuilder {
   const down = new PixelCanvas(CHAR_FRAME, CHAR_FRAME);
   down.blit(lying, 0, 6);
   sb.add(`${cls}_down`, down);
+  if (cls === 'lapanha') lapanhaExtras(sb);
   return sb;
 }
 
@@ -605,6 +719,13 @@ export function buildWeapons(): SheetBuilder {
   w('claw', ['y.y.y', '.yyy.', '..y..'], { y: P.red5 });
   w('axe', ['.........mm.', '........mMMm', 'hhhhhhhhmMMm', 'hhhhhhhhmMMm', '........mMMm', '.........mm.'], { h: P.brn3, m: P.gray5, M: P.gray3 });
   w('boneStaff', ['..............ww.', 'bbbbbbbbbbbbbwgw.', 'bbbbbbbbbbbbbwww.', '..............ww.'], { b: P.gray5, w: P.gray6, g: 0xa8d05a });
+  // melancias na mão do Lapanha: pequena (básico) e crescendo na carga do Q (4 tamanhos, rachada no máximo)
+  const melonPal = { G: 0x4fb04a, g: 0x24602a, k: 0x7a1f1f, w: P.amb5 };
+  w('melonHeld', ['.gGgG.', 'gGgGgG', 'GgGgGg', 'gGgGgG', '.gGgG.'], melonPal);
+  w('melonQ_0', ['..gGgG..', '.gGgGgG.', 'gGgGgGgG', 'GgGgGgGg', 'gGgGgGgG', '.gGgGgG.', '..gGgG..'], melonPal);
+  w('melonQ_1', ['...gGgG...', '.gGgGgGgG.', '.GgGgGgGg.', 'gGgGgGgGgG', 'GgGgGgGgGg', 'gGgGgGgGgG', '.GgGgGgGg.', '.gGgGgGgG.', '...gGgG...'], melonPal);
+  w('melonQ_2', ['....gGgG....', '..gGgGgGgG..', '.gGgGgGgGgG.', '.GgGgGgGgGg.', 'gGgGgGgGgGgG', 'GgGgGgGgGgGg', 'gGgGgGgGgGgG', '.GgGgGgGgGg.', '.gGgGgGgGgG.', '..GgGgGgGg..', '....GgGg....'], melonPal);
+  w('melonQ_3', ['....gGgG....', '..gGgGkGgG..', '.gGgGgkgGgG.', '.GgGgGgkGgw.', 'gGgGkGgGgGgG', 'GgGgGkGgGgGg', 'gGgkGgGgkGgG', '.GgGgGgGkGg.', '.gGgGgGgGgG.', '..GgGgGgGg..', '....GgGg....'], melonPal);
   return sb;
 }
 
@@ -616,4 +737,5 @@ export const CLASS_WEAPON: Record<ClassId, string | null> = {
   berserker: 'axe',
   dog: null,
   necromancer: 'boneStaff',
+  lapanha: 'melonHeld',
 };

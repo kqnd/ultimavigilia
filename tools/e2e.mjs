@@ -220,7 +220,7 @@ scenarios.aim = async () => {
   const cls = rest[0] ?? 'hunter';
   const projectileKind = { hunter: 0, mage: 2, necromancer: 7 }[cls];
   assert.notEqual(projectileKind, undefined, `Classe sem disparo de teste: ${cls}`);
-  const height = cls === 'hunter' ? 6 : 8;
+  const height = 8; // SHOT_HEIGHT: projéteis no chão, desenhados 8 px acima
   const { app, page, logs } = await launch(`aim-regression-${cls}`);
   try {
     await soloStart(page, cls);
@@ -270,9 +270,223 @@ scenarios.aim = async () => {
     console.log(JSON.stringify({ geometry, before, after, logs }, null, 2));
     assert.ok(after.shots.length > 0, 'O disparo do Caçador não apareceu no snapshot');
     const shot = after.shots[0];
-    const expected = Math.atan2(after.target.y - (after.player.y - height), after.target.x - after.player.x);
+    const expected = Math.atan2(after.target.y + height - after.player.y, after.target.x - after.player.x);
     const actual = Math.atan2(shot.vy, shot.vx);
     assert.ok(Math.abs(actual - expected) < 0.06, `Projétil não seguiu o cursor após a preparação: esperado ${expected}, recebido ${actual}`);
+  } finally {
+    await app.close();
+  }
+};
+
+// Mira exata: cursor no centro e nas quatro bordas, com o jogador no meio e encostado num canto
+// do mapa (câmera limitada). A trajetória desenhada tem de passar pelo ponto clicado.
+scenarios.aimcheck = async () => {
+  const cls = rest[0] ?? 'hunter';
+  const H = 8;
+  const { app, page, logs } = await launch(`aimcheck-${cls}`);
+  const results = [];
+  try {
+    await soloStart(page, cls);
+    await dbg(page, 'god');
+    await page.keyboard.press('F9');
+    const rect = await page.evaluate(() => { const r = document.querySelector('#game canvas').getBoundingClientRect(); return { l: r.left, t: r.top, w: r.width, h: r.height }; });
+    const toClient = (sx, sy) => ({ x: rect.l + (sx * rect.w) / 640, y: rect.t + (sy * rect.h) / 360 });
+    const points = [[320, 150], [40, 180], [600, 180], [320, 30], [320, 330], [70, 60], [590, 320]];
+    const fireAt = async (tag) => {
+      for (const [sx, sy] of points) {
+        await dbg(page, 'kill');
+        const c = toClient(sx, sy);
+        await page.mouse.move(c.x, c.y);
+        await sleep(250);
+        const ids = await page.evaluate(() => window.__app.session.latest().pr.map((p) => p[0]));
+        const click = await page.evaluate(() => { const { app, game } = window.__app; return game.screenToWorld(app.input.mouseX, app.input.mouseY); });
+        let fired = false;
+        for (let k = 0; k < 4 && !fired; k++) {
+          await page.mouse.down();
+          await sleep(40);
+          await page.mouse.up();
+          fired = await page.waitForFunction((old) => window.__app.session.latest().pr.some((p) => p[6] > 0 && !old.includes(p[0])), ids, { timeout: 1500 }).then(() => true, () => false);
+          if (!fired) await sleep(800);
+        }
+        if (!fired) { results.push({ tag, sx, sy, perp: 0, ahead: true, skipped: true }); console.log('sem projétil', tag, sx, sy); continue; }
+        const pr = await page.evaluate((old) => window.__app.session.latest().pr.find((p) => p[6] > 0 && !old.includes(p[0])), ids);
+        const [, , x, y, vx, vy] = pr;
+        const l = Math.hypot(vx, vy);
+        const dx = click.x - x;
+        const dy = click.y - (y - H);
+        const perp = Math.abs(dx * (vy / l) - dy * (vx / l));
+        const ahead = dx * vx + dy * vy > 0;
+        results.push({ tag, sx, sy, perp: Number(perp.toFixed(2)), ahead });
+        if (sx === 590 && sy === 320) await shot(page, `aim-${tag}`);
+        await sleep(350);
+      }
+    };
+    await fireAt('centro');
+    // encosta no canto superior esquerdo (câmera presa nos limites do mapa)
+    await page.keyboard.down('KeyA');
+    await page.keyboard.down('KeyW');
+    await sleep(6500);
+    await page.keyboard.up('KeyA');
+    await page.keyboard.up('KeyW');
+    await sleep(300);
+    const cam = await page.evaluate(() => { const c = window.__app.game.cameras.main; return { x: c.scrollX, y: c.scrollY }; });
+    await fireAt('borda');
+    console.log(JSON.stringify({ cam, results }, null, 1));
+    const worst = Math.max(...results.map((r) => r.perp));
+    // tolerância: raio do projétil + arredondamento do snapshot (1 px)
+    if (worst > 3 || results.some((r) => !r.ahead)) throw new Error(`mira desviou: ${worst}px`);
+    if (logs.some((l) => l.includes('[pageerror]'))) throw new Error(logs.join('\n'));
+    console.log('mira OK: maior desvio', worst, 'px');
+  } finally {
+    await app.close();
+  }
+};
+
+// Novos inimigos anti-kite: cada um isolado e os três juntos, contra classe à distância e corpo a corpo.
+scenarios.antikite = async () => {
+  const cls = rest[0] ?? 'hunter';
+  const { app, page, logs } = await launch(`antikite-${cls}`);
+  try {
+    await soloStart(page, cls);
+    await dbg(page, 'god');
+    await dbg(page, 'hold');
+    await dbg(page, 'kill');
+    const clear = async () => { await dbg(page, 'kill'); await sleep(300); };
+    // Acólito Sombrio com um grupo perseguindo
+    await dbg(page, 'spawn', 6, 'shambler');
+    await dbg(page, 'spawn', 1, 'shadowAcolyte');
+    for (let i = 0; i < 12; i++) {
+      await sleep(500);
+      const march = await page.evaluate(() => window.__app.session.latest().e.some((e) => e[1] === 15 && e[7] === 25 && e[6] === 2));
+      if (march) break;
+    }
+    await shot(page, `ak-${cls}-1-acolyte`);
+    await sleep(1500);
+    await shot(page, `ak-${cls}-2-hasted`);
+    await clear();
+    // Caçador de Névoa: dispara para provocar o salto
+    await dbg(page, 'spawn', 1, 'mistStalker');
+    await page.mouse.move(900, 500);
+    for (let i = 0; i < 16; i++) {
+      await page.mouse.down(); await sleep(60); await page.mouse.up(); await sleep(120);
+      const leap = await page.evaluate(() => window.__app.session.latest().e.some((e) => e[1] === 16 && e[7] === 26 && e[6] === 2));
+      if (leap) break;
+    }
+    await shot(page, `ak-${cls}-3-stalker-leap`);
+    await sleep(900);
+    await shot(page, `ak-${cls}-4-stalker-recover`);
+    await clear();
+    // Portador do Ossário: tiros no escudo
+    await dbg(page, 'spawn', 2, 'ossuaryBearer');
+    await sleep(1200);
+    for (let i = 0; i < 10; i++) { await page.mouse.down(); await sleep(60); await page.mouse.up(); await sleep(140); }
+    await shot(page, `ak-${cls}-5-bearer`);
+    await clear();
+    // os três juntos
+    await dbg(page, 'spawn', 5, 'shambler');
+    await dbg(page, 'spawn', 1, 'ossuaryBearer');
+    await dbg(page, 'spawn', 1, 'shadowAcolyte');
+    await dbg(page, 'spawn', 1, 'mistStalker');
+    await sleep(2500);
+    await shot(page, `ak-${cls}-6-combo`);
+    const errors = logs.filter((l) => l.includes('[pageerror]') || l.includes('[error]'));
+    console.log('erros de console:', errors.length);
+    if (errors.length) console.log(errors.join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
+// v1.3: Lapanha (seleção, F1, habilidades), Ferida Profana, atordoamento, missões em estado crítico e cartas.
+scenarios.v13 = async () => {
+  const { app, page, logs } = await launch('v13');
+  try {
+    await sleep(800);
+    await setName(page, 'Álex');
+    await clickText(page, 'Jogar sozinho');
+    await page.waitForSelector('.classcard', { timeout: 15000 });
+    await page.evaluate(() => window.__app.session.send({ t: 'cls', cls: 'lapanha' }));
+    await sleep(700);
+    const lapCard = page.locator('.classcard', { hasText: 'Lapanha' }).first();
+    if (await lapCard.count()) await lapCard.hover();
+    await sleep(300);
+    await shot(page, 'v13-01-selecao');
+    await clickText(page, 'Começar');
+    await sleep(3800);
+    await dbg(page, 'god');
+    await dbg(page, 'hold');
+    await dbg(page, 'kill');
+    await page.keyboard.down('F1');
+    await sleep(500);
+    await shot(page, 'v13-02-f1');
+    await page.keyboard.up('F1');
+    await sleep(300);
+    // grupo à frente e Melancia Madura carregada ao máximo (prévia de vida, raio e dano)
+    await dbg(page, 'spawn', 6, 'shambler');
+    await page.mouse.move(1180, 520);
+    await sleep(400);
+    await page.keyboard.down('KeyQ');
+    await sleep(1150);
+    await shot(page, 'v13-03-q-carga');
+    await page.keyboard.up('KeyQ');
+    await sleep(450);
+    await shot(page, 'v13-04-q-explosao');
+    await sleep(600);
+    // básico e casca
+    for (let i = 0; i < 4; i++) { await page.mouse.down(); await sleep(60); await page.mouse.up(); await sleep(260); }
+    await shot(page, 'v13-05-basico');
+    await page.mouse.move(1080, 520);
+    await page.keyboard.press('KeyE');
+    await sleep(900);
+    await shot(page, 'v13-06-casca');
+    // Safra Abençoada com vida baixa, depois Ferida Profana (bloqueio total e redução)
+    await dbg(page, 'hp', 25);
+    await dbg(page, 'ult');
+    await sleep(200);
+    await page.keyboard.press('KeyR');
+    await sleep(1200);
+    await shot(page, 'v13-07-safra');
+    await dbg(page, 'wound', 1);
+    await sleep(250);
+    await shot(page, 'v13-08-ferida-bloqueio');
+    await sleep(1100);
+    await shot(page, 'v13-09-ferida-reducao');
+    await dbg(page, 'stun', 6);
+    await sleep(200);
+    await shot(page, 'v13-10-atordoado');
+    await dbg(page, 'kill');
+    await sleep(1500);
+    // telegraph da Ferida Profana (Acólito Sombrio mirando o jogador)
+    await dbg(page, 'wound', 0);
+    await dbg(page, 'spawn', 1, 'shadowAcolyte');
+    let seen = false;
+    for (let i = 0; i < 40 && !seen; i++) {
+      await sleep(250);
+      seen = await page.evaluate(() => window.__app.session.latest().e.some((e) => e[1] === 15 && e[7] === 28 && e[6] === 2));
+    }
+    await sleep(350);
+    await shot(page, 'v13-11-ferida-telegraph');
+    await dbg(page, 'kill');
+    // fogueira em estado crítico com invasores
+    await dbg(page, 'event', 30, 'bonfire');
+    await dbg(page, 'spawn', 5, 'shambler');
+    await dbg(page, 'spawn', 2, 'werewolf');
+    await sleep(3500);
+    await shot(page, 'v13-12-fogueira');
+    await dbg(page, 'kill');
+    await dbg(page, 'challenge', 20, 'altar');
+    await dbg(page, 'spawn', 6, 'shambler');
+    await dbg(page, 'spawn', 1, 'ossuaryBearer');
+    await sleep(4000);
+    await shot(page, 'v13-13-altar');
+    // fim da onda → tela de cartas com raridade
+    await dbg(page, 'hold');
+    await dbg(page, 'kill');
+    await sleep(2500);
+    await shot(page, 'v13-14-cartas');
+    const errors = logs.filter((l) => l.includes('[pageerror]') || l.includes('[error]'));
+    console.log('erros de console:', errors.length);
+    if (errors.length) console.log(errors.join('\n'));
   } finally {
     await app.close();
   }

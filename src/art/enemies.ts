@@ -4,6 +4,7 @@
  */
 import { back, type ClassArt, composeArt, type Dir, mirror } from './characters.js';
 import { buildBrideSheet, buildExtraSheet, renameRecolor } from './extra.js';
+import { buildSpecialFrames } from './specials.js';
 import { bayer, type Color, mix, PixelCanvas, SheetBuilder } from './pixel.js';
 import { P } from './palette.js';
 
@@ -605,6 +606,7 @@ export function buildEnemySheets(): Record<string, SheetBuilder> {
   commonFrames(commons, 'shambler');
   commonFrames(commons, 'runner');
   commonFrames(commons, 'acolyte');
+  buildSpecialFrames(commons);
   const elites = new SheetBuilder();
   werewolfFrames(elites, 'werewolf', 40, FUR, P.amb4, 1);
   fatherFrames(elites);

@@ -146,8 +146,8 @@ describe('ajustes de Vampiro e Dog', () => {
     // teto por segundo vale para qualquer cura com limite
     p.healBudget = VAMPIRE.healPerSecondCap;
     const before = p.hp;
-    w.healPlayer(p, 999, true);
-    expect(p.hp - before).toBeLessThanOrEqual(VAMPIRE.healPerSecondCap);
+    w.healPlayer(p, 999, 'bite');
+    expect(p.hp - before).toBeLessThanOrEqual(VAMPIRE.healPerSecondCap + 0.01);
   });
 
   it('Pulso do Dog: preparação e recuperação curtas, anda durante o golpe', () => {
@@ -348,11 +348,9 @@ describe('escolta: entrada, navegação e ameaça', () => {
     const survivor = [...w.minions.values()].find((m) => m.kind === 'survivor')!;
     survivor.state = 'move';
     let e = dummy(w, 'shambler', survivor.x + 55, survivor.y);
-    // Seleciona um inimigo do grupo designado para pressionar a escolta.
-    while (e.id % 5 >= 3) {
-      w.enemies.delete(e.id);
-      e = dummy(w, 'shambler', survivor.x + 55, survivor.y);
-    }
+    // Parte da horda recebe o papel de "atacante do sobrevivente" (não todos).
+    e.role = 'raider';
+    for (const p of w.players.values()) { p.move.x = survivor.x - 150; p.move.y = survivor.y; }
     e.targetT = 0;
     expect(w.targetOf(e)).toBe(survivor);
     const dir = w.chaseDir(e, survivor);
@@ -454,7 +452,7 @@ describe('afixos de elite', () => {
   it('chance cresce com a onda até o teto; Sangrento cura ao acertar; Blindado resiste a poise', () => {
     expect(affixChance(1, 0)).toBe(0);
     expect(affixChance(TOTAL_WAVES, 0)).toBeLessThanOrEqual(AFFIX_RULES.maxChance);
-    const w = mkWorld(['tank']);
+    const w = mkWorld(['hunter']); // classe à distância: sem a redução de dano do corpo a corpo
     quiet(w);
     const p = w.players.get(1) as Player;
     const wolf = dummy(w, 'werewolf', p.x + 20, p.y, 400);

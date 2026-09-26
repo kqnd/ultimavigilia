@@ -129,3 +129,15 @@ export function placeText(t: { width: number; height: number; scaleX: number; se
   t.setOrigin(0, 0);
   t.setPosition(Math.round(x - t.width * ox), Math.round(y - t.height * oy));
 }
+
+/**
+ * Origem "pixel perfect": centraliza na horizontal arredondando para baixo, para que a borda
+ * esquerda caia sempre em coluna inteira mesmo com largura ímpar (origem 0,5 em largura ímpar
+ * deixava estruturas meio pixel fora da grade e com bordas borradas/irregulares).
+ */
+export function pixelOrigin<T extends { width: number; height: number; setOrigin(x: number, y: number): unknown }>(img: T, bottomInset = 0): T {
+  const w = Math.max(1, img.width);
+  const h = Math.max(1, img.height);
+  img.setOrigin(Math.floor(w / 2) / w, (h - bottomInset) / h);
+  return img;
+}

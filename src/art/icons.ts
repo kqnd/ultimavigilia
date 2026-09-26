@@ -63,6 +63,16 @@ const DEF: Record<string, [string[], Pal]> = {
   crown: [['............', '#....#....#.', '##..###..##.', '###.###.###.', '###########.', '###o###o###.', '###########.', '###########.', '............', '............', '............', '............'], { '#': P.amb4, o: P.red4 }],
   flask: [['....oo......', '....##......', '...#..#.....', '..#rrrr#....', '.#rrrrrr#...', '.#rrwrrr#...', '.#rrrrrr#...', '..######....', '............', '............', '............', '............'], { '#': P.gray5, o: P.brn3, r: P.red4, w: P.white }],
   wave1: [['............', '..........#.', '.........##.', '........###.', '.......####.', '......#####.', '.....######.', '....#######.', '...########.', '..#########.', '............', '............'], { '#': P.red4 }],
+  // ---- Lapanha (melancias) e estados
+  melon: [['............', '....gGgG....', '..gGgGgGgG..', '.GgGgGgGgGg.', '.gGgGgGgGgG.', 'GgGgGgGgGgGg', 'gGgGgGgGgGgG', '.GgGgGgGgGg.', '.gGgGgGgGgG.', '..GgGgGgGg..', '....GgGg....', '............'], { G: 0x3f9a3a, g: 0x24602a }],
+  bigMelon: [['.....w......', '..w.gGgG.w..', '..gGgGgGgG..', '.GgGgk.GgGg.', '.gGgGgk.GgG.', 'GgGgGgGkGgGg', 'gGgGgGgGkGgG', '.GgGk.gGgGg.', '.gGgGk.GgGg.', '..GgGgGgGg..', '....GgGg....', '..w......w..'], { G: 0x4fb04a, g: 0x24602a, k: 0x7a1f1f, w: P.amb5 }],
+  peel: [['............', '............', '............', 'G..........G', 'Gw........wG', 'GGw......wGG', '.GGww..wwGG.', '..GGGwwGGG..', '...GGGGGG...', '............', '............', '............'], { G: 0x3f9a3a, w: 0xe8e2c8 }],
+  harvest: [['............', '............', 'r.k..r..k..r', 'rrrrrrrrrrrr', '.rrkrrrrkrr.', '.rrrrrrrrrr.', '..rrrrkrrr..', '..wwwwwwww..', '...GGGGGG...', '....gggg....', '............', '............'], { r: 0xe04848, k: P.ink, w: 0xf0ead8, G: 0x3f9a3a, g: 0x24602a }],
+  heartMelon: [['............', '.rr....rr...', 'rrrr..rrrr..', 'rrkrrrrkrr..', 'rrrrrrrrrr..', 'rrrrkrrrrr..', '.rrrrrrrr...', '..wwwwww....', '...GGGG.....', '....GG......', '............', '............'], { r: 0xe04848, k: P.ink, w: 0xf0ead8, G: 0x3f9a3a }],
+  pulp: [['.....r......', '.....r......', '....rrr.....', '....rrr.....', '...rrrrr....', '..rrrkrrr...', '..rrprrrr...', '..rrrrrkr...', '...rrrrr....', '....rrr.....', '............', '............'], { r: 0xe04848, p: 0xff9a8a, k: P.ink }],
+  seeds: [['............', '.kk.........', 'kkkk....kk..', '.kk....kkkk.', '........kk..', '............', '....kk......', '...kkkk.....', '....kk......', '............', '............', '............'], { k: 0x2a1a14 }],
+  wound: [['....#..#....', '...#.##.#...', '..#.#..#.#..', '.#.#....#.#.', '#.#..oo..#.#', '#.#.oooo.#.#', '#.#.o##o.#.#', '#.#..oo..#.#', '.#.#....#.#.', '..#.#..#.#..', '...#.##.#...', '....#..#....'], { '#': 0x7dffb0, o: P.abyss3 }],
+  stun: [['.....#......', '....###.....', '.#########..', '..#######...', '...##.##....', '..##...##...', '............', '.#......#...', '###....###..', '.#......#...', '............', '............'], { '#': P.amb4 }],
 };
 
 export const ABILITY_ICONS: Record<string, [string, string, string, string, string]> = {
@@ -73,6 +83,7 @@ export const ABILITY_ICONS: Record<string, [string, string, string, string, stri
   berserker: ['axe', 'frenzy', 'quake', 'rage', 'fury'],
   dog: ['mouth', 'rings', 'magnet', 'bigRings', 'wave'],
   necromancer: ['bone', 'raise', 'hand', 'army', 'soul'],
+  lapanha: ['melon', 'bigMelon', 'peel', 'harvest', 'heartMelon'],
 };
 
 /** Aliases de ícones de melhorias → ícones existentes. */

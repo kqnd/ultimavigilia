@@ -5,14 +5,14 @@
 import Phaser from 'phaser';
 import { placeObjects, type Placed } from '../../art/placement.js';
 import type { Climate, MapId } from '../../shared/config/chapters.js';
-import { BERSERKER, CLASSES, type ClassId, VAMPIRE } from '../../shared/config/classes.js';
-import { ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
+import { BERSERKER, CLASSES, type ClassId, LAPANHA, VAMPIRE } from '../../shared/config/classes.js';
+import { ATK, ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
 import { EVENT_RULES, CHALLENGE_RULES } from '../../shared/config/objectives.js';
-import { TICK_MS, TILE } from '../../shared/constants.js';
+import { SHOT_HEIGHT, TICK_MS, TILE } from '../../shared/constants.js';
 import { circleFree, lineOfSight } from '../../shared/collision.js';
 import { type ArenaMap, cloneMap, getMap, mapByIndex, setBroken, WORLD_H, WORLD_W } from '../../shared/map.js';
 import type { InputFrame } from '../../shared/movement.js';
-import { ACTIONS, type EnemyTuple, type GameEvent, type MinionTuple, PROJECTILE_KINDS, type ProjTuple, type SnapPlayer, ZONE_KINDS, type ZoneTuple } from '../../shared/protocol.js';
+import { ACTIONS, type EnemyTuple, type GameEvent, LOB_KINDS, type MinionTuple, PROJECTILE_KINDS, type ProjTuple, type SnapPlayer, ZONE_KINDS, type ZoneTuple } from '../../shared/protocol.js';
 import { audio } from '../audio.js';
 import { FlowField } from '../../server/world/nav.js';
 import type { Session, Snapshot } from '../session.js';
@@ -20,8 +20,8 @@ import { Effects } from './effects.js';
 import { reflectionAlpha } from './graphics-quality.js';
 import type { InputCapture } from './input.js';
 import { Predictor } from './predict.js';
-import { drawTelegraph, drawZone } from './telegraphs.js';
-import { ensureFloor, ensureTextures, tf } from './textures.js';
+import { drawMarchBeams, drawTelegraph, drawWoundLink, drawZone } from './telegraphs.js';
+import { ensureFloor, ensureTextures, pixelOrigin, tf } from './textures.js';
 import { affixOf, enemyAttackName, enemyStateName, EnemyView, isBossType, MinionView, PlayerView, type RenderEnemy } from './views.js';
 
 const INTERP_TICKS = 3.2;
@@ -98,8 +98,17 @@ export class GameScene extends Phaser.Scene {
   private enemies = new Map<number, EnemyView>();
   private projectiles = new Map<number, Phaser.GameObjects.Image>();
   private traps = new Map<number, Phaser.GameObjects.Image>();
+  /** Sombras das melancias em arco (no chão, sob o projétil). */
+  private lobShadows = new Map<number, Phaser.GameObjects.Image>();
   private ghosts: { img: Phaser.GameObjects.Image; life: number }[] = [];
   private zoneG!: Phaser.GameObjects.Graphics;
+  /** Depuração da mira (F9): cursor no mundo, linha da mira, direção enviada e trajetória inicial. */
+  aimDebug = false;
+  aimDebugText = '';
+  private debugG!: Phaser.GameObjects.Graphics;
+  private lastAim = { x: 0, y: 0 };
+  private shotStarts = new Map<number, { x: number; y: number; vx: number; vy: number; at: number }>();
+  private debris: { img: Phaser.GameObjects.Image; until: number }[] = [];
   private teleG!: Phaser.GameObjects.Graphics;
   private dark!: Phaser.GameObjects.RenderTexture;
   private glows: Phaser.GameObjects.Image[] = [];
@@ -134,6 +143,7 @@ export class GameScene extends Phaser.Scene {
     this.zoneG = this.add.graphics().setDepth(-8000);
     this.reflectionG = this.add.graphics().setDepth(-8500);
     this.teleG = this.add.graphics().setDepth(-7000);
+    this.debugG = this.add.graphics().setDepth(160000);
     this.dark = this.add.renderTexture(0, 0, 640, 360).setOrigin(0, 0).setScrollFactor(0).setDepth(150000);
     this.fx = new Effects(this);
     this.setMap('village', true);
@@ -181,7 +191,7 @@ export class GameScene extends Phaser.Scene {
     this.floorImg = this.add.image(0, 0, ensureFloor(this, id)).setOrigin(0, 0).setDepth(-10000);
     const look = CLIMATE_LOOK[this.map.climate];
     for (const p of placeObjects(this.map)) {
-      const img = this.add.image(Math.round(p.x), Math.round(p.y), ...tf(p.key)).setOrigin(0.5, 1).setDepth(p.depth).setFlipX(p.flipX);
+      const img = pixelOrigin(this.add.image(Math.round(p.x), Math.round(p.y), ...tf(p.key))).setDepth(p.depth).setFlipX(p.flipX);
       this.mapImages.push(img);
       const bounds = img.getBounds();
       if (p.tall) this.objects.push({ p, img, bounds });
@@ -232,6 +242,9 @@ export class GameScene extends Phaser.Scene {
   }
 
   clearEntities(): void {
+    for (const d of this.debris) d.img.destroy();
+    this.debris = [];
+    this.shotStarts.clear();
     this.moveTarget = null;
     this.moveClick = null;
     for (const v of this.players.values()) v.destroy();
@@ -241,6 +254,8 @@ export class GameScene extends Phaser.Scene {
     for (const v of this.enemies.values()) v.destroy();
     for (const v of this.projectiles.values()) v.destroy();
     for (const v of this.traps.values()) v.destroy();
+    for (const v of this.lobShadows.values()) v.destroy();
+    this.lobShadows.clear();
     for (const v of this.minions.values()) v.destroy();
     for (const v of this.pickups.values()) v.destroy();
     this.altar?.destroy();
@@ -302,6 +317,11 @@ export class GameScene extends Phaser.Scene {
           } else {
             const v = this.players.get(ev.ti);
             if (ev.c === 'heal') this.fx.number(ev.x, ev.y, `+${ev.v}`, 0x7fc47a);
+            else if (ev.c === 'sac') {
+              // sacrifício do Lapanha: número próprio, sem tremor nem clarão de dano
+              this.fx.number(ev.x, ev.y, `-${ev.v}`, 0xff9a8a);
+              this.fx.burst('p_pulp', ev.x, ev.y + 6, 4, 40, 0.35, { g: 160 });
+            } else if (ev.c === 'shd') this.fx.number(ev.x, ev.y, `(${ev.v})`, 0xbfe3ff);
             else if (ev.c === 'blk') this.fx.number(ev.x, ev.y, 'BLOQUEIO', 0x8fd3f0);
             else if (ev.c === 'par') this.fx.number(ev.x, ev.y, 'APARO!', 0xf6c257);
             else {
@@ -362,6 +382,11 @@ export class GameScene extends Phaser.Scene {
             this.fx.burst('p_white', p.x, p.y - 8, 12, 50, 0.6, { up: 30 });
           }
           audio.play('revive');
+          break;
+        }
+        case 'say': {
+          const pv = this.players.get(ev.pi);
+          if (pv) this.fx.bubble(ev.txt, () => (this.players.has(ev.pi) ? { x: pv.x, y: pv.y - 40 } : null), 2.2);
           break;
         }
         case 'shout': {
@@ -513,6 +538,174 @@ export class GameScene extends Phaser.Scene {
       case 'recoil':
       case 'mist':
         f.burst(ev.n === 'mist' ? 'p_blood' : 'p_dust', ev.x, ev.y, 10, 50, 0.5);
+        break;
+      // ---- Vampiro: Redemoinho Rubro e explosão do Banquete
+      case 'vortexStart':
+        f.ring(ev.x, ev.y - 4, ev.r, 6, 0x9c1e2e, 0.25, 2);
+        break;
+      case 'vortex': {
+        f.ring(ev.x, ev.y - 4, 8, ev.r, 0xc83838, 0.22, 2);
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * Math.PI * 2 + ev.a * 0.7;
+          f.particle('p_blood', ev.x + Math.cos(a) * ev.r * 0.8, ev.y - 4 + Math.sin(a) * ev.r * 0.6, -Math.sin(a) * 90, Math.cos(a) * 60, 0.3, { depth: ev.y + 2 });
+        }
+        audio.play('vortexPulse', ev.x, ev.y, 0.7);
+        break;
+      }
+      case 'feastBurst':
+        f.ring(ev.x, ev.y - 6, 6, ev.r, 0xec6a5e, 0.4, 3);
+        f.ring(ev.x, ev.y - 6, 2, ev.r * 0.6, 0x9c1e2e, 0.35, 2);
+        f.burst('p_blood', ev.x, ev.y - 8, 34, 160, 0.6, { g: 120 });
+        f.shake(4, 200);
+        break;
+      // ---- Acólito Sombrio
+      case 'marchPulse':
+        f.ring(ev.x, ev.y, 6, ev.r, 0x7dffb0, 0.4, 2);
+        f.ring(ev.x, ev.y, 2, ev.r * 0.55, 0x2a1a3a, 0.35, 3);
+        f.burst('p_rune', ev.x, ev.y - 6, 14, 90, 0.5, { up: 20 });
+        break;
+      case 'marchBreak':
+        f.burst('p_shadow', ev.x, ev.y, 16, 70, 0.5, { g: 150 });
+        f.burst('p_rune', ev.x, ev.y, 6, 50, 0.3);
+        f.number(ev.x, ev.y - 26, 'MARCHA INTERROMPIDA', 0x7dffb0);
+        audio.play('marchBreak', ev.x, ev.y);
+        break;
+      // ---- Caçador de Névoa
+      case 'mistJump':
+        f.burst('p_mist', ev.x, ev.y - 6, 10, 60, 0.6, { up: 10 });
+        break;
+      case 'mistLand':
+        f.ring(ev.x, ev.y, 3, ev.r + 6, 0xd8f6ff, 0.25, 2);
+        f.burst('p_mist', ev.x, ev.y, 14, 90, 0.5);
+        f.burst('p_dust', ev.x, ev.y, 6, 60, 0.4);
+        f.shake(2, 100);
+        break;
+      // ---- Portador do Ossário
+      case 'bash':
+        f.arc(ev.x, ev.y - 8, ev.a, 100, ev.r, 0xe2dac4, 0x6d6456, 0.16, 3);
+        f.burst('p_dust', ev.x, ev.y, 5, 50, 0.3);
+        break;
+      case 'shieldBlock':
+        f.burst('p_ember', ev.x, ev.y - 10, 5, 90, 0.2, { dir: ev.a, spread: 1.4 });
+        f.particle('hit_1', ev.x, ev.y - 10, 0, 0, 0.06, { fade: false, depth: 99000 });
+        break;
+      case 'shieldBreak': {
+        f.burst('p_bone', ev.x, ev.y - 10, 18, 120, 0.7, { g: 240, up: 50 });
+        f.ring(ev.x, ev.y - 8, 4, 26, 0xe2dac4, 0.25, 2);
+        f.shake(4, 180);
+        const img = pixelOrigin(this.add.image(Math.round(ev.x), Math.round(ev.y + 4), ...tf('boneShield_debris'))).setDepth(ev.y - 2);
+        this.debris.push({ img, until: performance.now() + ev.r * 1000 });
+        if (this.debris.length > 12) this.debris.shift()?.img.destroy();
+        break;
+      }
+      // ---- Lapanha
+      case 'melonBoom':
+      case 'melonBoomBig': {
+        const big = ev.n === 'melonBoomBig';
+        const cracked = big && ev.a >= 0.99;
+        f.ring(ev.x, ev.y, 3, ev.r, big ? 0xff7a6a : 0xe04848, big ? 0.35 : 0.25, big ? 3 : 2);
+        if (big) f.ring(ev.x, ev.y, 2, ev.r * 0.35, 0xfff0e0, 0.25, 2);
+        f.burst('p_pulp', ev.x, ev.y - 4, big ? 26 : 12, big ? 150 : 100, 0.5, { g: 260, up: 60 });
+        f.burst('p_pulpLight', ev.x, ev.y - 4, big ? 10 : 4, 90, 0.4, { g: 240, up: 40 });
+        f.burst('p_seed', ev.x, ev.y - 4, big ? 12 : 5, 110, 0.55, { g: 300, up: 50 });
+        f.burst('p_rind', ev.x, ev.y - 2, big ? 8 : 3, 90, 0.6, { g: 300, up: 40 });
+        if (big) f.shake(cracked ? 5 : 3, cracked ? 220 : 140);
+        break;
+      }
+      case 'ripeThrow':
+        f.burst('p_pulpLight', ev.x, ev.y - 16, 4 + Math.round(ev.a * 6), 50, 0.3, { up: 20 });
+        break;
+      case 'chargeMax':
+        f.ring(ev.x, ev.y, 2, 16, 0xff7a6a, 0.3, 2);
+        f.burst('p_pulpLight', ev.x, ev.y, 8, 60, 0.4, { up: 20 });
+        break;
+      case 'chargeCancel':
+        f.burst('p_rind', ev.x, ev.y, 5, 40, 0.4, { g: 200 });
+        break;
+      case 'peelThrow':
+        f.burst('p_rind', ev.x, ev.y, 4, 30, 0.3, { g: 160 });
+        break;
+      case 'peelBurst':
+        f.ring(ev.x, ev.y, 3, ev.r, 0x3f9a3a, 0.3, 2);
+        f.burst('p_seed', ev.x, ev.y - 4, 14, 120, 0.5, { g: 280, up: 40 });
+        f.burst('p_rind', ev.x, ev.y - 2, 8, 100, 0.5, { g: 280, up: 40 });
+        f.burst('p_pulp', ev.x, ev.y - 2, 8, 80, 0.4, { g: 260, up: 30 });
+        break;
+      case 'slip': {
+        // partículas seguem a direção real do escorregão
+        const n = ev.r > 0 ? 8 : 3;
+        for (let i = 0; i < n; i++) f.particle(i % 2 ? 'p_pulp' : 'p_rind', ev.x, ev.y, Math.cos(ev.a) * (60 + i * 12) + (Math.random() - 0.5) * 30, Math.sin(ev.a) * (60 + i * 12) * 0.7, 0.4, { g: 120 });
+        if (ev.r > 0) f.number(ev.x, ev.y - 30, 'ESCORREGOU!', 0xff9a8a);
+        break;
+      }
+      case 'slipEnd':
+        f.burst('p_dust', ev.x, ev.y, 5, 40, 0.3);
+        break;
+      case 'eatStart':
+        f.burst('p_pulpLight', ev.x, ev.y - 16, 6, 30, 0.5, { up: 20 });
+        break;
+      case 'harvest':
+        f.ring(ev.x, ev.y - 10, 4, 30, 0x7fc47a, 0.45, 2);
+        f.ring(ev.x, ev.y - 10, 2, 20, 0xe04848, 0.35, 1);
+        f.burst('p_heal', ev.x, ev.y - 12, 14, 60, 0.7, { up: 40 });
+        f.burst('p_seed', ev.x, ev.y - 12, 6, 70, 0.5, { g: 200, up: 50 });
+        break;
+      case 'harvestEnd':
+        f.burst('p_rind', ev.x, ev.y - 10, 5, 40, 0.4, { g: 200 });
+        break;
+      case 'freeMelon':
+        f.number(ev.x, ev.y, 'MELANCIA SEM FIM', 0xf6c257);
+        break;
+      case 'shieldUp':
+        f.ring(ev.x, ev.y, 4, 16, 0xbfe3ff, 0.35, 2);
+        break;
+      // ---- Ferida Profana, atordoamento, cerco e escolta
+      case 'woundMark': {
+        const target = ev.o;
+        f.bubble('!', () => {
+          const pv = this.players.get(target);
+          return pv ? { x: pv.x, y: pv.y - 44 } : null;
+        }, ev.r / 30);
+        break;
+      }
+      case 'woundHit':
+        f.ring(ev.x, ev.y, 3, 18, 0x9a4acb, 0.35, 2);
+        f.burst('p_wound', ev.x, ev.y, 12, 60, 0.6, { up: 20 });
+        if (ev.r === this.session.myId) {
+          f.flash(0x5a1470, 0.25, 160);
+          f.number(ev.x, ev.y - 18, ev.a ? 'FERIDA PROFANA' : 'FERIDA RENOVADA', 0xc79aff);
+        }
+        break;
+      case 'woundBreak':
+        f.burst('p_rune', ev.x, ev.y, 10, 60, 0.4);
+        f.number(ev.x, ev.y - 16, 'FERIDA INTERROMPIDA', 0x7dffb0);
+        break;
+      case 'stun':
+        f.burst('p_star', ev.x, ev.y, 8, 50, 0.5, { up: 20 });
+        f.ring(ev.x, ev.y + 8, 2, 14, 0xf6c257, 0.3, 2);
+        if (ev.o === this.session.myId) f.shake(3, 120);
+        break;
+      case 'stunResist':
+        f.number(ev.x, ev.y, 'RESISTIU', 0xd8d0b8);
+        break;
+      case 'siegeStart':
+        f.burst('p_rune', ev.x, ev.y - 12, 6, 40, 0.4, { up: 20 });
+        break;
+      case 'siegeHit':
+        f.line(ev.x - Math.cos(ev.a) * ev.r, ev.y - Math.sin(ev.a) * ev.r - 4, ev.x, ev.y, 0xe07cff, 0.25, 2);
+        f.ring(ev.x, ev.y, 2, 16, 0xe07cff, 0.3, 2);
+        f.burst('p_abyss', ev.x, ev.y, 10, 70, 0.4);
+        break;
+      case 'siegeBreak':
+        f.burst('p_rune', ev.x, ev.y, 8, 60, 0.4);
+        f.number(ev.x, ev.y - 14, 'INTERROMPIDO', 0x7dffb0);
+        break;
+      case 'survivorAlert':
+        f.number(ev.x, ev.y, 'SOCORRO!', 0xec6a5e);
+        break;
+      case 'survivorHeavy':
+        f.flash(0x6e1424, 0.12, 100);
+        f.burst('p_blood', ev.x, ev.y, 8, 70, 0.4, { g: 200 });
         break;
       case 'blinkOut':
       case 'blinkIn':
@@ -761,6 +954,15 @@ export class GameScene extends Phaser.Scene {
     audio.play('telegraph', x, y, 0.8);
   }
 
+  /**
+   * Converte um ponto da tela lógica (640×360, já corrigido de CSS/letterbox por `App.toLogical`)
+   * para o mundo usando a transformação real da câmera (scroll, zoom e viewport).
+   */
+  screenToWorld(sx: number, sy: number): { x: number; y: number } {
+    const p = this.cameras.main.getWorldPoint(sx, sy);
+    return { x: p.x, y: p.y };
+  }
+
   /** Destino do clique direito; o servidor continua autoritativo sobre o movimento. */
   setMoveTarget(x: number, y: number): void {
     if (this.mode !== 'match' || !this.predictor.active) return;
@@ -869,9 +1071,10 @@ export class GameScene extends Phaser.Scene {
         if (t.stuck > 45 || !dir) this.moveTarget = null;
       }
     }
-    const cam = this.cameras.main;
-    const ax = Math.round(cam.scrollX + this.input2.mouseX);
-    const ay = Math.round(cam.scrollY + this.input2.mouseY);
+    const aim = this.screenToWorld(this.input2.mouseX, this.input2.mouseY);
+    const ax = Math.round(aim.x * 10) / 10;
+    const ay = Math.round(aim.y * 10) / 10;
+    this.lastAim = { x: ax, y: ay };
     this.predictor.seq++;
     return { seq: this.predictor.seq, mx: s.mx, my: s.my, ax, ay, held: s.held, pressed: s.pressed };
   }
@@ -966,11 +1169,11 @@ export class GameScene extends Phaser.Scene {
     // Bardo não é entidade de combate; a posição vem somente do servidor.
     const bd = latest.w.bd;
     if (bd) {
-      if (!this.bard) this.bard = this.add.image(bd[0], bd[1], ...tf('bard_play_0')).setOrigin(0.5, 34 / 36);
+      if (!this.bard) this.bard = pixelOrigin(this.add.image(Math.round(bd[0]), Math.round(bd[1]), ...tf('bard_play_0')), 2);
       const frame = `bard_play_${Math.floor(performance.now() / 180) % 4}`;
       const [tex, fr] = tf(frame);
       if (this.bard.frame.name !== fr) this.bard.setTexture(tex, fr);
-      this.bard.setPosition(bd[0], bd[1]).setDepth(bd[1]);
+      this.bard.setPosition(Math.round(bd[0]), Math.round(bd[1])).setDepth(bd[1]);
     } else if (this.bard) {
       this.bard.destroy();
       this.bard = null;
@@ -1012,6 +1215,9 @@ export class GameScene extends Phaser.Scene {
         affix: affixOf(src[13]),
         marks: src[14],
         markBy: src[15],
+        shield: src[16],
+        shieldDir: src[17] / 100,
+        aimPid: src[18] ?? 0,
         moving: Math.hypot(x - v.x, y - v.y) > 0.1,
       };
       v.update(re, dt, sess.myId, hitstop);
@@ -1025,6 +1231,14 @@ export class GameScene extends Phaser.Scene {
       }
     }
     void telegraphs;
+    for (const re of this.renderedEnemies) if (re.atk === 'march' && re.state === 'windup') drawMarchBeams(this.teleG, re, this.renderedEnemies);
+    for (const re of this.renderedEnemies) {
+      if (re.atk !== 'wound' || re.state !== 'windup' || !re.aimPid) continue;
+      const tp = this.players.get(re.aimPid);
+      const W = ATK.shadowAcolyte.wound;
+      if (tp) drawWoundLink(this.teleG, re, Math.round(tp.x), Math.round(tp.y), re.stateT >= W.windup - W.lockTicks);
+    }
+    this.drawRipePreview();
 
     // servos do Necromante, horda e sobrevivente
     const seenM = new Set<number>();
@@ -1055,7 +1269,7 @@ export class GameScene extends Phaser.Scene {
       seenI.add(it[0]);
       let img = this.pickups.get(it[0]);
       if (!img) {
-        img = this.add.image(it[2], it[3], ...tf(it[1] === 1 ? `corpse_${it[0] % 3}` : 'pickup_heal_0')).setOrigin(0.5, 1);
+        img = pixelOrigin(this.add.image(it[2], it[3], ...tf(it[1] === 1 ? `corpse_${it[0] % 3}` : 'pickup_heal_0')));
         if (it[1] === 1) img.setDepth(-7600).setAlpha(0.9);
         this.pickups.set(it[0], img);
         if (it[1] === 0) this.fx.burst('p_heal', it[2], it[3] - 6, 6, 40, 0.5, { up: 30 });
@@ -1096,9 +1310,22 @@ export class GameScene extends Phaser.Scene {
         x -= p1[4] * back;
         y -= p1[5] * back;
       }
-      // Projéteis dos jogadores já saem da altura da arma no servidor.
-      // Deslocá-los novamente para cima fazia a trajetória visual passar acima da mira.
-      const visualY = p1[6] > 0 ? y : y - 6;
+      // Projéteis vivem no plano do chão (colisão) e são desenhados SHOT_HEIGHT acima — mesma
+      // convenção usada pelo servidor ao mirar (ver projectileAim).
+      let visualY = y - SHOT_HEIGHT;
+      if (LOB_KINDS.has(kind) && p1[7] >= 0) {
+        // arco apenas visual (a colisão fica no chão): parábola pela fração do voo + sombra
+        const k0 = p0 && p0[7] >= 0 ? p0[7] : p1[7];
+        const k = Math.max(0, Math.min(1, (k0 + (p1[7] - k0) * t) / 100));
+        const peak = kind === 'bigMelon' ? LAPANHA.ripe.arcHeight : LAPANHA.melon.arcHeight;
+        visualY -= Math.round(4 * peak * k * (1 - k));
+        let sh = this.lobShadows.get(id);
+        if (!sh) {
+          sh = this.add.image(x, y, ...tf(kind === 'bigMelon' ? 'shadow_m' : 'shadow_s')).setAlpha(0.7);
+          this.lobShadows.set(id, sh);
+        }
+        sh.setPosition(Math.round(x), Math.round(y)).setDepth(y - 40);
+      }
       img.setPosition(Math.round(x), Math.round(visualY)).setDepth(y + 8);
       if (kind === 'slipper') img.setRotation(performance.now() / 50);
       else if (kind === 'bolt' || kind === 'pierceBolt' || kind === 'bone') img.setRotation(Math.atan2(p1[5], p1[4]));
@@ -1111,12 +1338,19 @@ export class GameScene extends Phaser.Scene {
       if (Math.random() < 0.35) {
         const trail = kind === 'missile' || kind === 'empMissile' ? 'p_arc' : kind === 'orb' || kind === 'abyssOrb' ? 'p_abyss' : kind === 'pierceBolt' ? 'p_silver' : kind === 'bone' ? 'p_soul' : kind === 'iceShard' ? 'p_frost' : null;
         if (trail) this.fx.particle(trail, x, visualY, 0, 0, 0.25, { depth: y });
+        else if (kind === 'bigMelon' || kind === 'woundBolt') this.fx.particle(kind === 'bigMelon' ? 'p_pulpLight' : 'p_wound', x, visualY, 0, 0, 0.25, { depth: y });
       }
     }
     for (const [id, img] of this.projectiles) {
       if (!seenP.has(id)) {
         img.destroy();
         this.projectiles.delete(id);
+      }
+    }
+    for (const [id, sh] of this.lobShadows) {
+      if (!seenP.has(id)) {
+        sh.destroy();
+        this.lobShadows.delete(id);
       }
     }
 
@@ -1134,6 +1368,22 @@ export class GameScene extends Phaser.Scene {
           this.traps.set(z[0], img);
         }
         img.setAlpha(z[6] === sess.myId ? 1 : 0.8);
+        continue;
+      }
+      if (kind === 'peel' || kind === 'wetFloor') {
+        seenT.add(z[0]);
+        let img = this.traps.get(z[0]);
+        if (!img) {
+          img = pixelOrigin(this.add.image(z[2], z[3], ...tf(kind))).setDepth(-7500);
+          img.setPosition(Math.round(z[2]), Math.round(z[3]));
+          this.traps.set(z[0], img);
+        }
+        if (kind === 'peel') {
+          // brilho curto só quando armada; pisca nos últimos 1,5 s
+          const ready = z[7] === 1;
+          img.setTexture(...tf(ready && Math.floor(now / 500) % 3 === 0 ? 'peel_ready' : 'peel'));
+          img.setAlpha(z[5] < 45 && Math.floor(now / 120) % 2 ? 0.45 : 1);
+        } else img.setAlpha(Math.min(1, z[5] / 20) * 0.9);
         continue;
       }
       drawZone(this.zoneG, z as ZoneTuple, now);
@@ -1156,6 +1406,87 @@ export class GameScene extends Phaser.Scene {
 
     this.updateCamera(dt);
     this.updateOcclusion();
+    this.drawAimDebug(latest, now);
+    this.updateDebris(now);
+  }
+
+  /** Melancia Madura em carga (jogador local): ponto de impacto, raio previsto e anel da carga. */
+  private drawRipePreview(): void {
+    const me = this.rendered.find((p) => p.id === this.session.myId);
+    if (!me || me.data.c !== 'lapanha' || me.data.s !== 0 || ACTIONS[me.data.act] !== 'charge' || me.data.ch < 0) return;
+    const R = LAPANHA.ripe;
+    const frac = Math.min(1, me.data.ch / 100);
+    const pw = Math.pow(frac, R.curve);
+    const radius = Math.round(R.minRadius + (R.maxRadius - R.minRadius) * pw);
+    const dx = this.lastAim.x - me.x;
+    const dy = this.lastAim.y - me.y;
+    const d = Math.hypot(dx, dy);
+    const k = d > R.maxRange ? R.maxRange / d : 1;
+    const tx = Math.round(me.x + dx * k);
+    const ty = Math.round(me.y + dy * k);
+    const g = this.teleG;
+    const full = frac >= 1;
+    const now = performance.now();
+    g.fillStyle(0xe04848, 0.06 + frac * 0.08).fillCircle(tx, ty, radius);
+    g.lineStyle(full ? 2 : 1, full && Math.floor(now / 120) % 2 ? 0xffffff : 0xff7a6a, 0.9).strokeCircle(tx, ty, radius);
+    g.lineStyle(1, 0xfff0e0, 0.8).strokeCircle(tx, ty, R.centerRadius);
+    g.fillStyle(0xfff0e0, 1).fillRect(tx - 1, ty - 1, 3, 3);
+    // trajetória em arco (pontilhada) até o impacto
+    for (let i = 1; i < 12; i++) {
+      const t = i / 12;
+      const px = Math.round(me.x + (tx - me.x) * t);
+      const py = Math.round(me.y + (ty - me.y) * t - SHOT_HEIGHT - 4 * R.arcHeight * t * (1 - t));
+      g.fillStyle(0xff9a8a, 0.35 + frac * 0.5).fillRect(px, py, 2, 2);
+    }
+  }
+
+  /** Sobreposição de depuração da mira (desligada por padrão; F9 alterna). */
+  private drawAimDebug(latest: Snapshot, now: number): void {
+    const g = this.debugG;
+    g.clear();
+    if (!this.aimDebug) {
+      this.aimDebugText = '';
+      return;
+    }
+    const me = this.rendered.find((p) => p.id === this.session.myId);
+    const cur = this.screenToWorld(this.input2.mouseX, this.input2.mouseY);
+    const cam = this.cameras.main;
+    // cursor no mundo
+    g.lineStyle(1, 0x7fc47a, 1).lineBetween(cur.x - 4, cur.y, cur.x + 4, cur.y).lineBetween(cur.x, cur.y - 4, cur.x, cur.y + 4);
+    if (me) {
+      const ox = me.x;
+      const oy = me.y - SHOT_HEIGHT;
+      // linha origem (peito) → cursor
+      g.lineStyle(1, 0xf6c257, 0.9).lineBetween(ox, oy, cur.x, cur.y);
+      // direção efetivamente enviada (último tick), prolongada
+      const a = Math.atan2(this.lastAim.y + SHOT_HEIGHT - me.y, this.lastAim.x - me.x);
+      g.lineStyle(1, 0xec6a5e, 0.7).lineBetween(ox, oy, ox + Math.cos(a) * 420, oy + Math.sin(a) * 420);
+    }
+    // trajetória inicial dos meus projéteis (primeira posição vista + velocidade)
+    for (const pr of latest.pr) {
+      if (pr[6] !== this.session.myId) continue;
+      if (!this.shotStarts.has(pr[0])) this.shotStarts.set(pr[0], { x: pr[2], y: pr[3], vx: pr[4], vy: pr[5], at: now });
+    }
+    for (const [id, st] of this.shotStarts) {
+      if (now - st.at > 1500) {
+        this.shotStarts.delete(id);
+        continue;
+      }
+      const l = Math.hypot(st.vx, st.vy) || 1;
+      g.lineStyle(1, 0x8fd3f0, 0.9).lineBetween(st.x, st.y - SHOT_HEIGHT, st.x + (st.vx / l) * 480, st.y - SHOT_HEIGHT + (st.vy / l) * 480);
+    }
+    this.aimDebugText = `cam ${cam.scrollX.toFixed(1)},${cam.scrollY.toFixed(1)} zoom ${cam.zoom.toFixed(2)} | tela ${this.input2.mouseX.toFixed(1)},${this.input2.mouseY.toFixed(1)} | mundo ${cur.x.toFixed(1)},${cur.y.toFixed(1)} | enviado ${this.lastAim.x},${this.lastAim.y}`;
+  }
+
+  private updateDebris(now: number): void {
+    for (let i = this.debris.length - 1; i >= 0; i--) {
+      const d = this.debris[i] as { img: Phaser.GameObjects.Image; until: number };
+      const left = d.until - now;
+      if (left <= 0) {
+        d.img.destroy();
+        this.debris.splice(i, 1);
+      } else if (left < 600) d.img.setAlpha(Math.floor(left / 150) % 2 ? 0.8 : 0.4);
+    }
   }
 
   private drawMoveClick(now: number): void {
@@ -1190,20 +1521,40 @@ export class GameScene extends Phaser.Scene {
       g.fillStyle(0x440d1a, 1).fillRect(Math.round(x - w / 2), Math.round(y), w, 2);
       g.fillStyle(col, 1).fillRect(Math.round(x - w / 2), Math.round(y), Math.max(0, Math.round((w * p) / 100)), 2);
     };
+    // estado de perigo do objetivo: seguro (linha fina), ameaçado (âmbar, tracejado) e crítico (vermelho, grosso, piscando)
+    const danger = (x: number, y: number, r: number, base: number, d: number, n: number): void => {
+      if (d >= 2) {
+        const blink = Math.floor(now / 160) % 2;
+        g.fillStyle(0xc83838, blink ? 0.12 : 0.05).fillCircle(x, y, r);
+        g.lineStyle(3, blink ? 0xff5a4a : 0xc83838, 0.95).strokeCircle(x, y, r);
+      } else if (d === 1) {
+        g.lineStyle(2, 0xf6c257, 0.85);
+        const seg = 16;
+        for (let i = 0; i < seg; i += 2) {
+          const a0 = (i / seg) * Math.PI * 2 + now / 2000;
+          g.beginPath();
+          g.arc(x, y, r, a0, a0 + Math.PI / seg, false);
+          g.strokePath();
+        }
+      } else g.lineStyle(1, base, pulse).strokeCircle(x, y, r);
+      // um pino por inimigo pressionando (até 10), acima do objetivo
+      const pins = Math.min(10, n);
+      for (let i = 0; i < pins; i++) g.fillStyle(d >= 2 ? 0xff5a4a : 0xf6c257, 1).fillRect(Math.round(x - pins * 2 + i * 4), Math.round(y - r - 6), 3, 3);
+    };
     if (ev && ev.k === 'bonfire' && ev.s === 0) {
-      g.lineStyle(1, 0xe0902a, pulse).strokeCircle(cf.x, cf.y, EVENT_RULES.bonfire.radius);
-      bar(cf.x, cf.y - 44, 34, ev.p, 0xe0902a);
+      danger(cf.x, cf.y, EVENT_RULES.bonfire.radius, 0xe0902a, ev.d ?? 0, ev.n ?? 0);
+      bar(cf.x, cf.y - 44, 34, ev.p, (ev.d ?? 0) >= 2 && Math.floor(now / 160) % 2 ? 0xff5a4a : 0xe0902a);
     }
     if (cg && cg.k === 'fireUntouched' && cg.s === 0) {
       g.lineStyle(1, 0xf6c257, pulse * 0.8).strokeCircle(cf.x, cf.y, CHALLENGE_RULES.fire.radius);
     }
     const altarOn = !!cg && cg.k === 'altar' && cg.x !== undefined && cg.y !== undefined;
     if (altarOn && cg && cg.x !== undefined && cg.y !== undefined) {
-      if (!this.altar) this.altar = this.add.image(cg.x, cg.y, ...tf('altar_0')).setOrigin(0.5, 1);
+      if (!this.altar) this.altar = pixelOrigin(this.add.image(cg.x, cg.y, ...tf('altar_0')));
       this.altar.setTexture(...tf(`altar_${Math.floor(now / 400) % 2}`)).setPosition(cg.x, cg.y + 8).setDepth(cg.y + 8).setAlpha(cg.s === 2 ? 0.45 : 1);
       if (cg.s === 0) {
-        g.lineStyle(1, 0x7fc47a, pulse).strokeCircle(cg.x, cg.y, CHALLENGE_RULES.altar.radius);
-        bar(cg.x, cg.y - 26, 26, cg.p, 0x7fc47a);
+        danger(cg.x, cg.y, CHALLENGE_RULES.altar.radius, 0x7fc47a, cg.d ?? 0, cg.n ?? 0);
+        bar(cg.x, cg.y - 26, 26, cg.p, (cg.d ?? 0) >= 2 && Math.floor(now / 160) % 2 ? 0xff5a4a : 0x7fc47a);
       }
     } else if (this.altar) {
       this.altar.destroy();

@@ -77,7 +77,7 @@ export function stepPickups(w: World): void {
     for (const p of w.players.values()) {
       if (p.status !== 0 || p.hp >= p.maxHp) continue;
       if (dist2(p.x, p.y, it.x, it.y) > (R + p.r) ** 2) continue;
-      const got = w.healPlayer(p, PICKUPS.heal.amount, false);
+      const got = w.healPlayer(p, PICKUPS.heal.amount, 'pickup');
       w.emit({ k: 'pickup', pi: p.id, x: it.x, y: it.y, v: Math.round(got) });
       it.ttl = 0;
       changed = true;

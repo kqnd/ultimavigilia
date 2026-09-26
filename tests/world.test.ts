@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BERSERKER, CLASS_IDS, type ClassId, PLAYER_RULES, TANK } from '../src/shared/config/classes.js';
+import { MELEE_RULES } from '../src/shared/config/classes.js';
 import { INTERMISSION_SECONDS, UPGRADE_BY_ID } from '../src/shared/config/upgrades.js';
 import { TOTAL_WAVES } from '../src/shared/config/waves.js';
 import { sec, TILE } from '../src/shared/constants.js';
@@ -67,7 +68,9 @@ describe('classes: habilidades confirmadas no servidor', () => {
       expect(e.hp).toBeLessThan(hp0);
       // Q
       run(w, 1, () => ({ pressed: BTN.q, held: BTN.q, ax: e.x, ay: e.y }));
-      run(w, 3, () => ({ held: BTN.q, ax: e.x, ay: e.y }));
+      // Lapanha: segura a Melancia Madura acima da carga mínima e solta
+      run(w, cls === 'lapanha' ? 14 : 3, () => ({ held: BTN.q, ax: e.x, ay: e.y }));
+      if (cls === 'lapanha') run(w, 6, () => ({ ax: e.x, ay: e.y }));
       if (cls !== 'tank') expect(p.cd.q).toBeGreaterThan(0);
       else expect(p.blocking).toBe(true);
       run(w, 40, () => ({ ax: e.x, ay: e.y }));
@@ -270,7 +273,7 @@ describe('combate autoritativo', () => {
     expect(p.buffs.exhausted).toBeGreaterThan(0);
   });
 
-  it('Mente de Ferro neutraliza a vulnerabilidade, mas mantém 1,5s de exaustão', () => {
+  it('Mente de Ferro reduz a vulnerabilidade pela metade (não elimina) e mantém 1,5s de exaustão', () => {
     const w = mkWorld(['berserker']);
     quiet(w);
     const p = w.players.get(1) as Player;
@@ -278,7 +281,8 @@ describe('combate autoritativo', () => {
     p.buffs.madness = 2;
     const hpBefore = p.hp;
     w.hitPlayer(p, { dmg: 10, heavy: false, fromX: p.x + 10, fromY: p.y, enemy: null, proj: null, blockable: false });
-    expect(hpBefore - p.hp).toBe(10);
+    // +10% da Loucura em vez de +20%; mais a redução geral do corpo a corpo
+    expect(hpBefore - p.hp).toBeCloseTo(10 * MELEE_RULES.damageTakenMul * (1 + BERSERKER.madness.ironDamageTaken), 0);
     p.buffs.madness = 1;
     run(w, 1);
     expect(p.buffs.exhausted).toBe(sec(1.5));
@@ -464,8 +468,8 @@ describe('ciclo da partida', () => {
       }
       expect(opts.some((id) => UPGRADE_BY_ID.get(id)?.cls === 'vampire')).toBe(true);
     }
-    p.mods['v_mist'] = 1; // máximo 1
-    for (let i = 0; i < 100; i++) expect(rollUpgrades(rng, p)).not.toContain('v_mist');
+    p.mods['v_vortex'] = 2; // máximo 2
+    for (let i = 0; i < 100; i++) expect(rollUpgrades(rng, p)).not.toContain('v_vortex');
   });
 
   it('inimigo preso é reposicionado num portão', () => {

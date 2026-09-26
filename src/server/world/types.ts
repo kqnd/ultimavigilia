@@ -1,4 +1,4 @@
-import type { ClassBase, ClassId } from '../../shared/config/classes.js';
+import type { ClassBase, ClassId, HealSource } from '../../shared/config/classes.js';
 import type { AffixId } from '../../shared/config/affixes.js';
 import type { EnemyDef, EnemyType } from '../../shared/config/enemies.js';
 import type { InputFrame, MoveState } from '../../shared/movement.js';
@@ -38,6 +38,10 @@ export interface Player {
   aim: number;
   aimX: number;
   aimY: number;
+  /** Último tick em que disparou um projétil (ameaças anti-kite preferem quem atira). */
+  lastShotTick: number;
+  /** Suprema bloqueada (Necromante após o Exército) por estes ticks. */
+  ultLockT: number;
   hp: number;
   maxHp: number;
   maxStamina: number;
@@ -63,7 +67,16 @@ export interface Player {
     /** Clima: frio (lentidão) e queimadura (dano contínuo). */
     chill: number;
     burn: number;
+    /** Resistência a atordoamento (ticks) depois de um atordoamento. */
+    stunRes: number;
+    /** Lentidão genérica (resistência convertida, detonações). Multiplicador em `slowMul`. */
+    slowed: number;
+    /** Retirada Tática: bônus de velocidade após esquivar de um ataque. */
+    retreat: number;
+    /** Lapanha: Safra Abençoada. */
+    harvest: number;
   };
+  slowMul: number;
   blocking: boolean;
   blockDir: number;
   guardianCharge: number;
@@ -103,6 +116,52 @@ export interface Player {
   stats: MatchStats;
   inBastion: boolean;
   bastionHeal: number;
+  /** Ferida Profana: ticks restantes, ticks de bloqueio total e Acólito de origem. */
+  woundT: number;
+  woundBlockT: number;
+  woundBy: number;
+  /** Cura recente (decai em ~3 s): alvo preferido da Ferida Profana. */
+  recentHeal: number;
+  /** Escudo temporário (cartas). */
+  shieldHp: number;
+  shieldT: number;
+  /** Recarga interna de cartas condicionais (Defesa Improvisada, Coração da Melancia). */
+  guardCdT: number;
+  heartCdT: number;
+  /** Pressão Constante: último alvo e acertos seguidos nele. */
+  pressureId: number;
+  pressureN: number;
+  /** Ticks parado (Caçador de Névoa pressiona quem fica parado junto a objetivos). */
+  stillT: number;
+  /** Lapanha: taxa de regeneração da Safra (fração/s), Melancia Sem Fim disponível, alternância da Feira. */
+  harvestRate: number;
+  harvestFreeQ: boolean;
+  lastPieceOn: boolean;
+  fairToggle: boolean;
+  /** Orçamento de cura por acerto central na Safra (por segundo). */
+  harvestHitBudget: number;
+  /** Última fala (limita frequência dos balões). */
+  lastSayTick: number;
+  /** Lapanha: ticks de carga da Melancia Madura em curso (-1 = sem carga). */
+  charge: number;
+  /** Telemetria de balanceamento (não vai para os clientes). */
+  tele: PlayerTelemetry;
+}
+
+export interface PlayerTelemetry {
+  heal: Partial<Record<HealSource, number>>;
+  /** Cura perdida por vida cheia. */
+  wasted: number;
+  /** Cura cortada pela Ferida Profana. */
+  woundCut: number;
+  taken: number;
+  lowTicks: number;
+  woundsApplied: number;
+  woundsAvoided: number;
+  woundsInterrupted: number;
+  sacrificed: number;
+  stuns: number;
+  stunsResisted: number;
 }
 
 export interface EnemyCC {
@@ -175,6 +234,40 @@ export interface Enemy {
   relightT: number;
   /** Temporizador genérico de objetivo (pulso da lua, tiro do totem, canal do ritual). */
   objT: number;
+  /** Marcha Sombria: bônus de velocidade ativo (não acumula) e ticks restantes. */
+  hasteMul: number;
+  hasteT: number;
+  /** Portador do Ossário: vida e direção do escudo frontal (0 = sem escudo). */
+  shieldHp: number;
+  shieldMax: number;
+  shieldDir: number;
+  /** Caçador de Névoa: velado pela névoa (parcialmente oculto). */
+  veiled: boolean;
+  /** IA: próxima reavaliação de posição, deslocamento pós-conjuração e ponto de cobertura. */
+  aiT: number;
+  repositionT: number;
+  coverX: number;
+  coverY: number;
+  /** Chefes: travado no alvo até provocação/queda; ticks longe do alvo (perseguição). */
+  lockedId: number;
+  farT: number;
+  /** Chefes/minichefes: tick em que o alvo atual foi travado (para reavaliação periódica de ameaça). */
+  lockedSince: number;
+  /** Chefes/minichefes: ameaça acumulada por jogador (dano recente, com decaimento). */
+  threat: Map<number, number>;
+  /** Função tática em missões: ocupar objetivo (fogueira/altar) ou caçar o sobrevivente. */
+  role: 'none' | 'siege' | 'raider';
+  /** Ticks contínuos dentro da área do objetivo (rampa de pressão). */
+  zoneT: number;
+  /** Casca Traiçoeira: escorregão (ticks e velocidade) e vulnerabilidade depois. */
+  slideT: number;
+  slideVx: number;
+  slideVy: number;
+  vulnT: number;
+  /** Jogador alvo do telegraph atual (Ferida Profana). */
+  aimPid: number;
+  /** Tick da última Marcha/Ferida (espaçamento entre as duas). */
+  lastCastTick: number;
 }
 
 /** Servos do Necromante e aliados não jogadores (sobrevivente). */
@@ -217,6 +310,8 @@ export interface Target {
   r: number;
   status: number;
   isMinion?: true;
+  /** Ponto de objetivo (vaga ao redor da fogueira/altar): usa o campo de fluxo do objetivo. */
+  isPoint?: true;
 }
 
 export interface Pickup {
@@ -256,6 +351,11 @@ export interface Projectile {
   ty: number;
   splash: number;
   dead: boolean;
+  /** Arremessos em arco: distância total prevista (progresso visual = percorrido/total). */
+  lob: number;
+  /** Dados livres por tipo (Lapanha: carga/sacrifício; Ferida: Acólito de origem). */
+  a: number;
+  b: number;
 }
 
 export interface Zone {

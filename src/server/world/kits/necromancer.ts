@@ -87,7 +87,7 @@ export const necromancerKit: Kit = {
     if (a.name === 'basic1') {
       const b = NECRO.bone;
       const bones = p.mods['n_bones'] ?? 0;
-      const shot = projectileAim(p, 8);
+      const shot = projectileAim(p);
       a.dir = shot.dir;
       w.spawnProjectile({
         kind: 'bone', team: 'p', owner: p.id,
@@ -120,6 +120,7 @@ export const necromancerKit: Kit = {
       const room = Math.max(0, NECRO.maxMinions - minionsOf(w, p.id).length);
       const n = Math.min(A.maxUnits, room, A.base + p.essence * A.perEssence);
       p.essence = 0;
+      p.ultLockT = sec(A.ultLockSeconds);
       const group = w.newId();
       w.armyBossDamage.set(group, 0);
       for (let i = 0; i < n; i++) {

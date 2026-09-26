@@ -99,6 +99,9 @@ export function buildFxSheet(): SheetBuilder {
   px('p_frost', 2, 2, P.ice2);
   px('p_heal', 2, 2, P.red5);
   px('p_wood', 3, 2, P.brn4);
+  px('p_mist', 3, 2, 0x9aa6c0);
+  px('p_shadow', 2, 2, 0x2a1a3a);
+  px('p_rune', 2, 2, 0x7dffb0);
   // projétil de osso (Rajada Óssea)
   const bone = new PixelCanvas(12, 7);
   bone.hline(2, 9, 3, P.gray6);
@@ -143,6 +146,56 @@ export function buildFxSheet(): SheetBuilder {
     if (f === 0) c.ellipse(8.5, 8.5, 3, 3, P.white);
     sb.add(`hit_${f}`, c);
   }
+  // melancias em voo (listras giram entre os quadros): pequena, larga, densa e a Madura
+  const melon = (w: number, h: number, frame: number, dense: boolean): PixelCanvas => {
+    const c = new PixelCanvas(w, h);
+    c.ellipse(w / 2, h / 2, w / 2 - 0.5, h / 2 - 0.5, dense ? 0x2f7a35 : 0x4fb04a);
+    for (let x = frame; x < w; x += 3) for (let y = 0; y < h; y++) if (c.alpha(x, y) > 0) c.set(x, y, 0x24602a);
+    c.set(Math.floor(w / 3), 1, 0xb8f0a0);
+    c.outline(P.outline);
+    return c;
+  };
+  for (let f = 0; f < 2; f++) {
+    sb.add(`proj_melon_${f}`, melon(8, 7, f, false));
+    sb.add(`proj_melonWide_${f}`, melon(10, 7, f, false));
+    sb.add(`proj_melonDense_${f}`, melon(7, 7, f, true));
+    sb.add(`proj_bigMelon_${f}`, melon(13, 11, f, false));
+    // semente saltitante
+    const sd = new PixelCanvas(3, 4);
+    sd.rect(0, f, 3, 3, 0x2a1a14);
+    sd.set(1, f, 0x6a4a3a);
+    sb.add(`proj_seed_${f}`, sd);
+    // pulso da Ferida Profana: runa verde-pálida com núcleo violeta
+    const wb = new PixelCanvas(9, 9);
+    wb.ellipse(4.5, 4.5, 4, 4, 0x2a1a3a);
+    wb.ring(4.5, 4.5, 4, 1, 0x7dffb0);
+    wb.ellipse(4.5, 4.5, 1.5 + f * 0.5, 1.5 + f * 0.5, P.abyss3);
+    wb.outline(P.outline);
+    sb.add(`proj_woundBolt_${f}`, wb);
+  }
+  // casca de melancia no chão (Lapanha): meia-lua verde com a parte branca e um fio vermelho
+  const peel = new PixelCanvas(16, 8);
+  peel.ellipse(8, 2, 7.5, 5.5, 0x3f9a3a);
+  peel.ellipse(8, 1, 6, 4, 0xe8e2c8);
+  peel.ellipse(8, 0, 5, 3, 0xd84a4a);
+  for (let y = 0; y < 3; y++) for (let x = 0; x < 16; x++) if (y < 2) peel.clear(x, y);
+  peel.hline(3, 12, 2, 0xd84a4a);
+  peel.outline(P.outline);
+  sb.add('peel', peel);
+  const peel2 = peel.clone();
+  peel2.hline(4, 11, 2, 0xff9a8a);
+  sb.add('peel_ready', peel2);
+  // poça (Piso Molhado)
+  const wet = new PixelCanvas(20, 9);
+  wet.ellipse(10, 4.5, 9.5, 4, 0xc84848, 110);
+  wet.ellipse(8, 4, 5, 2, 0xff8a7a, 90);
+  sb.add('wetFloor', wet);
+  px('p_seed', 2, 2, 0x2a1a14);
+  px('p_pulp', 2, 2, 0xe04848);
+  px('p_pulpLight', 2, 2, 0xff9a8a);
+  px('p_rind', 3, 2, 0x3f9a3a);
+  px('p_wound', 2, 2, 0x9a4acb);
+  px('p_star', 2, 2, P.amb5);
   // armadilha de prata
   const trap = new PixelCanvas(18, 10);
   trap.ellipse(9, 5, 8, 4, P.gray2);

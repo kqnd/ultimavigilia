@@ -4,10 +4,10 @@ import { CLASS_WEAPON } from '../../art/characters.js';
 import { AFFIX_IDS, AFFIXES, type AffixId } from '../../shared/config/affixes.js';
 import type { Climate } from '../../shared/config/chapters.js';
 import { ATK, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
-import { BERSERKER, CLASSES, type ClassId, DOG, HUNTER, MAGE, NECRO, TANK, VAMPIRE } from '../../shared/config/classes.js';
+import { BERSERKER, LAPANHA, CLASSES, type ClassId, DOG, HUNTER, MAGE, NECRO, TANK, VAMPIRE } from '../../shared/config/classes.js';
 import { EVENT_RULES } from '../../shared/config/objectives.js';
 import { ACTIONS, ENEMY_ATTACKS, ENEMY_FLAGS, ENEMY_STATES, MINION_KINDS, MINION_STATES, type MinionTuple, PLAYER_FLAGS, type SnapPlayer } from '../../shared/protocol.js';
-import { FONT, frameSheet, placeText, tf } from './textures.js';
+import { FONT, frameSheet, pixelOrigin, placeText, tf } from './textures.js';
 
 export type Facing = 'down' | 'up' | 'side';
 
@@ -53,6 +53,10 @@ function actionTiming(cls: ClassId, act: string): { wu: number; ac: number; arc:
       return null;
     case 'necromancer':
       if (act === 'basic1') return { wu: NECRO.bone.windup, ac: 1, arc: 0 };
+      return null;
+    case 'lapanha':
+      if (act === 'basic1') return { wu: LAPANHA.melon.windup, ac: 1, arc: 0 };
+      if (act === 'throw') return { wu: LAPANHA.ripe.throwWindup, ac: 1, arc: 0 };
       return null;
   }
 }
@@ -168,23 +172,34 @@ export class PlayerView {
     this.prevStatus = d.s;
     if (this.fallT > 0) this.fallT -= s;
     const airborne = (d.f & PLAYER_FLAGS.airborne) !== 0;
+    let spinFlip: boolean | null = null;
     if (d.s === 1 || d.s === 2) frame = this.fallT > 0.12 ? `${cls}_fall_0` : this.fallT > 0 ? `${cls}_fall_1` : `${cls}_down`;
     else if (act === 'hurt' || act === 'guardBreak') frame = `${cls}_hurt_${dir}`;
     else if (dodging || airborne) frame = `${cls}_dash_${dir}`;
     else if (act.startsWith('basic')) {
       const t = actionTiming(cls, act);
       frame = `${cls}_atk_${dir}_${t && r.at < t.wu ? 0 : 1}`;
-    } else if (act === 'q' && cls === 'berserker') {
+    } else if (act === 'e' && cls === 'vampire') {
+      // Redemoinho Rubro: gira passando pelas quatro direções
+      const k = Math.floor(r.at / 2) % 4;
+      const spin = (['down', 'side', 'up', 'side'] as const)[k] ?? 'down';
+      frame = `${cls}_atk_${spin}_1`;
+      spinFlip = k === 3 ? true : k === 1 ? false : null;
+    } else if (act === 'stun') frame = `${cls}_hurt_${dir}`;
+    else if (cls === 'lapanha' && act === 'eat') frame = `lapanha_eat_${Math.floor(r.at / 6) % 2}`;
+    else if (cls === 'lapanha' && act === 'throw') frame = `${cls}_atk_${dir}_${r.at < 3 ? 0 : 1}`;
+    else if (cls === 'lapanha' && (act === 'charge' || act === 'peel' || act === 'crush')) frame = `${cls}_cast_${dir}`;
+    else if (act === 'q' && cls === 'berserker') {
       frame = `${cls}_atk_${dir}_${Math.floor(r.at / 3) % 2}`;
     } else if (act === 'q' || act === 'e' || act === 'r' || act === 'cast') {
-      const dash = act === 'e' && (cls === 'vampire' || cls === 'hunter');
+      const dash = act === 'e' && cls === 'hunter';
       frame = dash ? `${cls}_dash_${dir}` : `${cls}_cast_${dir}`;
     } else if (r.moving) frame = `${cls}_walk_${dir}_${Math.floor(this.walkT) % 4}`;
     setFrame(this.body, frame);
     // Salto Brutal: sobe em arco
     let lift = 0;
     if (airborne) lift = Math.round(Math.sin(Math.min(1, r.at / BERSERKER.leap.ticks) * Math.PI) * 22);
-    this.body.setFlipX(flip && d.s === 0);
+    this.body.setFlipX((spinFlip ?? flip) && d.s === 0);
     this.body.setPosition(x, y - lift);
     this.body.setDepth(y);
     this.shadow.setPosition(x, y).setDepth(y - 40).setScale(lift ? Math.max(0.5, 1 - lift / 40) : 1);
@@ -238,14 +253,18 @@ export class PlayerView {
     if (this.flashT > 0) {
       this.flashT -= s;
       this.body.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
+    } else if (d.f & PLAYER_FLAGS.stunned) {
+      this.body.setTint(0xd8d0a0).setTintMode(Phaser.TintModes.MULTIPLY);
     } else if (d.f & PLAYER_FLAGS.madness) {
       this.body.setTint(Math.floor(now / 90) % 2 ? 0xff7a6a : 0xffc0b0).setTintMode(Phaser.TintModes.MULTIPLY);
     } else if (d.f & PLAYER_FLAGS.feast) {
       this.body.setTint(Math.floor(now / 150) % 2 ? 0xff9a9a : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
     } else if (d.f & PLAYER_FLAGS.exhausted) {
       this.body.setTint(0x9a9aaa).setTintMode(Phaser.TintModes.MULTIPLY);
-    } else if (d.f & PLAYER_FLAGS.chill) {
+    } else if (d.f & PLAYER_FLAGS.chill || d.f & PLAYER_FLAGS.slowed) {
       this.body.setTint(0xb8e4ff).setTintMode(Phaser.TintModes.MULTIPLY);
+    } else if (d.f & PLAYER_FLAGS.harvest) {
+      this.body.setTint(Math.floor(now / 200) % 2 ? 0xd8ffd0 : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
     } else if (d.f & PLAYER_FLAGS.burn) {
       this.body.setTint(Math.floor(now / 120) % 2 ? 0xffc080 : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
     } else this.body.clearTint();
@@ -254,11 +273,14 @@ export class PlayerView {
       if (d.f & PLAYER_FLAGS.madness || d.f & PLAYER_FLAGS.rage) fx.particle('p_blood', x + (Math.random() - 0.5) * 12, y - 12 - Math.random() * 10);
       else if (d.f & PLAYER_FLAGS.burn) fx.particle('p_cinder', x + (Math.random() - 0.5) * 10, y - 8);
       else if (d.f & PLAYER_FLAGS.chill) fx.particle('p_frost', x + (Math.random() - 0.5) * 12, y - 10 - Math.random() * 10);
+      if (d.f & PLAYER_FLAGS.harvest) fx.particle(Math.random() < 0.3 ? 'p_seed' : 'p_heal', x + (Math.random() - 0.5) * 14, y - 6 - Math.random() * 14);
+      if (d.f & PLAYER_FLAGS.wounded) fx.particle('p_wound', x + (Math.random() - 0.5) * 12, y - 4 - Math.random() * 16);
+      if (act === 'eat' && Math.random() < 0.5) fx.particle('p_seed', x + (Math.random() - 0.5) * 6, y - 14);
     }
 
     // rastro fantasma durante esquiva/deslocamentos
     this.ghostT -= s;
-    if ((dodging || airborne || (act === 'e' && (cls === 'vampire' || cls === 'hunter' || cls === 'tank') && r.at < 12)) && this.ghostT <= 0 && d.s === 0) {
+    if ((dodging || airborne || (act === 'e' && (cls === 'hunter' || cls === 'tank') && r.at < 12)) && this.ghostT <= 0 && d.s === 0) {
       this.ghostT = 0.035;
       fx.ghost(this.body.frame.name, x, y - lift, this.body.flipX);
     }
@@ -266,7 +288,12 @@ export class PlayerView {
     // arma
     if (this.weapon) {
       const w = this.weapon;
-      w.setVisible(d.s === 0);
+      w.setVisible(d.s === 0 && !(cls === 'lapanha' && (act === 'eat' || (act === 'throw' && r.at >= 3) || (act === 'basic1' && r.at >= LAPANHA.melon.windup))));
+      if (cls === 'lapanha') {
+        // a melancia cresce durante a carga do Q (4 tamanhos, rachada na carga máxima)
+        const key = act === 'charge' && d.ch >= 0 ? `melonQ_${Math.min(3, Math.floor(d.ch / 34) + (d.ch >= 100 ? 1 : 0))}` : act === 'throw' ? 'melonQ_2' : 'melonHeld';
+        if (w.frame.name !== key) w.setTexture(...tf(key));
+      }
       let ang = aim;
       let dist = 5;
       const t = actionTiming(cls, act);
@@ -341,6 +368,31 @@ export class PlayerView {
         g.fillStyle(i % 2 ? 0xd8f08a : 0xa8d05a, 1).fillRect(Math.round(x + Math.cos(a) * 11), Math.round(y - 12 + Math.sin(a) * 4), 2, 2);
       }
     }
+    if (d.s === 0) {
+      const hy = headTop - (showBar ? 12 : 8);
+      // atordoado: estrelas girando; resistência: pequeno escudo cinza
+      if (d.f & PLAYER_FLAGS.stunned) {
+        for (let i = 0; i < 3; i++) {
+          const a = now / 160 + (i / 3) * Math.PI * 2;
+          const sx = Math.round(x + Math.cos(a) * 8);
+          const sy = Math.round(hy + Math.sin(a) * 3);
+          g.fillStyle(0xf6c257, 1).fillRect(sx - 1, sy, 3, 1).fillRect(sx, sy - 1, 1, 3);
+        }
+      } else if (d.f & PLAYER_FLAGS.stunResist) {
+        g.fillStyle(0x0b0a12, 1).fillRect(x + 9, hy - 1, 5, 6);
+        g.fillStyle(0xd8d0b8, 1).fillRect(x + 10, hy, 3, 3).fillRect(x + 11, hy + 3, 1, 1);
+      }
+      // Ferida Profana: losango violeta; na fase de bloqueio total, contorno branco e X
+      if (d.f & PLAYER_FLAGS.wounded) {
+        const blockAll = (d.f & PLAYER_FLAGS.woundBlock) !== 0;
+        const wx = x - 12;
+        g.fillStyle(0x0b0a12, 1).fillRect(wx - 3, hy - 2, 7, 7);
+        g.fillStyle(blockAll ? 0xffffff : 0x9a4acb, 1).fillRect(wx, hy - 1, 1, 5).fillRect(wx - 2, hy + 1, 5, 1);
+        if (blockAll) g.fillStyle(0xc83838, 1).fillRect(wx - 1, hy, 1, 1).fillRect(wx + 1, hy + 2, 1, 1);
+      }
+      // escudo temporário (cartas): bolha fina
+      if (d.sh > 0) g.lineStyle(1, 0xbfe3ff, 0.6 + 0.3 * (Math.floor(now / 200) % 2)).strokeEllipse(x, y - 12, 26, 30);
+    }
     if (d.s === 1) {
       // caído: anel de reviver + tempo de sangramento
       const prog = d.rv / 100;
@@ -377,6 +429,9 @@ const SHADOW: Record<EnemyType, string> = {
   abyssTotem: 'shadow_m',
   funeralCart: 'shadow_l',
   ritualist: 'shadow_m',
+  shadowAcolyte: 'shadow_m',
+  mistStalker: 'shadow_m',
+  ossuaryBearer: 'shadow_l',
 };
 
 export const isBossType = (t: EnemyType): boolean => ENEMIES[t].tier === 'boss';
@@ -398,6 +453,11 @@ export interface RenderEnemy {
   affix: AffixId | null;
   marks: number;
   markBy: number;
+  /** Escudo do Portador: % de vida (-1 sem escudo) e direção (rad). */
+  shield: number;
+  shieldDir: number;
+  /** Jogador alvo do telegraph (Ferida Profana); 0 = nenhum. */
+  aimPid: number;
   moving: boolean;
 }
 
@@ -406,8 +466,11 @@ export class EnemyView {
   readonly body: Phaser.GameObjects.Image;
   readonly bar: Phaser.GameObjects.Graphics;
   private label: Phaser.GameObjects.BitmapText | null = null;
+  /** Escudo de ossos (Portador): sprite próprio que acompanha a direção autoritativa. */
+  private shieldImg: Phaser.GameObjects.Image | null = null;
   private walkT = Math.random() * 4;
   private flashT = 0;
+  private veilA = 1;
   x = 0;
   y = 0;
   r: RenderEnemy | null = null;
@@ -427,7 +490,8 @@ export class EnemyView {
     this.shadow = scene.add.image(0, 0, ...tf(SHADOW[this.type])).setOrigin(0.5, 0.5);
     const [tex, fr] = tf(`${this.prefix}${this.type}_walk_down_0`);
     const h = this.scene.textures.getFrame(tex, fr)?.height ?? 32;
-    this.body = scene.add.image(0, 0, tex, fr).setOrigin(0.5, (h - 2) / h);
+    this.body = pixelOrigin(scene.add.image(0, 0, tex, fr), 2);
+    void h;
     this.bar = scene.add.graphics().setDepth(93000);
   }
 
@@ -440,6 +504,7 @@ export class EnemyView {
     this.body.destroy();
     this.bar.destroy();
     this.label?.destroy();
+    this.shieldImg?.destroy();
   }
 
   update(r: RenderEnemy, dt: number, myId: number, hitstop: boolean): void {
@@ -490,9 +555,14 @@ export class EnemyView {
     this.body.setFlipX(f.flip);
     let lift = 0;
     if (r.state === 'air') {
-      const air = this.type === 'moonDevourer' ? ATK.moonDevourer.leap.airTicks : ATK.werewolf.pounce.airTicks;
+      const air = this.type === 'moonDevourer' ? ATK.moonDevourer.leap.airTicks : this.type === 'mistStalker' ? ATK.mistStalker.leap.airTicks : ATK.werewolf.pounce.airTicks;
       const k = Math.min(1, r.stateT / air);
-      lift = Math.sin(k * Math.PI) * (isBoss ? 60 : 24);
+      lift = Math.round(Math.sin(k * Math.PI) * (isBoss ? 60 : this.type === 'mistStalker' ? 18 : 24));
+    }
+    // Caçador de Névoa: recuperação evidente (agachado, arfando)
+    if (this.type === 'mistStalker' && r.state === 'recover' && r.atk === 'mistLeap') {
+      setFrame(this.body, `${key}_hurt_${dir}`, `${key}_walk_${dir}_0`);
+      shakeX = Math.floor(performance.now() / 220) % 2;
     }
     if (this.type === 'frostBride') lift = 4 + Math.round(Math.sin(performance.now() / 400) * 2);
     this.body.setPosition(x + shakeX, y - lift);
@@ -508,13 +578,20 @@ export class EnemyView {
       if ((isBoss || def.miniboss) && r.stateT >= 12) this.body.clearTint();
       else this.body.setTint(0x5a1470).setTintMode(Phaser.TintModes.FILL);
       this.body.setAlpha(Math.min(1, r.stateT / 20));
-    } else if (r.flags & ENEMY_FLAGS.exposed) this.body.setTint(Math.floor(now / 120) % 2 ? 0xffe0a0 : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
+    } else if (r.flags & ENEMY_FLAGS.vulnerable) this.body.setTint(Math.floor(now / 100) % 2 ? 0xffc0b0 : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
+    else if (r.flags & ENEMY_FLAGS.exposed) this.body.setTint(Math.floor(now / 120) % 2 ? 0xffe0a0 : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
     else if (r.flags & ENEMY_FLAGS.rooted) this.body.setTint(0xc0c8d8).setTintMode(Phaser.TintModes.MULTIPLY);
     else if (r.flags & ENEMY_FLAGS.slowed) this.body.setTint(0x9fd8f0).setTintMode(Phaser.TintModes.MULTIPLY);
     else if (r.flags & ENEMY_FLAGS.cursed) this.body.setTint(0xb8d88a).setTintMode(Phaser.TintModes.MULTIPLY);
     else if (r.flags & ENEMY_FLAGS.enraged) this.body.setTint(Math.floor(now / 150) % 2 ? 0xff8080 : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
     else this.body.clearTint();
-    if (r.state !== 'spawn') this.body.setAlpha(1);
+    if (r.state !== 'spawn') {
+      // véu de névoa: quase transparente, mas os olhos continuam visíveis
+      const veiled = (r.flags & ENEMY_FLAGS.veiled) !== 0;
+      this.veilA += ((veiled ? 0.28 : 1) - this.veilA) * Math.min(1, s * 6);
+      this.body.setAlpha(this.veilA);
+      this.shadow.setAlpha(this.veilA);
+    }
 
     const g = this.bar;
     g.clear();
@@ -567,6 +644,58 @@ export class EnemyView {
       }
     }
     if (r.flags & ENEMY_FLAGS.rooted) g.lineStyle(1, 0xc0c8d8, 1).strokeEllipse(x, y, this.body.width * 0.7, 6);
+    // olhos do Caçador de Névoa: sempre legíveis; brilham forte na preparação do salto
+    if (this.type === 'mistStalker' && r.state !== 'spawn' && (this.veilA < 0.9 || (r.state === 'windup' && r.atk === 'mistLeap'))) {
+      const hot = r.state === 'windup';
+      const ex = x + (f.dir === 'side' ? (f.flip ? -4 : 4) : 0);
+      const ey = y - 18 - lift;
+      g.fillStyle(hot ? 0xffffff : 0xd8f6ff, hot ? 1 : 0.9);
+      if (f.dir === 'side') g.fillRect(ex, ey, 1, 1);
+      else if (f.dir === 'down') g.fillRect(ex - 2, ey, 1, 1).fillRect(ex + 1, ey, 1, 1);
+    }
+    // Marcha Sombria: fiapos escuros nos pés (discretos, legíveis com qualquer luz)
+    if (r.flags & ENEMY_FLAGS.hasted && r.state !== 'spawn') {
+      const t = Math.floor(now / 90) + this.id;
+      g.fillStyle(0x2a1a3a, 0.9).fillRect(x - 5 + (t % 4), y + 1, 2, 1).fillRect(x + 2 - (t % 3), y, 2, 1);
+      g.fillStyle(0x7dffb0, 0.7).fillRect(x - 1 + ((t >> 1) % 3) - 1, y + 2, 1, 1);
+    }
+    // escorregando (Casca Traiçoeira): rastro de polpa e tremida de 1 px (sem rotação, mantém pixel perfect)
+    if (r.flags & ENEMY_FLAGS.sliding) {
+      this.body.setX(this.body.x + (Math.floor(now / 70) % 2 ? 1 : -1));
+      if (Math.random() < 0.5) g.fillStyle(0xe04848, 0.8).fillRect(x - 2 + Math.round((Math.random() - 0.5) * 6), y, 2, 1);
+    }
+    // funções táticas em missões: marca discreta aos pés (sem poluir a tela)
+    if (r.flags & ENEMY_FLAGS.siege) g.fillStyle(0xe0902a, 0.9).fillRect(x - 1, y + 3, 3, 1);
+    else if (r.flags & ENEMY_FLAGS.raider) g.fillStyle(0xec6a5e, 0.9).fillRect(x - 1, y + 3, 3, 1).fillRect(x, y + 4, 1, 1);
+    // origem de uma Ferida Profana ativa: runa pequena acima da cabeça
+    if (r.flags & ENEMY_FLAGS.wounding && r.state !== 'dead') {
+      const hy = Math.round(y - this.body.height + 2 - lift);
+      g.fillStyle(0x9a4acb, 1).fillRect(x - 1, hy - 3, 3, 3);
+      g.fillStyle(0x7dffb0, 1).fillRect(x, hy - 5, 1, 1).fillRect(x, hy + 1, 1, 1).fillRect(x - 3, hy - 2, 1, 1).fillRect(x + 3, hy - 2, 1, 1);
+    }
+    this.updateShield(r, x, y, lift);
+  }
+
+  /** Escudo de ossos: frente/lado conforme a direção do escudo; atrás do corpo quando virado para cima. */
+  private updateShield(r: RenderEnemy, x: number, y: number, lift: number): void {
+    if (this.type !== 'ossuaryBearer' || r.shield < 0 || r.state === 'spawn') {
+      if (this.shieldImg) {
+        this.shieldImg.destroy();
+        this.shieldImg = null;
+      }
+      return;
+    }
+    if (!this.shieldImg) this.shieldImg = pixelOrigin(this.scene.add.image(0, 0, ...tf('boneShield_front_0')));
+    const stage = r.shield > 75 ? 0 : r.shield > 50 ? 1 : r.shield > 25 ? 2 : 3;
+    const f = facingOf(r.shieldDir);
+    const side = f.dir === 'side';
+    const frame = `${side ? 'boneShield_side' : 'boneShield_front'}_${stage}`;
+    const [tex, fr] = tf(frame);
+    if (this.shieldImg.frame.name !== fr) this.shieldImg.setTexture(tex, fr);
+    const ox = Math.round(Math.cos(r.shieldDir) * 9);
+    const oy = Math.round(Math.sin(r.shieldDir) * 5);
+    const behind = f.dir === 'up';
+    this.shieldImg.setFlipX(side && f.flip).setPosition(x + ox, y + oy - 2 - lift).setDepth(behind ? y - 1 : y + 1).setAlpha(behind ? 0.85 : 1);
   }
 }
 
@@ -580,6 +709,8 @@ export const affixOf = (i: number): AffixId | null => {
 // ---------------------------------------------------------------- servos e sobrevivente
 
 export class MinionView {
+  private lastHp = -1;
+  private hurtT = 0;
   readonly shadow: Phaser.GameObjects.Image;
   readonly body: Phaser.GameObjects.Image;
   readonly bar: Phaser.GameObjects.Graphics;
@@ -643,7 +774,15 @@ export class MinionView {
     const w = this.kind === 'survivor' ? 22 : 14;
     const top = ry - (this.kind === 'survivor' ? 30 : 20);
     g.fillStyle(0x0b0a12, 1).fillRect(rx - w / 2 - 1, top - 1, w + 2, 3);
-    g.fillStyle(this.kind === 'survivor' ? 0x7fc47a : 0xa8d05a, 1).fillRect(rx - w / 2, top, Math.max(1, Math.round((w * m[4]) / Math.max(1, m[5]))), 1);
+    // sobrevivente: a barra pisca ao levar dano (vermelho em golpe grave) e fica âmbar abaixo de 35%
+    if (this.kind === 'survivor') {
+      if (this.lastHp >= 0 && m[4] < this.lastHp) this.hurtT = now + (this.lastHp - m[4] >= m[5] * EVENT_RULES.escort.heavyHitFrac ? 900 : 400);
+      this.lastHp = m[4];
+    }
+    const hurt = this.kind === 'survivor' && now < this.hurtT && Math.floor(now / 100) % 2 === 0;
+    const low = this.kind === 'survivor' && m[4] < m[5] * 0.35;
+    if (this.kind === 'survivor') g.fillStyle(0x0b0a12, 1).fillRect(rx - w / 2 - 1, top - 1, w + 2, 4);
+    g.fillStyle(hurt ? 0xff5a4a : low ? 0xf6c257 : this.kind === 'survivor' ? 0x7fc47a : 0xa8d05a, 1).fillRect(rx - w / 2, top, Math.max(1, Math.round((w * m[4]) / Math.max(1, m[5]))), this.kind === 'survivor' ? 2 : 1);
     if (this.kind === 'thrall') {
       // Barra violeta: duração restante; evita que a expiração pareça uma perda aleatória.
       g.fillStyle(0x0b0a12, 1).fillRect(rx - w / 2 - 1, top + 3, w + 2, 3);

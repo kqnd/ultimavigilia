@@ -1,5 +1,5 @@
 import { HUNTER } from '../../../shared/config/classes.js';
-import { sec } from '../../../shared/constants.js';
+import { sec, SHOT_MUZZLE } from '../../../shared/constants.js';
 import type { Kit } from './kit.js';
 import { clampTarget, dash, firstActive, projectileAim } from './kit.js';
 
@@ -39,7 +39,7 @@ export const hunterKit: Kit = {
   tickAction(w, p, a) {
     if (a.name === 'basic1' && firstActive(a)) {
       const b = HUNTER.bolt;
-      const shot = projectileAim(p, 6);
+      const shot = projectileAim(p);
       a.dir = shot.dir;
       w.spawnProjectile({
         kind: 'bolt', team: 'p', owner: p.id,
@@ -56,14 +56,14 @@ export const hunterKit: Kit = {
       w.emit({ k: 'sfx', n: 'trapSet', x: p.x, y: p.y });
     } else if (a.name === 'e' && a.t === 3) {
       const b = HUNTER.recoil.bolt;
-      const shot = projectileAim(p, 6);
+      const shot = projectileAim(p);
       const fan = p.mods['h_fan'] ? [-0.2, 0, 0.2] : [0];
       for (const off of fan) {
         const d = shot.dir + off;
         const damageMul = off === 0 ? 1 : HUNTER.upgrades.fanSideDamage;
         w.spawnProjectile({
           kind: 'pierceBolt', team: 'p', owner: p.id,
-          x: p.x + Math.cos(d) * 10, y: p.y - 6 + Math.sin(d) * 10,
+          x: p.x + Math.cos(d) * SHOT_MUZZLE, y: p.y + Math.sin(d) * SHOT_MUZZLE,
           vx: Math.cos(d) * b.speed, vy: Math.sin(d) * b.speed,
           r: b.radius, dmg: b.damage * damageMul, range: b.range, pierce: b.pierce, poise: b.poise * damageMul, kb: b.knockback * damageMul,
         });

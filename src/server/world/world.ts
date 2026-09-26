@@ -4,9 +4,9 @@
  */
 import { AFFIX_IDS, AFFIX_RULES, affixChance, affixesFor, type AffixId } from '../../shared/config/affixes.js';
 import { CHAPTERS, type ChapterDef, chapterOfWave, CLIMATE_EFFECTS, type Route, ROUTE, TRAVEL_SECONDS } from '../../shared/config/chapters.js';
-import { BERSERKER, CLASSES, type ClassId, HUNTER, NECRO, PLAYER_RULES, TANK, VAMPIRE } from '../../shared/config/classes.js';
-import { BOSS_STAGGER_IMMUNITY, CC_DR, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
-import { BASE_OFFER_COUNT, INTERMISSION_SECONDS, MAX_OFFER_COUNT, UPGRADE_BY_ID } from '../../shared/config/upgrades.js';
+import { BERSERKER, CLASS_RANGE, CLASSES, type ClassId, HEAL_RULES, type HealSource, HUNTER, LAPANHA, MELEE_RULES, NECRO, PLAYER_RULES, TANK, VAMPIRE } from '../../shared/config/classes.js';
+import { ATK, BOSS_AI, BOSS_STAGGER_IMMUNITY, CC_DR, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
+import { BASE_OFFER_COUNT, INTERMISSION_SECONDS, LEGENDARY_MAX_PER_BUILD, MAX_OFFER_COUNT, UPGRADE_BY_ID, UPGRADE_CAPS } from '../../shared/config/upgrades.js';
 import { SCALING, TOTAL_WAVES, WAVES, waveInChapter } from '../../shared/config/waves.js';
 import { DT, sec, TICK_RATE, TILE } from '../../shared/constants.js';
 import { circleFree, lineOfSight, moveCircle, resolveCircle } from '../../shared/collision.js';
@@ -14,22 +14,26 @@ import { type ArenaMap, Obst, blocksShot, breakableAt, cloneMap, getMap, mapInde
 import { angleDiff, clamp, dist, dist2, Rng } from '../../shared/math.js';
 import { BTN, type InputFrame, type MoveParams, stepMovement } from '../../shared/movement.js';
 import {
-  actionCode, type ActionName, type DenyReason, ENEMY_FLAGS, type EnemyTuple, enemyAttackCode, type EnemyAttackName,
+  actionCode, type ActionName, type DebugCommand, type DenyReason, ENEMY_FLAGS, type EnemyTuple, enemyAttackCode, type EnemyAttackName,
   enemyStateCode, type EnemyStateName, type GameEvent, type GameEventBody, type MatchStats, type Phase, PLAYER_FLAGS,
-  PROJECTILE_KINDS, type ProjectileKind, type ProjTuple, type SnapPlayer, type SnapYou, type WaveInfo, ZONE_KINDS,
+  LOB_KINDS, PROJECTILE_KINDS, type ProjectileKind, type ProjTuple, type SnapPlayer, type SnapYou, type WaveInfo, ZONE_KINDS,
   type ZoneKind, type ZoneTuple,
 } from '../../shared/protocol.js';
 import { brainFor } from './ai/brains.js';
 import { Director } from './director.js';
 import { kitFor } from './kits/index.js';
+import { chargeFrac, slideBump } from './kits/lapanha.js';
 import { detonateGuardian } from './kits/tank.js';
 import { addPickup, damageBreakable, resetBreakables, respawnSomeBreakables, stepPickups } from './loot.js';
 import { clearMinions, hitMinion, minionAggro, stepMinions } from './minions.js';
 import { FlowField } from './nav.js';
+import { absorbWithShield, addShield, applyWound, clearAfflictions, type HealUse, healPlayer, newTelemetry, stunPlayer, tickPlayerHealth } from './healing.js';
 import { affixReward, bossObjectiveDamageMul, countObjectives, Objectives, spawnBossObjectives, tickBossObjectives } from './objectives.js';
+import { playerSay } from './lines.js';
+import { WorldTelemetry } from './telemetry.js';
 import { SpatialHash } from './spatial.js';
 import type { Action, Enemy, Minion, Pickup, Player, Projectile, Slot, Target, Zone } from './types.js';
-import { rollUpgrades } from './upgrades.js';
+import { legendaryCount, rollUpgrades } from './upgrades.js';
 
 export interface WorldOptions {
   seed: number;
@@ -61,6 +65,8 @@ export interface EnemyHit {
   proj: Projectile | null;
   /** Pode ser aparado/bloqueado. */
   blockable: boolean;
+  /** Atordoamento raro (s) se o golpe acertar de fato (esquiva e bloqueio evitam). */
+  stun?: number;
 }
 
 export type HitResult = 'hit' | 'blocked' | 'parried' | 'evaded' | 'ignored';
@@ -111,6 +117,8 @@ export class World {
   private nextEntityId = 1;
   offers = new Map<number, string[]>();
   offerBonus = new Map<number, string>();
+  /** Oferta anterior de cada jogador (evita repetir as mesmas cartas seguidas). */
+  readonly lastOffers = new Map<number, string[]>();
   picks = new Map<number, string>();
   bossId = 0;
   intro: WaveInfo['intro'] = null;
@@ -121,6 +129,12 @@ export class World {
   onOffersChange: (() => void) | null = null;
   onModsChange: (() => void) | null = null;
   onRouteChange: (() => void) | null = null;
+  /** Telemetria de balanceamento (servidor; não vai para os clientes). */
+  readonly tele = new WorldTelemetry();
+  /** Dano válido do último acerto (sem excesso sobre a vida restante; 0 em objetivos/invulneráveis). */
+  lastValid = 0;
+  /** Dano válido por inimigo no último `meleeArc`. */
+  readonly arcValid = new Map<number, number>();
 
   constructor(opts: WorldOptions) {
     this.seed = opts.seed;
@@ -185,6 +199,8 @@ export class World {
       aim: 0,
       aimX: start.x + 10,
       aimY: start.y,
+      lastShotTick: -9999,
+      ultLockT: 0,
       hp: base.hp,
       maxHp: base.hp,
       maxStamina: base.stamina,
@@ -198,7 +214,8 @@ export class World {
       cdMax: { q: 1, e: 1 },
       ult: 0,
       iframes: 0,
-      buffs: { madness: 0, exhausted: 0, feast: 0, tauntDr: 0, guardBroken: 0, chill: 0, burn: 0 },
+      buffs: { madness: 0, exhausted: 0, feast: 0, tauntDr: 0, guardBroken: 0, chill: 0, burn: 0, stunRes: 0, slowed: 0, retreat: 0, harvest: 0 },
+      slowMul: 1,
       blocking: false,
       blockDir: 0,
       guardianCharge: 0,
@@ -219,7 +236,7 @@ export class World {
       bonusCards: 0,
       biteHealed: 0,
       surrounded: false,
-      healBudget: VAMPIRE.healPerSecondCap,
+      healBudget: HEAL_RULES.combatPerSecond[cls],
       queue: [],
       last: EMPTY_INPUT(0, start.x, start.y),
       ack: 0,
@@ -232,6 +249,25 @@ export class World {
       stats: { kills: 0, damage: 0, downs: 0, revives: 0 },
       inBastion: false,
       bastionHeal: 0,
+      woundT: 0,
+      woundBlockT: 0,
+      woundBy: 0,
+      recentHeal: 0,
+      shieldHp: 0,
+      shieldT: 0,
+      guardCdT: 0,
+      heartCdT: 0,
+      pressureId: 0,
+      pressureN: 0,
+      stillT: 0,
+      harvestRate: 0,
+      harvestFreeQ: false,
+      lastPieceOn: false,
+      fairToggle: false,
+      harvestHitBudget: LAPANHA.harvest.hitHealPerSecond,
+      lastSayTick: -9999,
+      charge: -1,
+      tele: newTelemetry(),
     };
     this.players.set(id, p);
     this.fields.set(id, new FlowField(this.map));
@@ -318,6 +354,7 @@ export class World {
       p.aimY = s.y;
       p.action = null;
       p.blocking = false;
+      clearAfflictions(p);
       i++;
     }
   }
@@ -347,7 +384,10 @@ export class World {
     this.matchStartTick = this.tick;
     let i = 0;
     for (const p of this.players.values()) this.resetPlayerForMatch(p, i++);
+    this.tele.reset();
+    this.lastOffers.clear();
     this.beginWave(1);
+    for (const p of this.players.values()) playerSay(this, p, 'matchStart', true);
   }
 
   private resetPlayerForMatch(p: Player, i: number): void {
@@ -365,7 +405,17 @@ export class World {
     p.ult = 0;
     p.mods = {};
     p.stats = { kills: 0, damage: 0, downs: 0, revives: 0 };
-    p.buffs = { madness: 0, exhausted: 0, feast: 0, tauntDr: 0, guardBroken: 0, chill: 0, burn: 0 };
+    p.buffs = { madness: 0, exhausted: 0, feast: 0, tauntDr: 0, guardBroken: 0, chill: 0, burn: 0, stunRes: 0, slowed: 0, retreat: 0, harvest: 0 };
+    p.slowMul = 1;
+    clearAfflictions(p);
+    p.shieldHp = 0;
+    p.shieldT = 0;
+    p.guardCdT = 0;
+    p.heartCdT = 0;
+    p.recentHeal = 0;
+    p.harvestFreeQ = false;
+    p.fairToggle = false;
+    p.tele = newTelemetry();
     p.thirst = 0;
     p.resonance = 0;
     p.convergence = 0;
@@ -401,7 +451,10 @@ export class World {
     this.offerBonus.clear();
     this.picks.clear();
     this.storm = { active: false, t: this.chapter.storm ? sec(this.chapter.storm.every * 0.6) : 0 };
+    for (const p of this.players.values()) clearAfflictions(p);
+    this.tele.beginWave(n, this.tick);
     this.setPhase('wave');
+    if (n > 1) for (const p of this.players.values()) playerSay(this, p, 'waveStart');
   }
 
   /** Um local cênico, alcançável e estável para todos os clientes durante a onda. */
@@ -444,7 +497,7 @@ export class World {
     for (const p of this.players.values()) {
       if (p.status !== 0 || p.cls !== 'tank' || p.action?.name !== 'r') continue;
       if (dist2(x, y, p.x, p.y) > TANK.bastion.radius ** 2) continue;
-      reduction = Math.max(reduction, TANK.bastion.reduction + (p.mods['t_protector'] ? 0.06 : 0));
+      reduction = Math.max(reduction, TANK.bastion.reduction + this.mod(p, 't_protector'));
     }
     return 1 - reduction;
   }
@@ -459,6 +512,7 @@ export class World {
   }
 
   private beginIntermission(): void {
+    this.tele.endWave(this.tick, this);
     this.phaseTimer = sec(INTERMISSION_SECONDS);
     this.projectiles = this.projectiles.filter((pr) => pr.team === 'p');
     this.zones = this.zones.filter((z) => z.kind === 'trap');
@@ -479,6 +533,10 @@ export class World {
       } else {
         p.hp = Math.min(p.maxHp, p.hp + Math.round(p.maxHp * 0.35));
       }
+      clearAfflictions(p);
+      p.buffs.harvest = 0;
+      p.shieldHp = 0;
+      p.shieldT = 0;
       p.action = null;
       p.bleed = 0;
       p.reviveProgress = 0;
@@ -494,7 +552,9 @@ export class World {
       const count = Math.min(MAX_OFFER_COUNT, BASE_OFFER_COUNT + riskBonus + cardBonus);
       const used = Math.max(0, count - BASE_OFFER_COUNT - riskBonus);
       if (used > 0) p.bonusCards -= used;
-      this.offers.set(p.id, rollUpgrades(this.rng, p, count));
+      const offer = rollUpgrades(this.rng, p, count, this.lastOffers.get(p.id) ?? []);
+      this.offers.set(p.id, offer);
+      this.lastOffers.set(p.id, offer);
       const why: string[] = [];
       if (riskBonus) why.push('rota de risco');
       if (used) why.push('desafio/evento');
@@ -522,6 +582,8 @@ export class World {
   canTake(p: Player, id: string): boolean {
     const def = UPGRADE_BY_ID.get(id);
     if (!def || (p.mods[id] ?? 0) >= def.maxStacks) return false;
+    if (def.cls !== null && def.cls !== p.cls) return false;
+    if (def.rarity === 'legendary' && (p.mods[id] ?? 0) === 0 && legendaryCount(p) >= LEGENDARY_MAX_PER_BUILD) return false;
     return !(def.fork && Object.keys(p.mods).some((k) => k !== id && (p.mods[k] ?? 0) > 0 && UPGRADE_BY_ID.get(k)?.fork === def.fork));
   }
 
@@ -536,10 +598,10 @@ export class World {
       if (!def) continue;
       const cur = p.mods[id] ?? 0;
       p.mods[id] = cur + 1;
-      if (id === 'g_vigor') {
+      if (id === 'g_vigor' || id === 'g_hide') {
         p.maxHp += def.value;
         p.hp += def.value;
-      } else if (id === 'g_breath') {
+      } else if (id === 'g_breath' || id === 'g_lung') {
         p.maxStamina += def.value;
       }
     }
@@ -609,13 +671,17 @@ export class World {
     clearMinions(this);
     this.pickups = [];
     this.storm.active = false;
+    this.tele.endWave(this.tick, this);
+    for (const p of this.players.values()) playerSay(this, p, victory ? 'victory' : 'defeat', true);
     this.setPhase(victory ? 'victory' : 'defeat');
   }
 
   god = false;
+  /** Depuração: impede o fim da onda (cenários de teste isolados). */
+  holdWave = false;
 
   /** Comandos de depuração (apenas com UV_DEBUG=1). */
-  debug(c: 'wave' | 'ult' | 'god' | 'kill' | 'spawn' | 'phase', n: number, s: string): void {
+  debug(c: DebugCommand, n: number, s: string): void {
     if (c === 'wave' && n >= 1 && n <= TOTAL_WAVES) {
       const ch = chapterOfWave(n);
       if (ch.n !== this.chapter.n) this.setChapter(ch.n);
@@ -631,8 +697,28 @@ export class World {
         if (p.cls === 'necromancer') p.essence = NECRO.essence.max;
       }
     } else if (c === 'god') this.god = !this.god;
+    else if (c === 'hold') this.holdWave = !this.holdWave;
     else if (c === 'kill') {
       for (const e of this.enemies.values()) if (!e.def.objective) this.killEnemy(e, null);
+    } else if (c === 'tele') {
+      // telemetria no console do servidor (ferramenta de balanceamento)
+      console.log('[telemetria]', JSON.stringify(this.tele.report(this), null, 1));
+    } else if (c === 'wound') {
+      // aplica a Ferida Profana no primeiro jogador (capturas/testes); n = 1 força a fase de bloqueio
+      const p = [...this.players.values()][0];
+      if (p) {
+        if (n === 0) p.woundT = 0;
+        applyWound(this, p, [...this.enemies.values()].find((e) => e.type === 'shadowAcolyte') ?? null);
+      }
+    } else if (c === 'stun') {
+      const p = [...this.players.values()][0];
+      if (p) stunPlayer(this, p, n > 0 ? n / 10 : 0.5);
+    } else if (c === 'hp') {
+      // vida do primeiro jogador em % (capturas de estado crítico e testes do Lapanha)
+      const p = [...this.players.values()][0];
+      if (p) p.hp = Math.max(1, Math.round((p.maxHp * Math.min(100, n)) / 100));
+    } else if (c === 'event' || c === 'challenge') {
+      this.objectives.debugForce(c, s, n);
     } else if (c === 'spawn' && (ENEMY_TYPES as readonly string[]).includes(s)) {
       const p = [...this.players.values()][0];
       if (!p) return;
@@ -758,7 +844,7 @@ export class World {
       this.endMatch(false);
       return;
     }
-    if (this.director.complete() && !this.objectives.blocking()) {
+    if (!this.holdWave && this.director.complete() && !this.objectives.blocking()) {
       this.objectives.endWave();
       if (this.wave >= TOTAL_WAVES) this.endMatch(true);
       else this.beginIntermission();
@@ -793,15 +879,21 @@ export class World {
     if (p.blocking) moveMul = Math.min(moveMul, TANK.guard.moveMul);
     if (p.buffs.guardBroken > 0 || p.status !== 0) moveMul = 0;
     if (p.revivingId) moveMul = Math.min(moveMul, 0.25);
-    let speed = b.speed * (1 + this.mod(p, 'g_agility') + thirstSpeed);
+    // bônus de velocidade de cartas somados, com teto global
+    const cardSpeed = Math.min(
+      UPGRADE_CAPS.moveSpeed,
+      this.mod(p, 'g_agility') + (p.action ? 0 : this.mod(p, 'g_step')) + (p.buffs.retreat > 0 ? this.mod(p, 'g_retreat') : 0),
+    );
+    let speed = b.speed * (1 + cardSpeed + thirstSpeed);
     if (p.buffs.chill > 0) speed *= CLIMATE_EFFECTS.chill.speedMul;
     if (p.buffs.exhausted > 0) speed *= BERSERKER.madness.exhaustSpeedMul;
+    if (p.buffs.slowed > 0) speed *= p.slowMul;
     return {
       radius: p.r,
       speed,
       moveMul,
       canDodge: this.canAct(p) && !p.blocking,
-      dodgeCost: b.dodge.cost,
+      dodgeCost: b.dodge.cost * (1 - this.mod(p, 'g_dodge')),
       dodgeSpeed: b.dodge.speed,
       dodgeTicks: b.dodge.ticks,
       dodgeCooldown: b.dodge.cooldown,
@@ -871,11 +963,16 @@ export class World {
       this.deny(p, 'ult');
       return false;
     }
+    const kit = kitFor(p.cls);
     if ((slot === 'q' || slot === 'e') && p.cd[slot] > 0) {
+      // Lapanha: E durante a recarga esmaga a casca que ainda está no chão
+      if (kit.startDuringCooldown?.(this, p, slot)) {
+        p.buffered = null;
+        return true;
+      }
       this.deny(p, 'cd');
       return false;
     }
-    const kit = kitFor(p.cls);
     const r = kit.start(this, p, slot);
     if (r !== null) {
       this.deny(p, r);
@@ -900,7 +997,8 @@ export class World {
     timing: { windup: number; active?: number; recovery: number },
     opts: { dir?: number; moveMul?: number; tx?: number; ty?: number; n?: number; speedMul?: number } = {},
   ): Action {
-    const sm = opts.speedMul ?? 1;
+    // Mãos Rápidas: velocidade do básico (carta somada, com teto)
+    const sm = (opts.speedMul ?? 1) * (name.startsWith('basic') ? 1 + Math.min(UPGRADE_CAPS.attackSpeed, this.mod(p, 'g_haste')) : 1);
     const w = Math.max(0, Math.round(timing.windup / sm));
     const act = Math.max(0, Math.round((timing.active ?? 1) / sm));
     const rec = Math.max(1, Math.round(timing.recovery / sm));
@@ -933,30 +1031,28 @@ export class World {
     return true;
   }
 
+  /** Redução de recarga de cartas (somada, com teto global). */
+  cardCdr(p: Player, slot: 'q' | 'e'): number {
+    return Math.min(UPGRADE_CAPS.cooldown, this.mod(p, 'g_focus') + this.mod(p, slot === 'q' ? 'g_qcd' : 'g_ecd'));
+  }
+
   setCooldown(p: Player, slot: 'q' | 'e', seconds: number): void {
-    const focus = 1 - this.mod(p, 'g_focus');
+    const focus = 1 - this.cardCdr(p, slot);
     const t = Math.max(sec(0.5), Math.round(sec(seconds) * focus));
     p.cd[slot] = t;
     p.cdMax[slot] = t;
   }
 
   addUlt(p: Player, amt: number): void {
-    if (p.status !== 0) return;
+    if (p.status !== 0 || p.ultLockT > 0) return;
+    // Safra Abençoada: a Polpa não enche durante a própria suprema
+    if (p.buffs.harvest > 0) return;
     p.ult = Math.min(PLAYER_RULES.ultMax, p.ult + amt * (1 + this.mod(p, 'g_devotion')));
   }
 
-  healPlayer(p: Player, amt: number, capped: boolean): number {
-    if (p.status !== 0 || amt <= 0) return 0;
-    let a = amt;
-    if (capped) {
-      a = Math.min(a, p.healBudget);
-      p.healBudget -= a;
-    }
-    const before = p.hp;
-    p.hp = Math.min(p.maxHp, p.hp + a);
-    const got = p.hp - before;
-    if (got >= 1) this.emit({ k: 'dmg', tg: 'p', ti: p.id, v: Math.round(got), x: p.x, y: p.y - 18, c: 'heal', s: 0 });
-    return got;
+  /** Toda cura de jogador passa pela função central (ver healing.ts). */
+  healPlayer(p: Player, amt: number, src: HealSource, use?: HealUse): number {
+    return healPlayer(this, p, amt, src, use);
   }
 
   /** Berserker: Fúria gerada. */
@@ -979,6 +1075,7 @@ export class World {
     if (p.cd.q > 0) p.cd.q--;
     if (p.cd.e > 0) p.cd.e--;
     if (p.iframes > 0) p.iframes--;
+    if (p.ultLockT > 0) p.ultLockT--;
     const madnessBefore = p.buffs.madness;
     for (const k of Object.keys(p.buffs) as (keyof Player['buffs'])[]) if (p.buffs[k] > 0) p.buffs[k]--;
     if (madnessBefore === 1 && p.buffs.madness === 0 && p.cls === 'berserker') {
@@ -988,8 +1085,13 @@ export class World {
     }
     if (p.comboT > 0 && --p.comboT === 0) p.comboStep = 0;
     if (p.thirstT > 0 && --p.thirstT === 0) p.thirst = 0;
-    // teto de cura por segundo (vampiro)
-    if (this.tick % TICK_RATE === 0) p.healBudget = VAMPIRE.healPerSecondCap;
+    if (p.buffs.slowed === 0) p.slowMul = 1;
+    // teto de cura por segundo, Ferida Profana, escudo e telemetria
+    tickPlayerHealth(this, p);
+    if (this.tick % TICK_RATE === 0) p.harvestHitBudget = LAPANHA.harvest.hitHealPerSecond;
+    // parado (Caçador de Névoa pressiona quem fica parado junto a objetivos)
+    if (p.last.mx === 0 && p.last.my === 0) p.stillT++;
+    else p.stillT = 0;
 
     if (p.status === 1) {
       p.bleed--;
@@ -1016,7 +1118,7 @@ export class World {
     // stamina
     if (p.staminaDelay > 0) p.staminaDelay--;
     else if (!p.blocking && p.buffs.exhausted <= 0 && p.move.stamina < p.maxStamina) {
-      const regen = p.base.staminaRegen * (1 + this.mod(p, 'g_recovery'));
+      const regen = p.base.staminaRegen * (1 + this.mod(p, 'g_recovery') + this.mod(p, 'g_rhythm'));
       p.move.stamina = Math.min(p.maxStamina, p.move.stamina + regen * DT);
     }
 
@@ -1090,6 +1192,8 @@ export class World {
         p.stats.revives++;
         this.addUlt(p, PLAYER_RULES.ultPerRevive);
         this.emit({ k: 'revived', pi: target.id, by: p.id });
+        playerSay(this, p, 'reviveAlly', true);
+        playerSay(this, target, 'revived', true);
       }
     }
   }
@@ -1108,10 +1212,12 @@ export class World {
     m *= this.guardianReductionAt(p.x, p.y);
     if (p.inBastion) m *= 0.6;
     if (p.buffs.tauntDr > 0) m *= 0.7;
-    m *= 1 - this.mod(p, 'g_skin');
+    m *= 1 - Math.min(UPGRADE_CAPS.damageReduction, this.mod(p, 'g_skin') + (this.objectives.playerInArea(p) ? this.mod(p, 'g_objective') : 0));
     if (p.surrounded) m *= 1.25;
+    if (CLASS_RANGE[p.cls] === 'melee') m *= MELEE_RULES.damageTakenMul;
+    if (p.cls === 'vampire' && p.action?.name === 'e') m *= VAMPIRE.vortex.damageTaken;
     if (p.cls === 'berserker') {
-      if (p.buffs.madness > 0) m *= p.mods['b_iron'] ? 1 : 1 + BERSERKER.madness.damageTaken;
+      if (p.buffs.madness > 0) m *= 1 + (p.mods['b_iron'] ? BERSERKER.madness.ironDamageTaken : BERSERKER.madness.damageTaken);
       else m *= 1 + BERSERKER.fury.maxDamageTaken * (p.rage / BERSERKER.fury.max);
     }
     return m;
@@ -1120,17 +1226,23 @@ export class World {
   /** Aplica um golpe inimigo em um jogador (bloqueio, i-frames e reduções no servidor). */
   hitPlayer(p: Player, h: EnemyHit): HitResult {
     if (p.status !== 0) return 'ignored';
-    if (p.iframes > 0) return 'evaded';
+    if (p.iframes > 0) {
+      // Retirada Tática: esquivar de um ataque de verdade acelera por um instante
+      if ((p.mods['g_retreat'] ?? 0) > 0 && this.tick - p.lastDodgeTick < 12) p.buffs.retreat = sec(1.5);
+      return 'evaded';
+    }
     if (this.god) return 'evaded';
     const kit = kitFor(p.cls);
     if (h.blockable && kit.onIncoming) {
       const r = kit.onIncoming(this, p, h);
       if (r !== null) return r;
     }
-    const dmg = h.dmg * this.damageTakenMul(p);
+    let dmg = h.dmg * this.damageTakenMul(p);
+    dmg = absorbWithShield(this, p, dmg);
     const hpBefore = p.hp;
-    this.damagePlayerRaw(p, dmg, h.heavy);
+    if (dmg > 0) this.damagePlayerRaw(p, dmg, h.heavy);
     this.recordGuardianDamage(p.x, p.y, hpBefore - p.hp);
+    if (h.stun && p.status === 0) stunPlayer(this, p, h.stun);
     // clima: a horda adaptada aplica frio ou queimadura
     const onHit = this.chapter.enemies.onHit;
     if (onHit === 'chill') p.buffs.chill = sec(CLIMATE_EFFECTS.chill.duration);
@@ -1149,6 +1261,7 @@ export class World {
   damagePlayerRaw(p: Player, rawDmg: number, heavy: boolean, dot = false): void {
     const dmg = Math.max(1, Math.round(rawDmg));
     p.hp -= dmg;
+    p.tele.taken += Math.min(dmg, dmg + Math.min(0, p.hp));
     this.addUlt(p, dmg * PLAYER_RULES.ultPerDamageTaken);
     if (p.cls === 'berserker') this.addRage(p, dmg * BERSERKER.fury.perDamageTaken);
     this.emit({ k: 'dmg', tg: 'p', ti: p.id, v: dmg, x: p.x, y: p.y - 16, c: 'n', s: dot ? 1 : 0 });
@@ -1161,6 +1274,10 @@ export class World {
       p.move.ft = 0;
       p.stats.downs++;
       p.buffs.burn = 0;
+      p.buffs.harvest = 0;
+      p.shieldHp = 0;
+      p.shieldT = 0;
+      clearAfflictions(p);
       clearMinions(this, p.id);
       this.objectives.onDown();
       if (this.solo || this.players.size === 1) {
@@ -1173,7 +1290,14 @@ export class World {
       this.emit({ k: 'down', pi: p.id });
       return;
     }
-    if (heavy && p.buffs.madness <= 0 && !(p.action && p.action.name === 'r')) {
+    // Defesa Improvisada: escudo ao cair abaixo de 25% (recarga longa)
+    if ((p.mods['g_guard'] ?? 0) > 0 && p.guardCdT <= 0 && p.hp / p.maxHp < 0.25) {
+      addShield(p, this.mod(p, 'g_guard'), 4);
+      p.guardCdT = sec(40);
+      this.emit({ k: 'fx', n: 'shieldUp', x: p.x, y: p.y - 12, a: 0, o: p.id, r: 0 });
+    }
+    if (p.hp / p.maxHp < 0.3) playerSay(this, p, 'lowHp');
+    if (heavy && p.buffs.madness <= 0 && !(p.action && (p.action.name === 'r' || p.action.name === 'stun'))) {
       p.action = null;
       this.startAction(p, 'hurt', { windup: 0, active: 0, recovery: PLAYER_RULES.heavyHitStagger }, { moveMul: 0.2 });
       if (p.action) (p.action as Action).cancelFrom = 999;
@@ -1183,7 +1307,11 @@ export class World {
   // ------------------------------------------------------------------ dano a inimigos
 
   damageMul(p: Player, e: Enemy, kind?: HitOpts['kind']): number {
-    let m = 1 + this.mod(p, 'g_fury');
+    // bônus de cartas SOMADOS com teto global (nunca multiplicam entre si)
+    let card = this.mod(p, 'g_fury');
+    if (e.hp >= e.maxHp) card += this.mod(p, 'g_first');
+    if (e.type === 'acolyte' || e.type === 'shadowAcolyte' || e.type === 'highAcolyte' || e.type === 'ritualist') card += this.mod(p, 'g_support');
+    let m = 1 + Math.min(UPGRADE_CAPS.damage, card);
     if (p.cls === 'vampire') {
       m += p.thirst * VAMPIRE.thirst.damagePerStack;
       if (p.buffs.feast > 0) m += VAMPIRE.feast.damageBonus;
@@ -1198,36 +1326,104 @@ export class World {
     return m;
   }
 
+  /**
+   * Aplica dano a um inimigo. Retorna o DANO VÁLIDO (sem o excesso além da vida restante; 0 para
+   * objetivos, estacionários e inimigos que não podem ser feridos): é a base de toda cura por acerto.
+   */
   hitEnemy(p: Player | null, e: Enemy, base: number, o: HitOpts): number {
+    this.lastValid = 0;
     if (e.state === 'dead' || e.state === 'spawn') return 0;
     if (e.state === 'roar' && e.def.tier === 'boss') base *= 0.35;
     base *= bossObjectiveDamageMul(this, e);
+    // Casca Traiçoeira: vulnerável logo após escorregar
+    if (e.vulnT > 0) base *= LAPANHA.peel.vulnerableMul;
+    // Portador do Ossário: o escudo frontal absorve (projéteis são tratados em stepProjectiles)
+    let poiseMul = 1;
+    if (e.shieldHp > 0 && o.kind !== 'proj' && this.shieldFaces(e, o.fromX, o.fromY)) {
+      const S = ATK.ossuaryBearer.shield;
+      const heavy = o.poise >= S.heavyPoise;
+      const sMul = heavy ? S.heavyShieldMul : o.kind === 'aoe' ? S.aoeShieldMul : S.meleeShieldMul;
+      this.damageShield(e, base * sMul * (p ? 1 + this.mod(p, 'g_breaker') : 1), p);
+      base *= o.kind === 'aoe' ? S.aoeBodyMul : S.meleeBodyMul;
+      poiseMul = heavy ? 1 : S.projPoiseMul * 2;
+    }
+    // Caçador de Névoa exposto na recuperação do salto
+    if (e.type === 'mistStalker' && e.atk === 'mistLeap' && e.state === 'recover') poiseMul *= ATK.mistStalker.leap.recoverPoiseMul;
     const mul = p && !o.raw ? this.damageMul(p, e, o.kind) : 1;
     const dmg = Math.max(1, Math.round(base * mul));
+    const hpBefore = e.hp;
     e.hp -= dmg;
     e.lastHitTick = this.tick;
+    const valid = e.def.objective || e.def.stationary ? 0 : Math.max(0, Math.min(dmg, hpBefore));
+    this.lastValid = valid;
+    // canalizações contra objetivos são interrompidas por qualquer golpe de jogador
+    if (p && e.atk === 'siege' && e.state === 'windup') this.objectives.breakSiege(e);
     this.emit({ k: 'dmg', tg: 'e', ti: e.id, v: dmg, x: e.x, y: e.y - e.r - 6, c: mul >= 1.3 ? 'crit' : 'n', s: p?.id ?? 0 });
+    if (p && (e.def.tier === 'boss' || e.def.miniboss) && valid > 0) {
+      e.threat.set(p.id, (e.threat.get(p.id) ?? 0) + valid);
+    }
     if (p) {
       p.stats.damage += dmg;
-      if (!o.noUlt && (!e.def.objective || e.type === 'funeralCart' || e.type === 'ritualist')) this.addUlt(p, dmg * p.base.ultPerDamage);
+      if (!o.noUlt && (!e.def.objective || e.type === 'funeralCart' || e.type === 'ritualist')) this.addUlt(p, dmg * p.base.ultPerDamage * (o.fromMinion ? NECRO.minionUltMul : 1));
       if (!o.fromMinion) {
         kitFor(p.cls).onDealt?.(this, p, e, dmg, o);
         if (p.cls === 'berserker') this.addRage(p, dmg * BERSERKER.fury.perDamageDealt);
       }
     }
-    // poise / stagger (Blindado recebe só parte)
-    if (o.poise > 0 && e.staggerImmune <= 0 && !e.def.stationary) {
-      e.poise += o.poise * (e.affix === 'armored' ? AFFIX_RULES.armoredPoiseMul : 1);
+    // poise / stagger (Blindado recebe só parte). Cartas: Golpe Estável e Pressão Constante.
+    let poise = o.poise;
+    if (p && !o.fromMinion) {
+      poise *= 1 + this.mod(p, 'g_poise');
+      if ((p.mods['g_pressure'] ?? 0) > 0 && o.kind !== 'aoe') {
+        if (p.pressureId === e.id) p.pressureN++;
+        else {
+          p.pressureId = e.id;
+          p.pressureN = 1;
+        }
+        if (p.pressureN >= 3) {
+          poise += this.mod(p, 'g_pressure');
+          p.pressureN = 0;
+        }
+      }
+    }
+    if (poise > 0 && e.staggerImmune <= 0 && !e.def.stationary) {
+      e.poise += poise * poiseMul * (e.affix === 'armored' ? AFFIX_RULES.armoredPoiseMul : 1);
       if (e.poise >= e.def.poise) this.stagger(e, e.def.staggerTime);
     }
     if (o.kb > 0 && !e.def.stationary) this.knockback(e, o.fromX, o.fromY, o.kb);
     if (e.hp <= 0) this.killEnemy(e, p);
-    return dmg;
+    return valid;
+  }
+
+  /** O escudo do Portador cobre a direção de onde vem o golpe? (servidor decide frente/lado/costas) */
+  shieldFaces(e: Enemy, fromX: number, fromY: number): boolean {
+    if (e.shieldHp <= 0) return false;
+    const a = Math.atan2(fromY - e.y, fromX - e.x);
+    return Math.abs(angleDiff(a, e.shieldDir)) <= (ATK.ossuaryBearer.shield.arc * Math.PI) / 360;
+  }
+
+  damageShield(e: Enemy, dmg: number, by: Player | null): void {
+    if (e.shieldHp <= 0) return;
+    e.shieldHp = Math.max(0, e.shieldHp - dmg);
+    if (by) by.stats.damage += Math.round(dmg);
+    if (e.shieldHp <= 0) {
+      this.emit({ k: 'fx', n: 'shieldBreak', x: e.x + Math.cos(e.shieldDir) * 10, y: e.y + Math.sin(e.shieldDir) * 6, a: e.shieldDir, o: e.id, r: ATK.ossuaryBearer.debrisSeconds });
+      this.emit({ k: 'sfx', n: 'shieldBreak', x: e.x, y: e.y });
+      if (by) this.addUlt(by, 4);
+    }
   }
 
   stagger(e: Enemy, seconds: number): void {
     if (e.state === 'dead' || e.state === 'spawn' || e.def.stationary) return;
     e.poise = 0;
+    if (e.atk === 'march' && e.state === 'windup') this.emit({ k: 'fx', n: 'marchBreak', x: e.x, y: e.y, a: 0, o: e.id, r: ATK.shadowAcolyte.march.radius });
+    if (e.atk === 'wound' && e.state === 'windup') {
+      const t = this.players.get(e.aimPid);
+      if (t) t.tele.woundsInterrupted++;
+      this.emit({ k: 'fx', n: 'woundBreak', x: e.x, y: e.y - 10, a: 0, o: e.id, r: 0 });
+    }
+    if (e.atk === 'siege' && e.state === 'windup') this.objectives.breakSiege(e);
+    e.aimPid = 0;
     e.state = 'stagger';
     e.stateT = sec(seconds);
     e.atk = 'none';
@@ -1240,7 +1436,7 @@ export class World {
   interrupt(e: Enemy): boolean {
     if (e.def.tier === 'boss' || e.def.objective) return false;
     if (e.state !== 'windup') return false;
-    const vulnerable: EnemyAttackName[] = ['orb', 'rune', 'pounce', 'slipper', 'lunge'];
+    const vulnerable: EnemyAttackName[] = ['orb', 'rune', 'pounce', 'slipper', 'lunge', 'march', 'mistLeap', 'wound', 'siege'];
     if (!vulnerable.includes(e.atk)) return false;
     this.stagger(e, 0.9);
     this.emit({ k: 'fx', n: 'interrupt', x: e.x, y: e.y - e.r, a: 0, o: 0, r: 0 });
@@ -1284,11 +1480,21 @@ export class World {
 
   killEnemy(e: Enemy, by: Player | null): void {
     if (e.state === 'dead') return;
+    if (e.atk === 'wound' && e.state === 'windup') {
+      const t = this.players.get(e.aimPid);
+      if (t) t.tele.woundsInterrupted++;
+    }
     e.state = 'dead';
     e.hp = 0;
     const objective = !!e.def.objective;
     if (!objective) this.lastKillTick = this.tick;
-    if (by && !objective) by.stats.kills++;
+    if (by && !objective) {
+      by.stats.kills++;
+      if (e.def.tier === 'elite' && (by.mods['g_second'] ?? 0) > 0) by.move.stamina = Math.min(by.maxStamina, by.move.stamina + this.mod(by, 'g_second'));
+    }
+    if (!objective && (e.def.miniboss || e.def.tier === 'boss')) {
+      for (const p of this.players.values()) playerSay(this, p, e.def.tier === 'boss' ? 'bossDown' : 'minibossDown', true);
+    }
     this.clearEnemyZones(e.id);
     this.emit({ k: 'die', ei: e.id, et: e.typeIdx, x: e.x, y: e.y });
     if (!objective) {
@@ -1343,7 +1549,8 @@ export class World {
       a.hit.add(e.id);
       hits.push(e);
     });
-    for (const e of hits) this.hitEnemy(p, e, spec.damage * dmgMul, { poise: spec.poise, kb: spec.knockback, fromX: p.x, fromY: p.y, kind: 'melee' });
+    this.arcValid.clear();
+    for (const e of hits) this.arcValid.set(e.id, this.hitEnemy(p, e, spec.damage * dmgMul, { poise: spec.poise, kb: spec.knockback, fromX: p.x, fromY: p.y, kind: 'melee' }));
     // quebráveis no arco (uma vez por ação)
     const tx0 = Math.floor((p.x - range) / TILE);
     const tx1 = Math.floor((p.x + range) / TILE);
@@ -1359,7 +1566,7 @@ export class World {
         if (d > range + 12) continue;
         if (spec.arc < 360 && Math.abs(angleDiff(Math.atan2(cy - p.y, cx - p.x), a.dir)) > half + 0.35) continue;
         a.hit.add(-1000 - bi);
-        damageBreakable(this, bi, spec.damage * dmgMul, p);
+        damageBreakable(this, bi, spec.damage * dmgMul * (1 + this.mod(p, 'g_breaker')), p);
       }
     return hits;
   }
@@ -1375,7 +1582,7 @@ export class World {
         const bi = breakableAt(this.map, tx, ty);
         if (bi < 0) continue;
         if (dist2((tx + 0.5) * TILE, (ty + 0.5) * TILE, x, y) > (r + 12) ** 2) continue;
-        damageBreakable(this, bi, dmg, by);
+        damageBreakable(this, bi, dmg * (by ? 1 + this.mod(by, 'g_breaker') : 1), by);
       }
   }
 
@@ -1409,8 +1616,15 @@ export class World {
       ty: 0,
       splash: 0,
       dead: false,
+      lob: 0,
+      a: 0,
+      b: 0,
       ...o,
     };
+    if (pr.team === 'p') {
+      const shooter = this.players.get(pr.owner);
+      if (shooter) shooter.lastShotTick = this.tick;
+    }
     this.projectiles.push(pr);
     return pr;
   }
@@ -1438,7 +1652,7 @@ export class World {
     const a = Math.atan2(best.y - from.y, best.x - from.x);
     const sp = Math.hypot(pr.vx, pr.vy);
     const np = this.spawnProjectile({
-      kind: 'bolt', team: 'p', owner: pr.owner, x: from.x + Math.cos(a) * (from.r + 4), y: from.y - 6 + Math.sin(a) * (from.r + 4),
+      kind: 'bolt', team: 'p', owner: pr.owner, x: from.x + Math.cos(a) * (from.r + 4), y: from.y + Math.sin(a) * (from.r + 4),
       vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: pr.r, dmg: pr.dmg * HUNTER.upgrades.ricochetDamage, range: 130, pierce: 0, poise: pr.poise, kb: pr.kb, ricochet: 0,
     });
     for (const id of pr.hit) np.hit.add(id);
@@ -1485,17 +1699,32 @@ export class World {
           break;
         }
         if (pr.team === 'p') {
-          // caixas e barris param projéteis de jogadores
-          const bi = breakableAt(this.map, tx, ty);
+          const owner = this.players.get(pr.owner) ?? null;
+          const kit = owner ? kitFor(owner.cls) : null;
+          // caixas e barris param projéteis de jogadores (a Melancia Madura passa por cima em arco)
+          const bi = pr.kind === 'bigMelon' ? -1 : breakableAt(this.map, tx, ty);
           if (bi >= 0) {
-            damageBreakable(this, bi, pr.dmg, this.players.get(pr.owner) ?? null);
+            if (!LOB_KINDS.has(pr.kind)) damageBreakable(this, bi, pr.dmg, owner);
             this.projectileEnd(pr, true);
             break;
           }
-          const owner = this.players.get(pr.owner) ?? null;
           this.hash.query(pr.x, pr.y, pr.r, (e) => {
             if (pr.dead || pr.hit.has(e.id) || e.state === 'dead' || e.state === 'spawn') return;
+            if (pr.kind === 'bigMelon') return;
             pr.hit.add(e.id);
+            if (kit?.projectileHit?.(this, pr, e)) return;
+            // escudo frontal do Portador: o projétil para (não atravessa nem ricocheteia)
+            const fromX = pr.x - pr.vx * 0.05;
+            const fromY = pr.y - pr.vy * 0.05;
+            if (e.shieldHp > 0 && this.shieldFaces(e, fromX, fromY)) {
+              const S = ATK.ossuaryBearer.shield;
+              this.damageShield(e, pr.dmg * S.projShieldMul, owner);
+              this.hitEnemy(owner, e, pr.dmg * S.projBodyMul, { poise: pr.poise * S.projPoiseMul, kb: 0, fromX: e.x + Math.cos(e.shieldDir + Math.PI) * 20, fromY: e.y + Math.sin(e.shieldDir + Math.PI) * 20, kind: 'proj', noProc: true });
+              this.emit({ k: 'fx', n: 'shieldBlock', x: e.x + Math.cos(e.shieldDir) * 10, y: e.y + Math.sin(e.shieldDir) * 6, a: e.shieldDir, o: e.id, r: 0 });
+              this.emit({ k: 'sfx', n: 'shieldBlock', x: e.x, y: e.y });
+              pr.dead = true;
+              return;
+            }
             this.hitEnemy(owner, e, pr.dmg, { poise: pr.poise, kb: pr.kb, fromX: pr.x - pr.vx * 0.05, fromY: pr.y - pr.vy * 0.05, kind: 'proj' });
             if (pr.ricochet > 0) {
               pr.ricochet--;
@@ -1521,6 +1750,11 @@ export class World {
               proj: pr,
               blockable: true,
             });
+            if (pr.kind === 'woundBolt') {
+              if (res === 'hit') applyWound(this, p, this.enemies.get(-pr.owner) ?? null);
+              else if (res !== 'ignored' && pr.b === 0) p.tele.woundsAvoided++;
+              pr.b = 1;
+            }
             if (res === 'evaded') continue;
             if (pr.kind !== 'slipper' || res !== 'hit') pr.dead = true;
             if (res === 'hit' || res === 'blocked' || res === 'parried') this.emit({ k: 'fx', n: 'projHit', x: pr.x, y: pr.y, a: 0, o: pr.kindIdx, r: 0 });
@@ -1542,6 +1776,15 @@ export class World {
 
   private projectileEnd(pr: Projectile, wall: boolean): void {
     pr.dead = true;
+    if (pr.team === 'p') {
+      const owner = this.players.get(pr.owner);
+      if (owner && kitFor(owner.cls).projectileEnd?.(this, pr)) return;
+    } else if (pr.kind === 'woundBolt' && pr.b === 0) {
+      // a Ferida errou (parede/alcance): conta como evitada para o alvo
+      const t = this.players.get(pr.a);
+      if (t) t.tele.woundsAvoided++;
+      pr.b = 1;
+    }
     if (pr.splash > 0) {
       const owner = this.players.get(pr.owner) ?? null;
       for (const e of this.enemiesInCircle(pr.x, pr.y, pr.splash)) {
@@ -1600,7 +1843,7 @@ export class World {
           for (const p of this.players.values()) {
             if (p.status === 0 && dist2(p.x, p.y, z.x, z.y) <= z.r * z.r) {
               p.inBastion = true;
-              if (z.b > 0 && z.age % TICK_RATE === 0) this.healPlayer(p, z.b, false);
+              if (z.b > 0 && z.age % TICK_RATE === 0) this.healPlayer(p, z.b, 'bastion');
             }
           }
           for (const e of this.enemiesInCircle(z.x, z.y, z.r)) e.bastionSlow = true;
@@ -1727,6 +1970,28 @@ export class World {
       exposedT: 0,
       relightT: 0,
       objT: 0,
+      hasteMul: 0,
+      hasteT: 0,
+      shieldHp: type === 'ossuaryBearer' ? ATK.ossuaryBearer.shield.hp * hpMul : 0,
+      shieldMax: type === 'ossuaryBearer' ? ATK.ossuaryBearer.shield.hp * hpMul : 0,
+      shieldDir: Math.PI / 2,
+      veiled: false,
+      aiT: (x + y) % 15,
+      repositionT: 0,
+      coverX: x,
+      coverY: y,
+      lockedId: 0,
+      farT: 0,
+      lockedSince: 0,
+      threat: new Map(),
+      role: 'none',
+      zoneT: 0,
+      slideT: 0,
+      slideVx: 0,
+      slideVy: 0,
+      vulnT: 0,
+      aimPid: 0,
+      lastCastTick: -9999,
     };
     // afixos: minichefes têm o afixo do tipo garantido; elites comuns sorteiam
     const options = affixesFor(type);
@@ -1739,6 +2004,8 @@ export class World {
     e.x = pos.x;
     e.y = pos.y;
     this.enemies.set(e.id, e);
+    this.tele.onSpawn(type);
+    if (!def.objective) this.objectives.assignRole(e);
     if (boss) {
       this.bossId = e.id;
       spawnBossObjectives(this, e);
@@ -1748,9 +2015,15 @@ export class World {
 
   /** Alvo atual do inimigo: provocação > servo próximo (aggro) > jogador mais próximo pelo caminho. */
   targetOf(e: Enemy): Target | null {
+    if (e.def.tier === 'boss' || e.def.miniboss) return this.bossTarget(e);
     if (e.tauntT > 0) {
       const t = this.players.get(e.tauntBy);
       if (t && t.status === 0) return t;
+    }
+    // funções táticas em missões (ocupar fogueira/altar, caçar o sobrevivente)
+    if (e.role !== 'none') {
+      const t = this.objectives.roleTarget(e);
+      if (t) return t;
     }
     if (e.minionTarget) {
       const m = this.minions.get(e.minionTarget);
@@ -1798,15 +2071,82 @@ export class World {
     const dx = t.x - e.x;
     const dy = t.y - e.y;
     const d = Math.hypot(dx, dy) || 1;
-    if ((d < 110 || t.isMinion) && lineOfSight(this.map, e.x, e.y, t.x, t.y) && circleFree(this.map, e.x + (dx / d) * 10, e.y + (dy / d) * 10, e.r)) {
+    if ((d < 110 || t.isMinion || t.isPoint) && lineOfSight(this.map, e.x, e.y, t.x, t.y) && circleFree(this.map, e.x + (dx / d) * 10, e.y + (dy / d) * 10, e.r)) {
       return [dx / d, dy / d];
     }
-    const f = t.isMinion
-      ? (t as Minion).kind === 'survivor' ? this.escortField : this.fields.get((t as Minion).owner)
-      : this.fields.get(t.id);
+    const f = t.isPoint
+      ? this.objectives.pointField
+      : t.isMinion
+        ? (t as Minion).kind === 'survivor' ? this.escortField : this.fields.get((t as Minion).owner)
+        : this.fields.get(t.id);
     const dir = f?.direction(e.x, e.y);
     if (dir && (dir[0] !== 0 || dir[1] !== 0)) return dir;
     return [dx / d, dy / d];
+  }
+
+  /**
+   * Pontuação de alvo de chefe/minichefe: alcance da classe, penalidade por distância de
+   * caminho e ameaça recente (dano real causado, com decaimento — ver BOSS_AI.threatWindow).
+   * A ameaça garante que quem está de fato lutando de perto puxa a atenção de volta, em vez
+   * do chefe fixar para sempre em quem calhou de estar mais perto/à distância na primeira vez.
+   */
+  private bossTargetScore(e: Enemy, p: Player): number {
+    const f = this.fields.get(p.id);
+    const fd = f ? f.at(e.x, e.y) : 0xffff;
+    const path = fd === 0xffff ? dist(e.x, e.y, p.x, p.y) * 1.5 : fd * (TILE / 10);
+    const threat = e.threat.get(p.id) ?? 0;
+    return BOSS_AI.rangePriority[CLASS_RANGE[p.cls]] - path * BOSS_AI.distanceWeight + threat * BOSS_AI.threatWeight;
+  }
+
+  /**
+   * Chefes e minichefes: escolhem o alvo mais valioso (alcance, distância, ameaça) e ficam
+   * travados nele por `BOSS_AI.retargetSeconds`, quando então reavaliam do zero. A provocação
+   * transfere a trava para o provocador por `BOSS_AI.tauntLock` segundos e reinicia a janela.
+   * Servos não desviam a atenção de chefes.
+   */
+  private bossTarget(e: Enemy): Player | null {
+    if (e.tauntT > 0) {
+      const t = this.players.get(e.tauntBy);
+      if (t && t.status === 0) {
+        e.lockedId = t.id;
+        e.targetId = t.id;
+        e.targetT = Math.max(e.targetT, sec(BOSS_AI.tauntLock));
+        e.farT = 0;
+        e.lockedSince = this.tick;
+        return t;
+      }
+    }
+    let cur = this.players.get(e.lockedId);
+    if (!cur || cur.status !== 0 || !cur.connected) cur = undefined;
+    const lockedSeconds = (this.tick - e.lockedSince) / TICK_RATE;
+    // Reavalia do zero quando o alvo travado sumiu OU quando já se passou tempo suficiente
+    // sem provocação — sem isso, com vários jogadores de longo alcance o chefe pode travar
+    // no primeiro para sempre e nunca reagir a quem de fato está batendo nele.
+    if (!cur || lockedSeconds >= BOSS_AI.retargetSeconds) {
+      let best: Player | null = null;
+      let bestScore = -Infinity;
+      for (const p of this.players.values()) {
+        if (p.status !== 0 || !p.connected) continue;
+        const score = this.bossTargetScore(e, p);
+        if (score > bestScore) {
+          bestScore = score;
+          best = p;
+        }
+      }
+      // Já havia um alvo travado e vivo: só troca se o novo vencer por margem real, para não
+      // alternar entre alvos parecidos a cada reavaliação.
+      if (cur && best && best.id !== cur.id && bestScore < this.bossTargetScore(e, cur) + BOSS_AI.switchMargin) best = cur;
+      if ((best?.id ?? 0) !== e.lockedId) e.farT = 0;
+      e.lockedId = best?.id ?? 0;
+      e.lockedSince = this.tick;
+      cur = best ?? undefined;
+    }
+    e.targetId = cur?.id ?? 0;
+    if (cur) {
+      if (dist(e.x, e.y, cur.x, cur.y) > BOSS_AI.pursuitDistance) e.farT++;
+      else e.farT = 0;
+    }
+    return cur ?? null;
   }
 
   private enemySpeedMul(e: Enemy): number {
@@ -1816,6 +2156,9 @@ export class World {
       if (this.storm.active && this.chapter.storm) m *= this.chapter.storm.enemySpeedMul;
     }
     if (e.affix === 'furious' && e.hp <= e.maxHp * AFFIX_RULES.furiousThreshold) m *= AFFIX_RULES.furiousSpeedMul;
+    if (e.hasteT > 0) m *= 1 + e.hasteMul;
+    // chefes/minichefes aceleram quando o alvo travado foge (kite prolongado)
+    if (e.farT > sec(BOSS_AI.pursuitDelay)) m *= BOSS_AI.pursuitSpeedMul;
     return m;
   }
 
@@ -1840,8 +2183,18 @@ export class World {
       if (e.cursedT > 0) e.cursedT--;
       if (e.targetT > 0) e.targetT--;
       if (e.shoutCd > 0) e.shoutCd--;
+      if (e.hasteT > 0 && --e.hasteT === 0) e.hasteMul = 0;
+      if (e.vulnT > 0) e.vulnT--;
       if (this.tick % 15 === 0 && e.poise > 0) e.poise = Math.max(0, e.poise - e.def.poise * 0.15);
       if (e.def.tier === 'boss') tickBossObjectives(this, e);
+      if ((e.def.tier === 'boss' || e.def.miniboss) && e.threat.size) {
+        const decay = Math.exp(-DT / BOSS_AI.threatWindow);
+        for (const [pid, v] of e.threat) {
+          const nv = v * decay;
+          if (nv < 0.5) e.threat.delete(pid);
+          else e.threat.set(pid, nv);
+        }
+      }
 
       let dvx = 0;
       let dvy = 0;
@@ -1859,8 +2212,10 @@ export class World {
         }
       } else if (cc.stun > 0) {
         // atordoado: parado
+      } else if (e.slideT > 0) {
+        // escorregando na casca: sem controle da direção
       } else {
-        const v = brainFor(e.type).tick(this, e);
+        const v = e.atk === 'siege' && e.state !== 'move' ? this.objectives.tickSiege(e) : brainFor(e.type).tick(this, e);
         dvx = v[0];
         dvy = v[1];
       }
@@ -1872,6 +2227,16 @@ export class World {
       if (cc.root > 0 || cc.stun > 0) spMul = 0;
       let mx = dvx * spMul * DT;
       let my = dvy * spMul * DT;
+      if (e.slideT > 0) {
+        e.slideT--;
+        mx = e.slideVx * DT;
+        my = e.slideVy * DT;
+        slideBump(this, e);
+        if (e.slideT === 0) {
+          e.vulnT = sec(LAPANHA.peel.vulnerableSeconds);
+          this.emit({ k: 'fx', n: 'slipEnd', x: e.x, y: e.y, a: 0, o: e.id, r: 0 });
+        }
+      }
       if (cc.pullT > 0 && cc.pullStr > 0) {
         const px = cc.pullX - e.x;
         const py = cc.pullY - e.y;
@@ -1960,7 +2325,7 @@ export class World {
     e.stateT = 0;
   }
 
-  enemyMelee(e: Enemy, range: number, arc: number, dmg: number, heavy: boolean): void {
+  enemyMelee(e: Enemy, range: number, arc: number, dmg: number, heavy: boolean, stun = 0): void {
     const half = (arc * Math.PI) / 360;
     const inArc = (x: number, y: number, r: number): boolean => {
       const d = dist(e.x, e.y, x, y);
@@ -1972,7 +2337,7 @@ export class World {
       if (p.status !== 0 || e.hitBy.has(p.id)) continue;
       if (!inArc(p.x, p.y, p.r)) continue;
       e.hitBy.add(p.id);
-      const r = this.hitPlayer(p, { dmg: dmg * this.edm(e), heavy, fromX: e.x, fromY: e.y, enemy: e, proj: null, blockable: true });
+      const r = this.hitPlayer(p, { dmg: dmg * this.edm(e), heavy, fromX: e.x, fromY: e.y, enemy: e, proj: null, blockable: true, stun });
       if (r === 'hit') this.emit({ k: 'sfx', n: heavy ? 'heavyHit' : 'playerHit', x: p.x, y: p.y });
     }
     for (const m of this.minions.values()) {
@@ -1983,12 +2348,12 @@ export class World {
     }
   }
 
-  enemyCircle(e: Enemy, x: number, y: number, r: number, dmg: number, heavy: boolean, blockable = false): void {
+  enemyCircle(e: Enemy, x: number, y: number, r: number, dmg: number, heavy: boolean, blockable = false, stun = 0): void {
     for (const p of this.players.values()) {
       if (p.status !== 0 || e.hitBy.has(p.id)) continue;
       if (dist2(x, y, p.x, p.y) > (r + p.r) ** 2) continue;
       e.hitBy.add(p.id);
-      this.hitPlayer(p, { dmg: dmg * this.edm(e), heavy, fromX: x, fromY: y, enemy: e, proj: null, blockable });
+      this.hitPlayer(p, { dmg: dmg * this.edm(e), heavy, fromX: x, fromY: y, enemy: e, proj: null, blockable, stun });
     }
     for (const m of this.minions.values()) {
       if (m.state === 'dead' || m.state === 'rise' || e.hitBy.has(-m.id)) continue;
@@ -2019,6 +2384,13 @@ export class World {
       if (p.buffs.burn > 0) f |= PLAYER_FLAGS.burn;
       if (p.revivingId) f |= PLAYER_FLAGS.reviving;
       if (p.action && p.action.name === 'e' && p.cls === 'berserker' && p.action.t <= BERSERKER.leap.ticks) f |= PLAYER_FLAGS.airborne;
+      if (p.action?.name === 'stun') f |= PLAYER_FLAGS.stunned;
+      if (p.buffs.stunRes > 0) f |= PLAYER_FLAGS.stunResist;
+      if (p.buffs.slowed > 0) f |= PLAYER_FLAGS.slowed;
+      if (p.woundT > 0) f |= PLAYER_FLAGS.wounded;
+      if (p.woundBlockT > 0) f |= PLAYER_FLAGS.woundBlock;
+      if (p.buffs.harvest > 0) f |= PLAYER_FLAGS.harvest;
+      if (p.shieldHp > 0) f |= PLAYER_FLAGS.shielded;
       const a = p.action;
       out.push({
         id: p.id,
@@ -2040,6 +2412,7 @@ export class World {
         cd: [p.cd.q, p.cd.e],
         cm: [p.cdMax.q, p.cdMax.e],
         u: Math.floor(p.ult),
+        ul: Math.ceil(p.ultLockT / TICK_RATE),
         k:
           p.cls === 'vampire' ? p.thirst
           : p.cls === 'dog' ? p.resonance
@@ -2047,9 +2420,15 @@ export class World {
           : p.cls === 'berserker' ? Math.round(p.rage)
           : p.cls === 'necromancer' ? p.essence
           : p.cls === 'tank' ? Math.round(Math.min(100, p.guardianCharge * TANK.bastion.damageRatio / TANK.bastion.bonusCap * 100))
+          : p.cls === 'lapanha' ? Math.ceil(p.buffs.harvest / 3)
           : p.comboStep,
         cn: p.connected ? 1 : 0,
         dg: p.lastDodgeTick,
+        wd: Math.ceil(p.woundT / 3),
+        wb: Math.ceil(p.woundBlockT / 3),
+        wo: p.woundT > 0 ? p.woundBy : 0,
+        sh: Math.ceil(p.shieldHp),
+        ch: a && a.name === 'charge' ? Math.round(chargeFrac(a) * 100) : -1,
       });
     }
     return out;
@@ -2076,6 +2455,8 @@ export class World {
 
   snapEnemies(): EnemyTuple[] {
     const out: EnemyTuple[] = [];
+    const wounding = new Set<number>();
+    for (const p of this.players.values()) if (p.woundT > 0 && p.woundBy) wounding.add(p.woundBy);
     for (const e of this.enemies.values()) {
       let f = 0;
       if (e.state === 'stagger') f |= ENEMY_FLAGS.stagger;
@@ -2089,6 +2470,16 @@ export class World {
       if (e.exposedT > 0) f |= ENEMY_FLAGS.exposed;
       if (e.priority) f |= ENEMY_FLAGS.priority;
       if (e.cursedT > 0) f |= ENEMY_FLAGS.cursed;
+      if (e.hasteT > 0) f |= ENEMY_FLAGS.hasted;
+      if (e.veiled) f |= ENEMY_FLAGS.veiled;
+      if (e.role === 'siege') f |= ENEMY_FLAGS.siege;
+      if (e.role === 'raider' && this.objectives.event?.kind === 'escort') {
+        const m = this.minions.get(this.objectives.event.entity);
+        if (m && dist2(e.x, e.y, m.x, m.y) < 140 * 140) f |= ENEMY_FLAGS.raider;
+      }
+      if (wounding.has(e.id)) f |= ENEMY_FLAGS.wounding;
+      if (e.vulnT > 0) f |= ENEMY_FLAGS.vulnerable;
+      if (e.slideT > 0) f |= ENEMY_FLAGS.sliding;
       out.push([
         e.id,
         e.typeIdx,
@@ -2106,13 +2497,19 @@ export class World {
         e.affix ? AFFIX_IDS.indexOf(e.affix) : 0,
         e.boneT > 0 ? 8 : Math.min(7, e.marks),
         e.boneT > 0 ? e.boneBy : e.markBy,
+        e.shieldMax > 0 ? Math.ceil((e.shieldHp / e.shieldMax) * 100) : -1,
+        Math.round(e.shieldDir * 100),
+        e.state === 'windup' && e.atk === 'wound' ? e.aimPid : 0,
       ]);
     }
     return out;
   }
 
   snapProjectiles(): ProjTuple[] {
-    return this.projectiles.map((p) => [p.id, p.kindIdx, Math.round(p.x), Math.round(p.y), Math.round(p.vx), Math.round(p.vy), p.team === 'p' ? p.owner : -1]);
+    return this.projectiles.map((p) => [
+      p.id, p.kindIdx, Math.round(p.x), Math.round(p.y), Math.round(p.vx), Math.round(p.vy), p.team === 'p' ? p.owner : -1,
+      p.lob > 0 ? Math.max(0, Math.min(100, Math.round((1 - p.range / p.lob) * 100))) : -1,
+    ]);
   }
 
   snapZones(): ZoneTuple[] {

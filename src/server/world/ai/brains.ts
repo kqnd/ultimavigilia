@@ -5,11 +5,12 @@
  */
 import { AFFIX_RULES } from '../../../shared/config/affixes.js';
 import { ATK, brainType, type EnemyType, FATHER_LINES } from '../../../shared/config/enemies.js';
-import { sec } from '../../../shared/constants.js';
+import { CLASS_RANGE } from '../../../shared/config/classes.js';
+import { DT, sec } from '../../../shared/constants.js';
 import { circleFree, lineOfSight, sweepFree } from '../../../shared/collision.js';
-import { dist } from '../../../shared/math.js';
+import { angleDiff, dist } from '../../../shared/math.js';
 import { countObjectives } from '../objectives.js';
-import type { Enemy, Target } from '../types.js';
+import type { Enemy, Player, Target } from '../types.js';
 import type { World } from '../world.js';
 
 export interface Brain {
@@ -22,7 +23,7 @@ function chase(w: World, e: Enemy, t: Target, speed: number): [number, number] {
   let [dx, dy] = w.chaseDir(e, t);
   const d = dist(e.x, e.y, t.x, t.y);
   // Aproximação em ângulos diferentes evita filas e faz a horda fechar espaço.
-  if (d > 42 && d < 150 && !t.isMinion) {
+  if (d > 42 && d < 150 && !t.isMinion && !t.isPoint) {
     const side = e.id % 2 === 0 ? 1 : -1;
     const tangentX = (-(t.y - e.y) / d) * side;
     const tangentY = ((t.x - e.x) / d) * side;
@@ -74,11 +75,12 @@ function meleeRoutine(
   e: Enemy,
   spec: { windup: number; active: number; recovery: number; damage: number; range: number; arc: number },
   heavy: boolean,
+  stun = 0,
 ): boolean {
   e.stateT++;
   if (e.state === 'windup' && e.stateT >= spec.windup) w.setEnemyState(e, 'active');
   else if (e.state === 'active') {
-    w.enemyMelee(e, spec.range, spec.arc, spec.damage, heavy);
+    w.enemyMelee(e, spec.range, spec.arc, spec.damage, heavy, stun);
     if (e.stateT >= spec.active) w.setEnemyState(e, 'recover');
   } else if (e.state === 'recover' && e.stateT >= spec.recovery) {
     w.setEnemyState(e, 'move');
@@ -199,7 +201,7 @@ const werewolf: Brain = {
     if (e.atk === 'pounce') {
       if (e.state === 'windup') {
         e.stateT++;
-        if (e.stateT >= P.windup) {
+        if (e.stateT >= (e.def.miniboss ? P.minibossWindup : P.windup)) {
           w.setEnemyState(e, 'air');
           e.hitBy.clear();
         }
@@ -210,7 +212,8 @@ const werewolf: Brain = {
         const v = airVelocity(e, P.airTicks - e.stateT + 1);
         if (e.stateT >= P.airTicks) {
           const lr = P.landRadius * (e.r / 11);
-          w.enemyCircle(e, e.tx, e.ty, lr, P.damage, true);
+          // minichefe: telegraph mais longo e atordoamento breve no impacto
+          w.enemyCircle(e, e.tx, e.ty, lr, P.damage, true, false, e.def.miniboss ? P.minibossStun : 0);
           w.emit({ k: 'fx', n: 'land', x: e.tx, y: e.ty, a: 0, o: 0, r: lr });
           w.setEnemyState(e, 'recover');
           setCd(e, 'pounce', P.cooldown);
@@ -266,14 +269,14 @@ const acolyte: Brain = {
         if (e.atk === 'orb') {
           const a = Math.atan2(e.ty - e.y, e.tx - e.x);
           w.spawnProjectile({
-            kind: 'orb', team: 'e', owner: -e.id, x: e.x + Math.cos(a) * 8, y: e.y - 8 + Math.sin(a) * 8,
+            kind: 'orb', team: 'e', owner: -e.id, x: e.x + Math.cos(a) * 8, y: e.y + Math.sin(a) * 8,
             vx: Math.cos(a) * O.speed, vy: Math.sin(a) * O.speed, r: O.radius, dmg: O.damage * w.edm(e), range: O.range, destructible: true,
           });
           // Acólito Supremo: leque de três orbes
           if (e.type === 'highAcolyte') {
             for (const off of [-0.28, 0.28]) {
               w.spawnProjectile({
-                kind: 'orb', team: 'e', owner: -e.id, x: e.x + Math.cos(a + off) * 8, y: e.y - 8 + Math.sin(a + off) * 8,
+                kind: 'orb', team: 'e', owner: -e.id, x: e.x + Math.cos(a + off) * 8, y: e.y + Math.sin(a + off) * 8,
                 vx: Math.cos(a + off) * O.speed, vy: Math.sin(a + off) * O.speed, r: O.radius, dmg: O.damage * w.edm(e), range: O.range, destructible: true,
               });
             }
@@ -293,6 +296,8 @@ const acolyte: Brain = {
       }
       return STILL;
     }
+    // função de cerco (ondas avançadas): canaliza contra fogueira/altar à distância
+    if (w.objectives.trySiege(e)) return STILL;
     const t = w.targetOf(e);
     if (!t) return STILL;
     const d = dist(e.x, e.y, t.x, t.y);
@@ -332,7 +337,8 @@ const father: Brain = {
     const S = ATK.father.slam;
     const L = ATK.father.slipper;
     if (e.atk === 'slam' && e.state !== 'move') {
-      meleeRoutine(w, e, S, true);
+      // Pai Ancestral: telegraph mais longo e atordoamento breve
+      meleeRoutine(w, e, e.def.miniboss ? { ...S, windup: S.minibossWindup } : S, true, e.def.miniboss ? S.minibossStun : 0);
       if (e.state === 'active' && e.stateT === 1) w.emit({ k: 'fx', n: 'slam', x: e.x + Math.cos(e.facing) * 20, y: e.y + Math.sin(e.facing) * 20, a: e.facing, o: 0, r: S.range });
       if (e.state === 'recover' && e.stateT === 1) setCd(e, 'slam', S.cooldown);
       return STILL;
@@ -342,7 +348,7 @@ const father: Brain = {
       if (e.state === 'windup' && e.stateT >= L.windup) {
         const a = Math.atan2(e.ty - e.y, e.tx - e.x);
         w.spawnProjectile({
-          kind: 'slipper', team: 'e', owner: -e.id, x: e.x, y: e.y - 10, vx: Math.cos(a) * L.speed, vy: Math.sin(a) * L.speed,
+          kind: 'slipper', team: 'e', owner: -e.id, x: e.x, y: e.y, vx: Math.cos(a) * L.speed, vy: Math.sin(a) * L.speed,
           r: L.radius, dmg: L.damage * w.edm(e), range: 9999, destructible: true, returnTo: e.id, tx: e.tx, ty: e.ty,
         });
         w.emit({ k: 'sfx', n: 'slipper', x: e.x, y: e.y });
@@ -619,7 +625,7 @@ const patriarch: Brain = {
             for (let i = 0; i < B.count; i++) {
               const a = off + (i / B.count) * Math.PI * 2;
               w.spawnProjectile({
-                kind: 'abyssOrb', team: 'e', owner: -e.id, x: e.x + Math.cos(a) * 20, y: e.y - 10 + Math.sin(a) * 20,
+                kind: 'abyssOrb', team: 'e', owner: -e.id, x: e.x + Math.cos(a) * 20, y: e.y + Math.sin(a) * 20,
                 vx: Math.cos(a) * B.speed, vy: Math.sin(a) * B.speed, r: B.radius, dmg: B.damage * w.edm(e), range: B.range, destructible: true,
               });
             }
@@ -721,7 +727,7 @@ const frostBride: Brain = {
             for (let i = 0; i < n; i++) {
               const a = base + (i / (n - 1) - 0.5) * S.spread * (phase2 ? 1.5 : 1);
               w.spawnProjectile({
-                kind: 'iceShard', team: 'e', owner: -e.id, x: e.x + Math.cos(a) * 14, y: e.y - 14 + Math.sin(a) * 14,
+                kind: 'iceShard', team: 'e', owner: -e.id, x: e.x + Math.cos(a) * 14, y: e.y + Math.sin(a) * 14,
                 vx: Math.cos(a) * S.speed, vy: Math.sin(a) * S.speed, r: S.radius, dmg: S.damage * w.edm(e), range: S.range, destructible: true,
               });
             }
@@ -846,7 +852,7 @@ const abyssTotem: Brain = {
     if (!best) return STILL;
     const a = Math.atan2(best.y - e.y, best.x - e.x);
     w.spawnProjectile({
-      kind: 'abyssOrb', team: 'e', owner: -e.id, x: e.x, y: e.y - 16, vx: Math.cos(a) * O.speed, vy: Math.sin(a) * O.speed,
+      kind: 'abyssOrb', team: 'e', owner: -e.id, x: e.x, y: e.y, vx: Math.cos(a) * O.speed, vy: Math.sin(a) * O.speed,
       r: O.radius, dmg: O.damage * w.edm(e), range: O.range, destructible: true,
     });
     w.emit({ k: 'sfx', n: 'orbCast', x: e.x, y: e.y });
@@ -882,6 +888,457 @@ const ritualist: Brain = {
   },
 };
 
-const BRAINS: Record<string, Brain> = { shambler, runner, werewolf, acolyte, father, moonDevourer, patriarch, frostBride, falseMoon, abyssTotem, funeralCart, ritualist };
+
+// ---------------------------------------------------------------- anti-kite (v1.2)
+
+const RANGE_WEIGHT = { ranged: 3, mid: 2, melee: 1 } as const;
+
+/** Move em linha reta se o caminho estiver livre; senão, navega pelo campo de fluxo até o alvo. */
+function moveToward(w: World, e: Enemy, x: number, y: number, speed: number, fallback: Target): [number, number] {
+  const d = dist(e.x, e.y, x, y);
+  if (d < 6) return STILL;
+  const step = Math.min(d, 24);
+  const nx = e.x + ((x - e.x) / d) * step;
+  const ny = e.y + ((y - e.y) / d) * step;
+  if (circleFree(w.map, nx, ny, e.r)) return [((x - e.x) / d) * speed, ((y - e.y) / d) * speed];
+  return chase(w, e, fallback, speed);
+}
+
+/** Aliados perto que estão de fato perseguindo alguém (peso: comum 1, elite/chefe 2). */
+function chasingWeight(w: World, e: Enemy): number {
+  const M = ATK.shadowAcolyte.march;
+  let weight = 0;
+  for (const o of w.enemiesInCircle(e.x, e.y, M.radius)) {
+    if (o.id === e.id || o.def.objective || o.def.stationary || o.type === 'shadowAcolyte') continue;
+    if (o.state !== 'move' && o.state !== 'windup') continue;
+    if (o.hasteT > sec(1)) continue; // já acelerado: não desperdiça
+    // quem vai ocupar o objetivo ou caçar o sobrevivente também conta (acelera invasores)
+    const goal = o.role !== 'none' ? w.targetOf(o) : w.players.get(o.targetId);
+    if (!goal || goal.status !== 0 || dist(o.x, o.y, goal.x, goal.y) < M.arrivedDistance) continue;
+    weight += o.def.tier === 'common' ? 1 : 2;
+  }
+  return weight;
+}
+
+/** Acólito Sombrio — Condutor da Caçada: fica atrás da linha de frente e acelera a horda. */
+const shadowAcolyte: Brain = {
+  tick(w, e) {
+    const A = ATK.shadowAcolyte;
+    const M = A.march;
+    const B = A.bolt;
+    const W = A.wound;
+    if (e.cds.march === undefined) setCd(e, 'march', M.firstDelay);
+    if (e.cds.wound === undefined) setCd(e, 'wound', W.firstDelay);
+    // Ferida Profana: canaliza com símbolo no alvo, trava a mira pouco antes e lança um pulso reto
+    if (e.state === 'windup' && e.atk === 'wound') {
+      e.stateT++;
+      const t = w.players.get(e.aimPid);
+      if (!t || t.status !== 0) {
+        w.setEnemyState(e, 'move');
+        e.atk = 'none';
+        e.aimPid = 0;
+        return STILL;
+      }
+      if (e.stateT < W.windup - W.lockTicks) {
+        e.tx = t.x;
+        e.ty = t.y;
+        faceTo(e, t.x, t.y);
+      }
+      if (e.stateT >= W.windup) {
+        const a = Math.atan2(e.ty - e.y, e.tx - e.x);
+        w.spawnProjectile({
+          kind: 'woundBolt', team: 'e', owner: -e.id, x: e.x + Math.cos(a) * 8, y: e.y + Math.sin(a) * 8,
+          vx: Math.cos(a) * W.speed, vy: Math.sin(a) * W.speed, r: W.radius, dmg: W.damage * w.edm(e), range: W.range + 40, destructible: true, a: t.id,
+        });
+        w.emit({ k: 'sfx', n: 'woundCast', x: e.x, y: e.y });
+        setCd(e, 'wound', W.cooldown);
+        e.lastCastTick = w.tick;
+        e.aimPid = 0;
+        w.setEnemyState(e, 'recover');
+      }
+      return STILL;
+    }
+    if (e.state === 'windup' && e.atk === 'march') {
+      e.stateT++;
+      if (e.stateT === Math.floor(M.windup / 2)) w.emit({ k: 'sfx', n: 'marchGrow', x: e.x, y: e.y });
+      if (e.stateT >= M.windup) {
+        let n = 0;
+        for (const o of w.enemiesInCircle(e.x, e.y, M.radius)) {
+          if (o.def.objective || o.def.stationary) continue;
+          const bonus = o.def.tier === 'boss' ? M.bossBonus : o.def.tier === 'elite' || o.def.miniboss ? M.eliteBonus : M.commonBonus;
+          // não acumula: a nova aplicação só renova a duração (mantém o maior bônus)
+          o.hasteMul = o.hasteT > 0 ? Math.max(o.hasteMul, bonus) : bonus;
+          o.hasteT = sec(M.duration);
+          n++;
+        }
+        w.emit({ k: 'fx', n: 'marchPulse', x: e.x, y: e.y, a: 0, o: n, r: M.radius });
+        w.emit({ k: 'sfx', n: 'marchDone', x: e.x, y: e.y });
+        setCd(e, 'march', M.cooldown);
+        e.lastCastTick = w.tick;
+        e.repositionT = sec(A.repositionSeconds);
+        e.counter++;
+        w.setEnemyState(e, 'recover');
+      }
+      return STILL;
+    }
+    if (e.state === 'windup' && e.atk === 'orb') {
+      e.stateT++;
+      if (e.stateT >= B.windup) {
+        const a = Math.atan2(e.ty - e.y, e.tx - e.x);
+        w.spawnProjectile({
+          kind: 'orb', team: 'e', owner: -e.id, x: e.x + Math.cos(a) * 8, y: e.y + Math.sin(a) * 8,
+          vx: Math.cos(a) * B.speed, vy: Math.sin(a) * B.speed, r: B.radius, dmg: B.damage * w.edm(e), range: B.range, destructible: true,
+        });
+        w.emit({ k: 'sfx', n: 'orbCast', x: e.x, y: e.y });
+        setCd(e, 'orb', B.cooldown);
+        w.setEnemyState(e, 'recover');
+      }
+      return STILL;
+    }
+    if (e.state === 'recover') {
+      e.stateT++;
+      if (e.stateT >= (e.atk === 'march' ? M.recovery : e.atk === 'wound' ? W.recovery : B.recovery)) {
+        w.setEnemyState(e, 'move');
+        e.atk = 'none';
+      }
+      return STILL;
+    }
+    if (e.repositionT > 0) e.repositionT--;
+    // cerco à distância em ondas avançadas
+    if (w.objectives.trySiege(e)) return STILL;
+    // Ferida Profana: prefere quem curou muito há pouco (distribui entre jogadores)
+    if (ready(e, 'wound') && w.tick - e.lastCastTick > sec(W.spacing)) {
+      const v = woundTarget(w, e);
+      if (v) {
+        e.aimPid = v.id;
+        w.startEnemyAttack(e, 'wound', v.x, v.y);
+        w.emit({ k: 'fx', n: 'woundMark', x: v.x, y: v.y - 26, a: e.id, o: v.id, r: W.windup });
+        w.emit({ k: 'sfx', n: 'woundCharge', x: e.x, y: e.y });
+        return STILL;
+      }
+    }
+    const t = w.targetOf(e);
+    if (!t) return STILL;
+    const d = dist(e.x, e.y, t.x, t.y);
+    const los = lineOfSight(w.map, e.x, e.y, t.x, t.y);
+    // Marcha Sombria: só com um grupo relevante perseguindo e sem outro Acólito conjurando perto
+    if (ready(e, 'march') && w.tick - e.lastCastTick > sec(W.spacing) && --e.aiT <= 0) {
+      e.aiT = M.retryTicks;
+      let busy = false;
+      for (const o of w.enemiesInCircle(e.x, e.y, M.exclusiveRadius)) if (o !== e && o.type === 'shadowAcolyte' && o.atk === 'march' && o.state === 'windup') busy = true;
+      if (!busy && chasingWeight(w, e) >= M.minAllyWeight) {
+        w.startEnemyAttack(e, 'march', e.x, e.y);
+        faceTo(e, t.x, t.y);
+        w.emit({ k: 'sfx', n: 'marchStart', x: e.x, y: e.y });
+        return STILL;
+      }
+    }
+    // foge de corpo a corpo que chegou perto
+    for (const p of w.alivePlayers()) {
+      if (CLASS_RANGE[p.cls] === 'ranged') continue;
+      const pd = dist(e.x, e.y, p.x, p.y);
+      if (pd < A.fleeMelee) {
+        const fx = (e.x - p.x) / (pd || 1);
+        const fy = (e.y - p.y) / (pd || 1);
+        faceTo(e, p.x, p.y);
+        if (circleFree(w.map, e.x + fx * 16, e.y + fy * 16, e.r)) return [fx * e.def.speed, fy * e.def.speed];
+        const side = e.id % 2 === 0 ? 1 : -1;
+        return [-fy * side * e.def.speed, fx * side * e.def.speed];
+      }
+    }
+    if (los && d < B.range - 30 && d > A.fleeMelee && ready(e, 'orb')) {
+      w.startEnemyAttack(e, 'orb', t.x, t.y);
+      return STILL;
+    }
+    // cobertura: avaliada em intervalos, atrás de Portadores/elites/grupos em relação ao alvo
+    if ((w.tick + e.id) % A.evalTicks === 0) {
+      let anchor: Enemy | null = null;
+      let best = 0;
+      for (const o of w.enemiesInCircle(e.x, e.y, 230)) {
+        if (o === e || o.def.objective || o.type === 'shadowAcolyte') continue;
+        const score = (o.type === 'ossuaryBearer' ? 5 : o.def.tier === 'elite' ? 3 : 0.6) - dist(e.x, e.y, o.x, o.y) / 400;
+        if (score > best) {
+          best = score;
+          anchor = o;
+        }
+      }
+      const side = (e.counter % 2 === 0 ? 1 : -1) * (e.repositionT > 0 ? 0.6 : 0);
+      let cx: number;
+      let cy: number;
+      if (anchor) {
+        const ad = dist(anchor.x, anchor.y, t.x, t.y) || 1;
+        const ang = Math.atan2(anchor.y - t.y, anchor.x - t.x) + side;
+        cx = anchor.x + Math.cos(ang) * A.coverOffset;
+        cy = anchor.y + Math.sin(ang) * A.coverOffset;
+        void ad;
+      } else {
+        const ang = Math.atan2(e.y - t.y, e.x - t.x) + side;
+        const keep = (A.keepMin + A.keepMax) / 2;
+        cx = t.x + Math.cos(ang) * keep;
+        cy = t.y + Math.sin(ang) * keep;
+      }
+      if (circleFree(w.map, cx, cy, e.r + 4)) {
+        e.coverX = cx;
+        e.coverY = cy;
+      }
+    }
+    if (d > A.keepMax + 80 || !los) return chase(w, e, t, e.def.speed);
+    const v = moveToward(w, e, e.coverX, e.coverY, e.def.speed, t);
+    faceTo(e, t.x, t.y);
+    return v;
+  },
+};
+
+/**
+ * Alvo da Ferida Profana: jogador ao alcance e em linha de visão, preferindo quem curou muito nos
+ * últimos segundos. Nunca dois Acólitos no mesmo jogador ao mesmo tempo, e não relança em quem
+ * ainda está bem ferido (distribui a pressão no multiplayer).
+ */
+function woundTarget(w: World, e: Enemy): Player | null {
+  const W = ATK.shadowAcolyte.wound;
+  let best: Player | null = null;
+  let bestScore = -Infinity;
+  for (const p of w.alivePlayers()) {
+    const d = dist(e.x, e.y, p.x, p.y);
+    if (d > W.range || !lineOfSight(w.map, e.x, e.y, p.x, p.y)) continue;
+    if (p.woundT > sec(W.skipIfRemaining)) continue;
+    let busy = false;
+    for (const o of w.enemies.values()) if (o !== e && o.type === 'shadowAcolyte' && o.atk === 'wound' && o.state === 'windup' && o.aimPid === p.id) busy = true;
+    if (busy) continue;
+    let score = p.recentHeal - d * 0.02;
+    if (p.recentHeal >= W.minRecentHeal) score += 100;
+    if (p.buffs.harvest > 0 || p.buffs.feast > 0) score += 40;
+    if (score > bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+  return best;
+}
+
+/** Caçador de Névoa desvia de cascas do Lapanha quando pode. */
+function avoidPeels(w: World, e: Enemy, v: [number, number]): [number, number] {
+  const sp = Math.hypot(v[0], v[1]);
+  if (sp < 1) return v;
+  const nx = e.x + (v[0] / sp) * 16;
+  const ny = e.y + (v[1] / sp) * 16;
+  for (const z of w.zones) {
+    if (z.kind !== 'peel' || z.dead) continue;
+    const dz = dist(nx, ny, z.x, z.y);
+    if (dz > z.r + e.r + 8) continue;
+    // contorna pelo lado mais livre
+    const side = (v[0] / sp) * (z.y - e.y) - (v[1] / sp) * (z.x - e.x) > 0 ? -1 : 1;
+    const px = (-v[1] / sp) * side;
+    const py = (v[0] / sp) * side;
+    if (circleFree(w.map, e.x + px * 12, e.y + py * 12, e.r)) return [px * sp, py * sp];
+  }
+  return v;
+}
+
+/** Escolha de alvo do Caçador de Névoa: prefere quem atira de longe, distribui a pressão. */
+function stalkerTarget(w: World, e: Enemy): Player | null {
+  const S = ATK.mistStalker;
+  if (e.tauntT > 0) {
+    const t = w.players.get(e.tauntBy);
+    if (t && t.status === 0) return t;
+  }
+  const cur = w.players.get(e.lockedId);
+  if (cur && cur.status === 0 && e.targetT > 0) return cur;
+  let best: Player | null = null;
+  let bestScore = -Infinity;
+  for (const p of w.alivePlayers()) {
+    const d = dist(e.x, e.y, p.x, p.y);
+    let score = RANGE_WEIGHT[CLASS_RANGE[p.cls]] - d * 0.004;
+    if (w.tick - p.lastShotTick < sec(2)) score += 2;
+    if (lineOfSight(w.map, e.x, e.y, p.x, p.y)) score += 0.5;
+    if (CLASS_RANGE[p.cls] === 'melee' && w.enemiesInCircle(p.x, p.y, 60).length >= S.crowdedMelee) score -= 3;
+    // pressiona quem fica parado junto ao objetivo (fogueira/altar)
+    if (p.stillT > sec(1.5) && w.objectives.playerInArea(p)) score += 1.5;
+    for (const o of w.enemies.values()) if (o !== e && o.type === 'mistStalker' && o.lockedId === p.id) score -= 1.5;
+    if (score > bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+  e.lockedId = best?.id ?? 0;
+  e.targetId = e.lockedId;
+  e.targetT = S.retargetTicks;
+  return best;
+}
+
+/** Caçador de Névoa: flanqueia velado e salta na posição prevista de quem atira. */
+const mistStalker: Brain = {
+  tick(w, e) {
+    const v = mistStalkerMove(w, e);
+    return e.state === 'move' ? avoidPeels(w, e, v) : v;
+  },
+};
+const mistStalkerMove = (w: World, e: Enemy): [number, number] => {
+  {
+    const S = ATK.mistStalker;
+    const L = S.leap;
+    const C = S.claw;
+    e.veiled = false;
+    if (e.atk === 'mistLeap') {
+      if (e.state === 'windup') {
+        e.stateT++;
+        faceTo(e, e.tx, e.ty);
+        if (e.stateT >= L.windup) {
+          w.setEnemyState(e, 'air');
+          e.hitBy.clear();
+          w.emit({ k: 'fx', n: 'mistJump', x: e.x, y: e.y, a: e.facing, o: e.id, r: 0 });
+        }
+        return STILL;
+      }
+      if (e.state === 'air') {
+        e.stateT++;
+        const v = airVelocity(e, L.airTicks - e.stateT + 1);
+        if (e.stateT >= L.airTicks) {
+          // impacto direto atordoa brevemente; a borda do pouso só fere
+          w.enemyCircle(e, e.tx, e.ty, L.stunRadius, L.damage, false, true, L.stun);
+          w.enemyCircle(e, e.tx, e.ty, L.landRadius, L.damage, false, true);
+          w.emit({ k: 'fx', n: 'mistLand', x: e.tx, y: e.ty, a: 0, o: 0, r: L.landRadius });
+          w.emit({ k: 'sfx', n: 'mistLand', x: e.tx, y: e.ty });
+          w.setEnemyState(e, 'recover');
+          setCd(e, 'mistLeap', L.cooldown);
+        }
+        return v;
+      }
+      if (e.state === 'recover') {
+        e.stateT++;
+        if (e.stateT >= L.recovery) {
+          w.setEnemyState(e, 'move');
+          e.atk = 'none';
+        }
+        return STILL;
+      }
+    }
+    if (e.atk === 'claw' && e.state !== 'move') {
+      meleeRoutine(w, e, C, false);
+      if (e.state === 'recover' && e.stateT === 1) setCd(e, 'claw', C.cooldown);
+      return STILL;
+    }
+    const t = stalkerTarget(w, e);
+    if (!t) return STILL;
+    const d = dist(e.x, e.y, t.x, t.y);
+    const los = lineOfSight(w.map, e.x, e.y, t.x, t.y);
+    // bloqueado por um servo colado à frente: reage a ele
+    const m = w.targetOf(e);
+    if (m && m.isMinion && dist(e.x, e.y, m.x, m.y) < C.range + e.r + m.r && ready(e, 'claw')) {
+      w.startEnemyAttack(e, 'claw', m.x, m.y);
+      return STILL;
+    }
+    if (d < C.range + e.r + t.r && ready(e, 'claw')) {
+      w.startEnemyAttack(e, 'claw', t.x, t.y);
+      return STILL;
+    }
+    const inView = Math.abs(e.x - t.x) <= L.viewHalfW && Math.abs(e.y - t.y) <= L.viewHalfH;
+    let claimed = 0;
+    for (const o of w.enemies.values()) if (o !== e && o.type === 'mistStalker' && o.atk === 'mistLeap' && (o.state === 'windup' || o.state === 'air') && o.lockedId === t.id) claimed++;
+    if (ready(e, 'mistLeap') && d >= L.minRange && d <= L.maxRange && los && inView && claimed === 0) {
+      // previsão curta da posição futura (direção e velocidade atuais), limitada
+      const spd = t.base.speed;
+      let lx = t.last.mx * spd * L.leadSeconds;
+      let ly = t.last.my * spd * L.leadSeconds;
+      const ll = Math.hypot(lx, ly);
+      if (ll > L.maxLead) {
+        lx = (lx / ll) * L.maxLead;
+        ly = (ly / ll) * L.maxLead;
+      }
+      const lp = landingPoint(w, e, t.x + lx, t.y + ly, L.maxRange);
+      const land = sweepFree(w.map, e.x, e.y, lp.x, lp.y, e.r); // nunca atravessa paredes
+      w.startEnemyAttack(e, 'mistLeap', land.x, land.y);
+      w.emit({ k: 'sfx', n: 'mistCue', x: e.x, y: e.y });
+      return STILL;
+    }
+    e.veiled = d > S.veilDistance;
+    const sp = e.def.speed;
+    // desvia da linha de tiro de quem está mirando nele
+    const angToMe = Math.atan2(e.y - t.y, e.x - t.x);
+    const side = e.id % 2 === 0 ? 1 : -1;
+    if (los && d < S.dodgeAimRange && w.tick - t.lastShotTick < 20 && Math.abs(angleDiff(t.aim, angToMe)) < S.dodgeAimAngle) {
+      const px = -Math.sin(angToMe) * side;
+      const py = Math.cos(angToMe) * side;
+      if (circleFree(w.map, e.x + px * 14, e.y + py * 14, e.r)) {
+        faceTo(e, t.x, t.y);
+        return [px * sp, py * sp];
+      }
+    }
+    // aproximação diagonal (flanco) quando há visão; senão navegação normal
+    if (los && d > 90) {
+      const base = Math.atan2(t.y - e.y, t.x - e.x) + side * S.flankAngle * Math.min(1, (d - 90) / 120);
+      const fx = Math.cos(base);
+      const fy = Math.sin(base);
+      if (circleFree(w.map, e.x + fx * 14, e.y + fy * 14, e.r)) {
+        faceTo(e, t.x, t.y);
+        return [fx * sp, fy * sp];
+      }
+    }
+    return chase(w, e, t, sp);
+  }
+};
+
+/** Jogador mais "relevante" para apontar o escudo: quem ataca de longe, depois distância. */
+function shieldFocus(w: World, e: Enemy): Player | null {
+  let best: Player | null = null;
+  let bestScore = -Infinity;
+  for (const p of w.alivePlayers()) {
+    const d = dist(e.x, e.y, p.x, p.y);
+    if (d > 420) continue;
+    let score = RANGE_WEIGHT[CLASS_RANGE[p.cls]] - d * 0.006;
+    if (w.tick - p.lastShotTick < sec(1.5)) score += 1.5;
+    if (score > bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+  return best;
+}
+
+/** Portador do Ossário: avança com o escudo virado para o atirador mais relevante. */
+const ossuaryBearer: Brain = {
+  tick(w, e) {
+    const O = ATK.ossuaryBearer;
+    const B = O.bash;
+    const shielded = e.shieldHp > 0;
+    const focus = shielded ? shieldFocus(w, e) : null;
+    if (focus) {
+      const want = Math.atan2(focus.y - e.y, focus.x - e.x);
+      const diff = angleDiff(want, e.shieldDir);
+      const maxTurn = O.shield.turnRate * DT;
+      e.shieldDir += Math.max(-maxTurn, Math.min(maxTurn, diff));
+    }
+    if (e.atk === 'bash' && e.state !== 'move') {
+      // sem escudo: golpe pesado mais lento de preparar, que atordoa brevemente
+      meleeRoutine(w, e, shielded ? B : { ...B, windup: B.brokenWindup }, true, shielded ? 0 : B.brokenStun);
+      if (e.state === 'active' && e.stateT === 1) w.emit({ k: 'fx', n: 'bash', x: e.x + Math.cos(e.facing) * 16, y: e.y + Math.sin(e.facing) * 16, a: e.facing, o: 0, r: B.range });
+      if (e.state === 'recover' && e.stateT === 1) setCd(e, 'bash', B.cooldown * (shielded ? 1 : O.brokenCooldownMul));
+      return STILL;
+    }
+    const t = w.targetOf(e);
+    if (!t) return STILL;
+    const d = dist(e.x, e.y, t.x, t.y);
+    if (d < B.range + e.r + t.r && ready(e, 'bash')) {
+      w.startEnemyAttack(e, 'bash', t.x, t.y);
+      return STILL;
+    }
+    let speed = shielded ? e.def.speed : O.brokenSpeed;
+    // não abandona a formação atrás de alvo muito distante enquanto protege
+    if (shielded && d > O.leashDistance) speed *= 0.5;
+    let [vx, vy] = chase(w, e, t, speed);
+    // espaço entre Portadores: nunca uma parede perfeita
+    for (const o of w.enemiesInCircle(e.x, e.y, O.spacing)) {
+      if (o === e || o.type !== 'ossuaryBearer') continue;
+      const od = dist(e.x, e.y, o.x, o.y) || 0.01;
+      const push = (O.spacing - od) / O.spacing;
+      vx += ((e.x - o.x) / od) * speed * push;
+      vy += ((e.y - o.y) / od) * speed * push;
+    }
+    if (!shielded) e.shieldDir = e.facing;
+    return [vx, vy];
+  },
+};
+
+const BRAINS: Record<string, Brain> = { shambler, runner, werewolf, acolyte, father, moonDevourer, patriarch, frostBride, falseMoon, abyssTotem, funeralCart, ritualist, shadowAcolyte, mistStalker, ossuaryBearer };
 /** Minichefes usam o cérebro do inimigo de base. */
 export const brainFor = (t: EnemyType): Brain => BRAINS[brainType(t)] ?? shambler;

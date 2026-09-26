@@ -41,7 +41,7 @@ export class InputCapture {
     const t = e.target as HTMLElement | null;
     const typing = t && (t.tagName === 'INPUT' || t.tagName === 'SELECT' || t.tagName === 'TEXTAREA');
     if (typing) return;
-    if (e.code === 'Tab' || e.code === 'F1' || e.code === 'Space' || (this.enabled && e.code === this.binds.team)) e.preventDefault();
+    if (e.code === 'Tab' || e.code === 'F1' || e.code === 'F9' || e.code === 'Space' || (this.enabled && e.code === this.binds.team)) e.preventDefault();
     this.onKey?.(e.code, isDown, e);
     if (!this.enabled) return;
     if (isDown) {

@@ -1,7 +1,7 @@
 {
   "name": "ultima-vigilia",
   "productName": "Última Vigília",
-  "version": "0.2.0",
+  "version": "1.3.0",
   "description": "Jogo cooperativo top-down de sobrevivência por hordas em pixel art (Electron + Phaser + TypeScript).",
   "author": "Álex Almeida",
   "license": "UNLICENSED",

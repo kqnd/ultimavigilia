@@ -2,7 +2,7 @@
  * Diretor de ondas: monta a composição a partir do orçamento, respeita o limite de unidades
  * simultâneas, avisa spawns com antecedência e longe dos jogadores, e evita ondas travadas.
  */
-import { ATK, ENEMIES, type EnemyType } from '../../shared/config/enemies.js';
+import { ATK, ENEMIES, type EnemyType, SPECIAL_RULES, SPECIAL_TYPES, type SpecialType, specialCap } from '../../shared/config/enemies.js';
 import { SCALING, scaledBudget, type WaveDef, WAVES } from '../../shared/config/waves.js';
 import { sec } from '../../shared/constants.js';
 import { circleFree } from '../../shared/collision.js';
@@ -15,6 +15,16 @@ interface PendingGroup {
   gate: { x: number; y: number };
   types: EnemyType[];
   t: number;
+  /** Pontos exatos (emboscadas/assaltos) e função tática dos que surgirem. */
+  points?: { x: number; y: number }[];
+  role?: Enemy['role'];
+}
+
+/** Registro de depuração: quais inimigos foram escolhidos e por quê (UV_DEBUG=1 imprime). */
+export interface DirectorLog {
+  wave: number;
+  type: EnemyType;
+  reason: string;
 }
 
 export class Director {
@@ -28,6 +38,13 @@ export class Director {
   private maxAlive = 20;
   private minibossType: EnemyType | null = null;
   private minibossAt = 0;
+  /** Tamanho inicial da fila (progresso da onda para assaltos). */
+  private initialQueue = 0;
+  /** Segura novos grupos (ritmo da escolta após emboscadas). */
+  private calm = 0;
+  /** Último especial usado (alternância entre ondas). */
+  private lastSpecials: SpecialType[] = [];
+  readonly log: DirectorLog[] = [];
 
   constructor(private readonly w: World) {}
 
@@ -37,6 +54,26 @@ export class Director {
     this.def = null;
     this.bossType = null;
     this.minibossType = null;
+    this.calm = 0;
+    this.lastSpecials = [];
+    this.log.length = 0;
+  }
+
+  private note(wave: number, type: EnemyType, reason: string): void {
+    this.log.push({ wave, type, reason });
+    if (this.log.length > 400) this.log.splice(0, 100);
+    if (process.env.UV_DEBUG === '1' && process.env.UV_DIRECTOR_LOG === '1') console.log(`[diretor] onda ${wave}: ${type} — ${reason}`);
+  }
+
+  /** Fração da fila da onda já liberada (0–1). */
+  progress(): number {
+    if (this.initialQueue <= 0) return 1;
+    return 1 - this.queue.length / this.initialQueue;
+  }
+
+  /** Segura a saída de novos grupos por alguns ticks (respiro de reposicionamento). */
+  holdGroups(ticks: number): void {
+    this.calm = Math.max(this.calm, ticks);
   }
 
   /** Esvazia a fila da onda atual mantendo-a ativa (testes/depuração). */
@@ -59,7 +96,9 @@ export class Director {
     this.maxAlive = Math.min(SCALING.hardCap, def.maxAlive + SCALING.maxAlivePerPlayer * (players - 1));
     // composição por orçamento ponderado (rota de risco aumenta o orçamento)
     let budget = scaledBudget(wave, players, def.boss ? 1 : opts.budgetMul);
-    const entries = Object.entries(def.weights) as [EnemyType, number][];
+    // especiais só depois da onda de introdução de cada um
+    const unlocked = (t: EnemyType): boolean => !(SPECIAL_TYPES as readonly string[]).includes(t) || wave >= SPECIAL_RULES.unlockWave[t as SpecialType];
+    const entries = (Object.entries(def.weights) as [EnemyType, number][]).filter(([t]) => unlocked(t));
     const total = entries.reduce((s, [, v]) => s + v, 0);
     let guard = 0;
     while (budget > 0.5 && guard++ < 500) {
@@ -74,12 +113,42 @@ export class Director {
       }
       this.queue.push(pick);
       budget -= ENEMIES[pick].budget;
+      if ((SPECIAL_TYPES as readonly string[]).includes(pick)) this.note(wave, pick, 'sorteio por peso');
     }
     // elites garantidos distribuídos ao longo da onda
     const extra: EnemyType[] = [];
-    for (const [t, n] of Object.entries(def.guaranteed ?? {}) as [EnemyType, number][]) {
+    const guaranteed = { ...(def.guaranteed ?? {}) } as Partial<Record<EnemyType, number>>;
+    for (const t of Object.keys(guaranteed) as EnemyType[]) if (!unlocked(t)) delete guaranteed[t];
+    // presença mínima e combinações: nenhuma sessão fica quase sem os novos inimigos
+    if (!def.boss && !def.miniboss) {
+      const have = SPECIAL_TYPES.filter((t) => (guaranteed[t] ?? 0) > 0);
+      const avail = SPECIAL_TYPES.filter((t) => wave >= SPECIAL_RULES.unlockWave[t]);
+      // alterna: prefere o tipo usado há mais tempo
+      const fresh = (): SpecialType | undefined => [...avail].filter((t) => !have.includes(t)).sort((a, b) => this.lastSpecials.indexOf(a) - this.lastSpecials.indexOf(b))[0];
+      if (wave >= SPECIAL_RULES.guaranteeFrom && have.length === 0) {
+        const t = fresh();
+        if (t) {
+          guaranteed[t] = 1;
+          have.push(t);
+          this.note(wave, t, 'presença mínima (onda sem especial)');
+        }
+      }
+      if (wave >= SPECIAL_RULES.pairFrom && have.length === 1 && this.w.rng.chance(SPECIAL_RULES.pairChance)) {
+        const t = fresh();
+        if (t) {
+          guaranteed[t] = 1;
+          have.push(t);
+          this.note(wave, t, 'combinação de dois tipos');
+        }
+      }
+    }
+    for (const [t, n] of Object.entries(guaranteed) as [EnemyType, number][]) {
       const count = Math.round(n * (1 + 0.35 * (players - 1)));
       for (let i = 0; i < count; i++) extra.push(t);
+      if ((SPECIAL_TYPES as readonly string[]).includes(t)) {
+        this.note(wave, t, `garantido ×${count}`);
+        this.lastSpecials = [...this.lastSpecials.filter((x) => x !== t), t as SpecialType];
+      }
     }
     // rota de risco: elites extras (não em ondas de chefe)
     if (!def.boss) for (let i = 0; i < opts.extraElites; i++) extra.push(this.w.rng.chance(0.5) ? 'werewolf' : 'father');
@@ -87,6 +156,8 @@ export class Director {
       const pos = Math.floor(((i + 1) / (extra.length + 1)) * this.queue.length);
       this.queue.splice(pos, 0, t);
     });
+    this.initialQueue = this.queue.length;
+    this.calm = 0;
     this.bossType = def.boss ?? null;
     this.bossTimer = sec(2);
     if (this.bossType) this.groupTimer = sec(8);
@@ -117,7 +188,10 @@ export class Director {
   private chooseGate(): SpawnGate {
     const gates = this.w.map.spawns;
     const players = this.w.alivePlayers();
-    const minDist = (g: SpawnGate): number => players.reduce((m, p) => Math.min(m, dist(p.x, p.y, g.x, g.y)), Infinity);
+    // o sobrevivente conta como alguém a proteger: ninguém surge em cima dele
+    const guard: { x: number; y: number }[] = [...players];
+    for (const m of this.w.minions.values()) if (m.kind === 'survivor') guard.push(m);
+    const minDist = (g: SpawnGate): number => guard.reduce((m, p) => Math.min(m, dist(p.x, p.y, g.x, g.y)), Infinity);
     const safe = gates.filter((g) => minDist(g) >= SCALING.spawnSafeDistance);
     if (safe.length) return this.w.rng.pick(safe);
     return gates.reduce((a, b) => (minDist(a) > minDist(b) ? a : b));
@@ -157,21 +231,28 @@ export class Director {
     const alive = this.aliveCount();
     const pendingCount = this.pending.reduce((s, g) => s + g.types.length, 0);
     if (alive === 0 && pendingCount === 0 && this.groupTimer > 20) this.groupTimer = 20;
-    if (--this.groupTimer <= 0 && this.queue.length > 0 && alive + pendingCount < this.maxAlive) {
+    if (this.calm > 0) this.calm--;
+    if (this.calm <= 0 && --this.groupTimer <= 0 && this.queue.length > 0 && alive + pendingCount < this.maxAlive) {
       const room = this.maxAlive - alive - pendingCount;
       const size = Math.min(room, this.queue.length, w.rng.int(def.groupMin, def.groupMax));
       const gate = this.chooseGate();
-      const types = this.queue.splice(0, size);
-      const warn = sec(SCALING.spawnWarnSeconds);
-      this.pending.push({ gate: { x: gate.x, y: gate.y }, types, t: warn });
-      w.addZone({ kind: 'spawnWarn', x: gate.x, y: gate.y, r: 26 + types.length * 3, ttl: warn, owner: 0 });
-      this.groupTimer = sec(def.interval * (this.players > 2 ? 0.85 : 1));
+      const types = this.takeGroup(size);
+      if (!types.length) {
+        this.groupTimer = 15; // só restam especiais no limite: tenta de novo em meio segundo
+      } else {
+        const warn = sec(SCALING.spawnWarnSeconds);
+        this.pending.push({ gate: { x: gate.x, y: gate.y }, types, t: warn });
+        w.addZone({ kind: 'spawnWarn', x: gate.x, y: gate.y, r: 26 + types.length * 3, ttl: warn, owner: 0 });
+        this.groupTimer = sec(def.interval * (this.players > 2 ? 0.85 : 1));
+      }
     }
     for (const g of this.pending) {
       if (--g.t > 0) continue;
       g.types.forEach((t, i) => {
-        const pos = this.freeAround(g.gate.x, g.gate.y, ENEMIES[t].radius, i);
+        const pt = g.points?.[i];
+        const pos = pt && circleFree(w.map, pt.x, pt.y, ENEMIES[t].radius) ? pt : this.freeAround(pt?.x ?? g.gate.x, pt?.y ?? g.gate.y, ENEMIES[t].radius, i);
         const e = w.spawnEnemy(t, pos.x, pos.y, this.players);
+        if (g.role) e.role = g.role;
         if (ENEMIES[t].miniboss) w.startBossIntro(e);
       });
       g.types = [];
@@ -183,6 +264,54 @@ export class Director {
         for (const e of w.enemies.values()) if (e.def.tier !== 'boss' && !e.enraged) e.enraged = true;
       }
     }
+  }
+
+  /**
+   * Retira até `size` inimigos da fila respeitando o limite simultâneo de especiais anti-kite
+   * (vivos + avisados + neste grupo). Especiais acima do limite esperam na fila.
+   */
+  private takeGroup(size: number): EnemyType[] {
+    const count = this.specialCount();
+    const out: EnemyType[] = [];
+    for (let i = 0; i < this.queue.length && out.length < size; ) {
+      const t = this.queue[i] as EnemyType;
+      const cap = specialCap(t, this.players);
+      if (cap !== undefined && (count.get(t) ?? 0) >= cap) {
+        i++;
+        continue;
+      }
+      count.set(t, (count.get(t) ?? 0) + 1);
+      out.push(t);
+      this.queue.splice(i, 1);
+    }
+    return out;
+  }
+
+  /** Vivos + avisados por tipo (limites simultâneos de especiais). */
+  specialCount(): Map<EnemyType, number> {
+    const count = new Map<EnemyType, number>();
+    for (const e of this.w.enemies.values()) if (e.state !== 'dead') count.set(e.type, (count.get(e.type) ?? 0) + 1);
+    for (const g of this.pending) for (const t of g.types) count.set(t, (count.get(t) ?? 0) + 1);
+    return count;
+  }
+
+  /** Especial ainda cabe no limite simultâneo? */
+  specialFits(t: EnemyType, extra = 0): boolean {
+    const cap = specialCap(t, this.players);
+    return cap === undefined || (this.specialCount().get(t) ?? 0) + extra < cap;
+  }
+
+  /**
+   * Grupo planejado (emboscada da escolta, assalto à fogueira/altar): avisa nos pontos exatos
+   * e surge depois do aviso, com função tática. Conta como parte da onda.
+   */
+  plannedGroup(points: { x: number; y: number }[], types: EnemyType[], warnTicks: number, role: Enemy['role'], zone: 'spawnWarn' | 'ambushWarn' | 'assaultWarn'): void {
+    if (!types.length) return;
+    const wave = this.w.wave;
+    for (const t of types) if ((SPECIAL_TYPES as readonly string[]).includes(t)) this.note(wave, t, `grupo planejado (${zone === 'assaultWarn' ? 'assalto' : 'emboscada'})`);
+    const gate = points[0] ?? this.w.map.campfire;
+    this.pending.push({ gate: { x: gate.x, y: gate.y }, types, t: warnTicks, points, role });
+    for (const pt of points) this.w.addZone({ kind: zone, x: pt.x, y: pt.y, r: 20, ttl: warnTicks, owner: 0 });
   }
 
   private bossPoint(_t: EnemyType): { x: number; y: number } {

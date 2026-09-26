@@ -16,7 +16,7 @@ function fire(w: World, p: Player, dir: number, x: number, y: number): void {
   const m = MAGE.missile;
   const emp = p.convergence > 0;
   if (emp) p.convergence = 0;
-  const dmg = emp ? m.damage * (MAGE.empowered.damageMul + (p.mods['m_converge'] ?? 0) * 0.5) : m.damage;
+  const dmg = emp ? m.damage * (MAGE.empowered.damageMul + w.mod(p, 'm_converge')) : m.damage;
   w.spawnProjectile({
     kind: emp ? 'empMissile' : 'missile', team: 'p', owner: p.id,
     x, y,
@@ -45,7 +45,7 @@ export const mageKit: Kit = {
       case 'e': {
         const b = MAGE.blink;
         if (!w.spendStamina(p, b.stamina)) return 'st';
-        const range = b.distance + (p.mods['m_blink'] ? 40 : 0);
+        const range = b.distance + w.mod(p, 'm_blink');
         const d = Math.min(range, Math.max(24, dist(p.x, p.y, p.aimX, p.aimY)));
         const tx = p.x + Math.cos(p.aim) * d;
         const ty = p.y + Math.sin(p.aim) * d;
@@ -64,7 +64,7 @@ export const mageKit: Kit = {
       case 'r': {
         const r = MAGE.rupture;
         const t = clampTarget(p, r.maxRange);
-        const windup = Math.round(r.windup * (1 - (p.mods['m_rupture'] ? 0.35 : 0)));
+        const windup = Math.round(r.windup * (1 - w.mod(p, 'm_rupture')));
         w.startAction(p, 'r', { windup, active: 1, recovery: r.recovery }, { moveMul: 0, tx: t.x, ty: t.y });
         const z = w.addZone({ kind: 'rupture', x: t.x, y: t.y, r: r.radius, ttl: windup + 1, owner: p.id });
         z.extra = windup;
@@ -77,14 +77,14 @@ export const mageKit: Kit = {
   tickAction(w, p, a) {
     if (!firstActive(a)) return;
     if (a.name === 'basic1') {
-      const shot = projectileAim(p, 8);
+      const shot = projectileAim(p);
       a.dir = shot.dir;
       fire(w, p, shot.dir, shot.x, shot.y);
     }
     else if (a.name === 'q') {
       const g = MAGE.glacial;
-      const area = 1 + (p.mods['m_area'] ?? 0) * 0.25;
-      const dur = g.duration + (p.mods['m_duration'] ?? 0) * 1.5;
+      const area = 1 + w.mod(p, 'm_area');
+      const dur = g.duration + w.mod(p, 'm_duration');
       w.addZone({ kind: 'glacial', x: a.tx, y: a.ty, r: g.radius * area, ttl: sec(dur), owner: p.id, a: sec(g.tickInterval), b: g.tickDamage });
       w.emit({ k: 'sfx', n: 'ice', x: a.tx, y: a.ty });
     } else if (a.name === 'r') {

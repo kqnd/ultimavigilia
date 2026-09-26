@@ -1,7 +1,7 @@
 /** Constantes globais compartilhadas entre servidor e cliente. */
-export const GAME_VERSION = '0.2.0';
+export const GAME_VERSION = '1.3.0';
 /** Incrementar sempre que o formato das mensagens mudar. */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 5;
 
 export const TICK_RATE = 30;
 export const TICK_MS = 1000 / TICK_RATE;
@@ -24,3 +24,11 @@ export const sec = (s: number): number => Math.round(s * TICK_RATE);
 
 export const NAME_MAX = 16;
 export const PASSWORD_MAX = 32;
+
+/**
+ * Projéteis: simulados no plano do chão e desenhados esta altura acima (peito/arma).
+ * O cursor mira nessa altura; ver `projectileAim` (servidor) e `drawProjectile` (cliente).
+ */
+export const SHOT_HEIGHT = 8;
+/** Distância da origem do disparo ao centro do personagem, no plano do chão. */
+export const SHOT_MUZZLE = 10;

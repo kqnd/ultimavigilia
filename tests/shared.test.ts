@@ -73,7 +73,8 @@ describe('protocolo', () => {
 
 describe('conteúdo', () => {
   it('7 classes (sem Guerreiro), 30 ondas com chefes em 10/20/30, ≥3 melhorias por classe', () => {
-    expect(CLASS_IDS.length).toBe(7);
+    expect(CLASS_IDS.length).toBe(8);
+    expect(CLASS_IDS).toContain('lapanha');
     expect(CLASS_IDS).toContain('berserker');
     expect(CLASS_IDS).toContain('necromancer');
     expect(CLASS_IDS as readonly string[]).not.toContain('warrior');
@@ -90,7 +91,7 @@ describe('conteúdo', () => {
     expect(byId.get('h_rain')).toMatchObject({ maxStacks: 2, value: 2 });
     expect(byId.get('h_mark')).toMatchObject({ maxStacks: 2, value: 0.015 });
     expect(byId.get('h_ricochet')).toMatchObject({ maxStacks: 1, value: 0.4 });
-    expect(byId.get('t_taunt')).toMatchObject({ maxStacks: 2, value: 18 });
+    expect(byId.get('t_taunt')).toMatchObject({ maxStacks: 2, value: 12 });
     expect(byId.get('b_quake')).toMatchObject({ maxStacks: 2, value: 0.15 });
     expect(byId.get('d_resonance')).toMatchObject({ maxStacks: 2, value: 3 });
     expect(byId.get('n_lord')).toMatchObject({ maxStacks: 2, value: 0.25 });

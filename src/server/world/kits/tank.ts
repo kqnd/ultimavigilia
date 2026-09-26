@@ -64,7 +64,7 @@ export const tankKit: Kit = {
   },
   tickAction(w, p, a) {
     if (a.name === 'basic1' && inActive(a)) {
-      const mul = 1 + (p.mods['t_mace'] ?? 0) * 0.25;
+      const mul = 1 + w.mod(p, 't_mace');
       const hits = w.meleeArc(p, a, { ...TANK.mace, poise: TANK.mace.poise * mul }, mul);
       if (firstActive(a)) w.emit({ k: 'fx', n: 'mace', x: p.x, y: p.y, a: a.dir, o: p.id, r: TANK.mace.range });
       if (hits.length) w.emit({ k: 'sfx', n: 'maceHit', x: p.x, y: p.y });
@@ -72,7 +72,7 @@ export const tankKit: Kit = {
         p.guardianCounter = false;
         for (const e of w.enemiesInCircle(p.x, p.y, TANK.guard.counterRadius)) {
           if (a.hit.has(e.id)) continue;
-          w.hitEnemy(p, e, TANK.guard.counterBonus * (p.mods['t_vanguard'] ? 1.25 : 1), {
+          w.hitEnemy(p, e, TANK.guard.counterBonus * (1 + w.mod(p, 't_vanguard')), {
             poise: 35, kb: TANK.guard.counterKnockback, fromX: p.x, fromY: p.y, kind: 'aoe',
           });
         }
@@ -85,7 +85,7 @@ export const tankKit: Kit = {
       for (const e of w.enemiesInCircle(p.x, p.y, c.radius + 8)) {
         if (a.hit.has(e.id)) continue;
         a.hit.add(e.id);
-        w.hitEnemy(p, e, c.damage * (p.mods['t_vanguard'] ? 1.25 : 1), { poise: 42, kb: 135, fromX: p.x, fromY: p.y, kind: 'melee' });
+        w.hitEnemy(p, e, c.damage * (1 + w.mod(p, 't_vanguard')), { poise: 42, kb: 135, fromX: p.x, fromY: p.y, kind: 'melee' });
         if (a.n < 6) { w.addUlt(p, 1.5); a.n += 1.5; }
         w.interrupt(e);
         w.applyCC(e, 'stun', e.def.tier === 'boss' ? 0.18 : 0.6, 1, p);
@@ -100,7 +100,7 @@ export const tankKit: Kit = {
     } else if (a.name === 'r') {
       if (a.t % 10 === 0) w.emit({ k: 'fx', n: 'guardianCharge', x: p.x, y: p.y, a: Math.min(1, p.guardianCharge * TANK.bastion.damageRatio / TANK.bastion.bonusCap), o: p.id, r: TANK.bastion.radius });
       if (p.mods['t_bastion'] && a.t % 30 === 0) for (const ally of w.alivePlayers()) {
-        if ((ally.x - p.x) ** 2 + (ally.y - p.y) ** 2 <= TANK.bastion.radius ** 2) w.healPlayer(ally, 4, false);
+        if ((ally.x - p.x) ** 2 + (ally.y - p.y) ** 2 <= TANK.bastion.radius ** 2) w.healPlayer(ally, w.mod(p, 't_bastion'), 'bastion');
       }
       if (a.t >= a.total) detonateGuardian(w, p);
     }
@@ -112,7 +112,7 @@ export const tankKit: Kit = {
   onIncoming(w, p, h) {
     if (!p.blocking) return null;
     const g = TANK.guard;
-    const cost = Math.max(g.minStaminaCost, h.dmg * g.staminaPerDamage * (1 - (p.mods['t_guard'] ?? 0) * 0.25));
+    const cost = Math.max(g.minStaminaCost, h.dmg * g.staminaPerDamage * (1 - w.mod(p, 't_guard')));
     if (p.move.stamina >= cost) {
       p.move.stamina -= cost;
       p.staminaDelay = sec(0.5);

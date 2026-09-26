@@ -2,7 +2,7 @@
 import Phaser from 'phaser';
 import { ABILITY_ICONS } from '../../art/icons.js';
 import { CHAPTERS } from '../../shared/config/chapters.js';
-import { BERSERKER, CLASSES, DOG, NECRO, PLAYER_RULES } from '../../shared/config/classes.js';
+import { BERSERKER, CLASSES, DOG, LAPANHA, NECRO, PLAYER_RULES, ripeCostFrac, ripePower } from '../../shared/config/classes.js';
 import { ATK, ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
 import { CHALLENGES, WAVE_EVENTS, type ChallengeKind, type WaveEventKind } from '../../shared/config/objectives.js';
 import { TOTAL_WAVES, WAVES } from '../../shared/config/waves.js';
@@ -112,6 +112,7 @@ export class HudScene extends Phaser.Scene {
       const avg = gs.fpsSamples.reduce((s, v) => s + v, 0) / Math.max(1, gs.fpsSamples.length);
       this.text('net', 4, 3, `${sess.rtt | 0}ms  ${Math.round(1000 / Math.max(1, avg))}fps`, 0x565b70);
     }
+    if (gs.aimDebugText) this.text('aimdbg', 4, 348, gs.aimDebugText, 0x8fd3f0);
 
     // onda e inimigos
     const w = latest.w;
@@ -175,12 +176,60 @@ export class HudScene extends Phaser.Scene {
       g.fillStyle(0x0b0a12, 0.75).fillRect(x0 - 2, y0 - 4, 132, 42);
       this.icon('portrait', `${me.c}_idle_down_${Math.floor(now / 500) % 2}`, x0 - 2, y0 - 6);
       this.bar(x0 + 32, y0, 94, 6, me.hp / me.mhp, me.hp / me.mhp < 0.3 && Math.floor(now / 250) % 2 ? 0xec6a5e : 0xc83838, 0x440d1a);
+      // escudo temporário por cima da vida
+      if (me.sh > 0) g.fillStyle(0xbfe3ff, 0.85).fillRect(x0 + 32, y0 + 5, Math.min(94, Math.round((94 * me.sh) / me.mhp)), 1);
+      // Lapanha: prévia do sacrifício da Melancia Madura (parte da vida que será consumida)
+      const charging = me.c === 'lapanha' && ACTIONS[me.act] === 'charge' && me.ch >= 0;
+      if (charging) {
+        const frac = Math.min(1, me.ch / 100);
+        const mul = me.f & PLAYER_FLAGS.harvest ? LAPANHA.harvest.costMul : 1;
+        const cost = Math.min(Math.max(0, me.hp - 1), me.mhp * ripeCostFrac(frac) * mul);
+        const x1 = x0 + 32 + Math.round((94 * (me.hp - cost)) / me.mhp);
+        const x2 = x0 + 32 + Math.round((94 * me.hp) / me.mhp);
+        g.fillStyle(Math.floor(now / 120) % 2 ? 0xffffff : 0xff9a8a, 1).fillRect(x1, y0, Math.max(1, x2 - x1), 6);
+        const R = LAPANHA.ripe;
+        const dmg = Math.round(R.minDamage + (R.maxDamage - R.minDamage) * ripePower(frac));
+        this.text('qprev', x0 + 32, y0 - 26, `Q: -${Math.round(cost)} vida · ${dmg} dano${frac >= 1 ? ' · MÁXIMA' : ''}`, frac >= 1 ? 0xffffff : 0xff9a8a);
+      }
       this.text('hp', x0 + 34, y0 - 3, `${me.hp}/${me.mhp}`, 0xffffff);
+      // stamina (logo abaixo da vida)
       this.bar(x0 + 32, y0 + 10, 94, 3, me.st / me.mst, 0x8fbf5a, 0x1f3129);
+      // estados (empilhados para cima, ao lado do painel): Ferida Profana, atordoado, resistência, Safra
+      const sx = x0 + 132;
+      let sy = y0 + 18;
+      if (me.f & PLAYER_FLAGS.wounded) {
+        const blockAll = (me.f & PLAYER_FLAGS.woundBlock) !== 0;
+        const W = ATK.shadowAcolyte.wound;
+        g.fillStyle(0x0b0a12, 0.8).fillRect(sx - 1, sy - 1, 122, 20);
+        if (blockAll) g.lineStyle(1, Math.floor(now / 100) % 2 ? 0xffffff : 0x9a4acb, 1).strokeRect(sx - 1, sy - 1, 122, 20);
+        this.icon('st_wound', 'icon_wound', sx, sy, 1);
+        this.text('st_wound_t', sx + 16, sy - 1, blockAll ? 'CURA BLOQUEADA' : `Cura -${Math.round(W.reduction * 100)}%`, blockAll ? 0xffffff : 0xc79aff);
+        this.bar(sx + 16, sy + 12, 102, 2, me.wd / (W.duration * 10), blockAll ? 0xffffff : 0x9a4acb, 0x1a0d24);
+        this.text('st_wound_s', sx + 118, sy - 1, `${(me.wd / 10).toFixed(1)}s`, 0xa3a9bb, [1, 0]);
+        sy -= 22;
+      }
+      if (me.f & PLAYER_FLAGS.stunned) {
+        g.fillStyle(0x0b0a12, 0.8).fillRect(sx - 1, sy - 1, 76, 18);
+        this.icon('st_stun', 'icon_stun', sx, sy, 1);
+        this.text('st_stun_t', sx + 16, sy + 1, 'ATORDOADO', 0xf6c257);
+        sy -= 20;
+      } else if (me.f & PLAYER_FLAGS.stunResist) {
+        this.text('st_res', sx, sy + 6, 'Resistente a atordoar', 0xa3a9bb);
+        sy -= 12;
+      }
+      if (me.f & PLAYER_FLAGS.harvest) {
+        const reduced = (me.f & PLAYER_FLAGS.wounded) !== 0;
+        this.text('st_harv', sx, sy + 6, reduced ? 'Safra: regeneração REDUZIDA' : 'Safra Abençoada: regenerando', reduced ? 0xc79aff : 0x7fc47a);
+      }
       const ult = me.u / PLAYER_RULES.ultMax;
-      this.bar(x0 + 32, y0 + 17, 94, 4, ult, ult >= 1 ? (Math.floor(now / 200) % 2 ? 0xf6c257 : 0xfff0ae) : 0xa8591a, 0x3e1e08);
+      if (me.c === 'lapanha') {
+        // Polpa: fatia de melancia (casca verde, polpa vermelha e sementes); pronta pisca em branco
+        this.bar(x0 + 32, y0 + 17, 94, 4, ult, ult >= 1 ? (Math.floor(now / 200) % 2 ? 0xff7a6a : 0xfff0e0) : 0xd84a4a, 0x24602a, 0x3f9a3a);
+        const fill = Math.round(94 * Math.min(1, ult));
+        for (let i = 6; i < fill; i += 12) g.fillStyle(0x1a0d0d, 1).fillRect(x0 + 32 + i, y0 + 18 + ((i / 12) % 2), 1, 2);
+      } else this.bar(x0 + 32, y0 + 17, 94, 4, ult, ult >= 1 ? (Math.floor(now / 200) % 2 ? 0xf6c257 : 0xfff0ae) : 0xa8591a, 0x3e1e08);
       const guardianCasting = me.c === 'tank' && ACTIONS[me.act] === 'r';
-      this.text('ultlbl', x0 + 32, y0 + 22, guardianCasting ? `R DETONAR: ${60 + Math.round(me.k * 1.2)} DANO` : ult >= 1 ? `SUPREMA PRONTA [${keyLabel(this.keys().r)}]` : `Suprema ${Math.floor(ult * 100)}%`, guardianCasting || ult >= 1 ? 0xf6c257 : 0x7a8096);
+      this.text('ultlbl', x0 + 32, y0 + 22, guardianCasting ? `R DETONAR: ${60 + Math.round(me.k * 1.2)} DANO` : me.ul > 0 ? `Suprema selada ${me.ul}s` : ult >= 1 ? `${cls.ultName ? cls.ultName.toUpperCase() + ' CHEIA' : 'SUPREMA PRONTA'} [${keyLabel(this.keys().r)}]` : `${cls.ultName ?? 'Suprema'} ${Math.floor(ult * 100)}%`, guardianCasting || ult >= 1 ? 0xf6c257 : 0x7a8096);
       // passiva
       let passive = '';
       if (me.c === 'vampire' && me.k > 0) passive = `Sede ×${me.k}`;
@@ -206,6 +255,7 @@ export class HudScene extends Phaser.Scene {
         const n = (latest.m ?? []).filter((m) => m[8] === me.id && m[1] === thrall).length;
         this.text('thralls', x0 + 46 + max * 7, y0 - 16, `Servos ${n}/${NECRO.raise.maxActive}`, 0x7a8096);
       }
+      if (me.c === 'lapanha') passive = me.f & PLAYER_FLAGS.harvest ? 'SAFRA ABENÇOADA' : 'Coração Maduro';
       if (me.c === 'hunter' && me.f & PLAYER_FLAGS.surrounded) passive = 'CERCADO! +25% dano recebido';
       if (me.c === 'tank') passive = guardianCasting ? 'ÁREA: -12% DANO' : me.f & PLAYER_FLAGS.blocking ? 'Égide 360° erguida' : '';
       if (passive) this.text('passive', x0, y0 - 16, passive, cls.color);
@@ -350,7 +400,13 @@ export class HudScene extends Phaser.Scene {
         if (st) this.text('evst', x + 1, y + 10, st[0], st[1]);
         else {
           const info = ev.k === 'ritual' ? `${def.goal} — ${secs(ev.t)}` : def.goal;
-          this.text('evgoal', x + 1, y + 10, info, 0xa3a9bb);
+          const dg = ev.d ?? -1;
+          if (dg >= 0) {
+            // estado do objetivo: SEGURO / AMEAÇADO / CRÍTICO + quantos inimigos pressionam
+            const lbl = dg >= 2 ? 'CRÍTICO' : dg === 1 ? 'AMEAÇADO' : 'SEGURO';
+            const col = dg >= 2 ? (Math.floor(now / 160) % 2 ? 0xff5a4a : 0xffffff) : dg === 1 ? 0xf6c257 : 0x7fc47a;
+            this.text('evgoal', x + 1, y + 10, `${lbl}${(ev.n ?? 0) > 0 ? ` — ${ev.n} pressionando` : ''}`, col);
+          } else this.text('evgoal', x + 1, y + 10, info, 0xa3a9bb);
           if (ev.p >= 0) {
             const col = ev.k === 'ritual' ? 0xe07cff : ev.k === 'cart' ? 0xe0902a : ev.p < 30 && Math.floor(now / 250) % 2 ? 0xec6a5e : 0x7fc47a;
             this.bar(x + 1, y + 22, W - 6, 2, ev.p / 100, col, 0x1f1a24);
@@ -366,8 +422,11 @@ export class HudScene extends Phaser.Scene {
         g.fillStyle(0x0b0a12, 0.75).fillRect(x - 2, y - 1, W, cg.p >= 0 && !st ? 30 : 22);
         this.text('cgname', x + 1, y, `DESAFIO: ${def.name}`, 0x8fd3f0);
         const tail = cg.k === 'speed' || cg.k === 'elite' ? ` — ${secs(cg.t)}` : '';
-        if (st) this.text('cgst', x + 1, y + 10, st[1] === 0x7fc47a ? `${st[0]}: ${def.rewardText}` : st[0], st[1]);
-        else this.text('cgrw', x + 1, y + 10, `Opcional: ${def.rewardText}${tail}`, 0x7a8096);
+        if (!st && cg.k === 'altar' && (cg.d ?? -1) >= 0) {
+          const dg = cg.d ?? 0;
+          this.text('cgrw', x + 1, y + 10, `${dg >= 2 ? 'CRÍTICO' : dg === 1 ? 'AMEAÇADO' : 'SEGURO'}${(cg.n ?? 0) > 0 ? ` — ${cg.n} no altar` : ''}`, dg >= 2 ? (Math.floor(now / 160) % 2 ? 0xff5a4a : 0xffffff) : dg === 1 ? 0xf6c257 : 0x7fc47a);
+        } else if (st) this.text('cgst', x + 1, y + 10, st[1] === 0x7fc47a ? `${st[0]}: ${def.rewardText}` : st[0], st[1]);
+        else if (!(cg.k === 'altar' && (cg.d ?? -1) >= 0)) this.text('cgrw', x + 1, y + 10, `Opcional: ${def.rewardText}${tail}`, 0x7a8096);
         if (cg.p >= 0 && !st) this.bar(x + 1, y + 22, W - 6, 2, cg.p / 100, cg.k === 'altar' ? 0x7fc47a : 0x8fd3f0, 0x1f1a24);
       }
     }

@@ -93,7 +93,10 @@ export function hitMinion(w: World, m: Minion, dmg: number, attacker?: Enemy): v
   const d = Math.max(1, Math.round(dmg * eliteMul * (m.kind === 'survivor' ? w.guardianReductionAt(m.x, m.y) : 1)));
   const before = m.hp;
   m.hp -= d;
-  if (m.kind === 'survivor') w.recordGuardianDamage(m.x, m.y, Math.min(before, d));
+  if (m.kind === 'survivor') {
+    w.recordGuardianDamage(m.x, m.y, Math.min(before, d));
+    w.objectives.onSurvivorHit(m, Math.min(before, d));
+  }
   w.emit({ k: 'fx', n: 'minionHit', x: m.x, y: m.y - 10, a: 0, o: m.kindIdx, r: d });
   if (m.hp <= 0) killMinion(w, m, 'killed');
 }
@@ -118,7 +121,7 @@ export function killMinion(w: World, m: Minion, reason: 'killed' | 'expired' | '
       minionDamage(w, owner, m, e, base * mul, { poise: 20, kb: 120, kind: 'aoe' });
     }
     w.breakInCircle(m.x, m.y, radius, base, owner);
-    if (reaper && owner && owner.status === 0) w.healPlayer(owner, 5, false);
+    if (reaper && owner && owner.status === 0) w.healPlayer(owner, 5, 'reaper');
     w.emit({ k: 'fx', n: 'boneBlast', x: m.x, y: m.y - 6, a: 0, o: m.owner, r: radius });
   } else {
     w.emit({ k: 'fx', n: 'minionFade', x: m.x, y: m.y - 6, a: 0, o: m.kindIdx, r: m.r });
@@ -372,14 +375,7 @@ export function clearMinions(w: World, owner?: number): void {
 /** Servo mais próximo que um inimigo comum/elite pode escolher atacar (aggro). */
 export function minionAggro(w: World, e: Enemy, playerDist: number): Minion | null {
   if (e.def.tier === 'boss' || e.def.miniboss || e.def.objective || w.minions.size === 0) return null;
-  // Três em cinco inimigos tentam interceptar a escolta; os demais pressionam os jogadores.
-  if (w.objectives.event?.kind === 'escort' && w.objectives.event.state === 0 && e.id % 5 < 3) {
-    const survivor = [...w.minions.values()].find((m) => m.kind === 'survivor' && m.state !== 'dead' && m.state !== 'rise');
-    if (survivor) {
-      const d = dist(e.x, e.y, survivor.x, survivor.y);
-      if (d < 260 && d < Math.max(90, playerDist * 1.3)) return survivor;
-    }
-  }
+  // A escolta usa funções táticas (caçadores do sobrevivente), definidas em objectives.ts.
   let best: Minion | null = null;
   let bd = Math.min(NECRO.thrall.aggroRadius, playerDist * 0.8);
   for (const m of w.minions.values()) {

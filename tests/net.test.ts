@@ -153,14 +153,14 @@ describe('rede: partida sincronizada', () => {
     a?.input(1, 0, 0, 0, 0, BTN.e);
     await sleep(120);
     expect(p?.cd.e).toBeGreaterThan(0);
-    a?.input(0, 0, 0, 0, 0, BTN.e);
-    const deny = await a?.wait((m) => m.t === 'snap' && m.ev.some((e) => e.k === 'deny' && e.r === 'cd'));
-    expect(deny).toBeTruthy();
-    // cliente real envia inputs a 30 Hz; o deslocamento forçado avança por input
-    for (let i = 0; i < 12; i++) {
+    // o Redemoinho Rubro dura ~1,3 s (giro + recuperação); depois disso a recarga ainda corre
+    for (let i = 0; i < 48; i++) {
       a?.input(0, 0, 0, 0);
       await sleep(33);
     }
+    a?.input(0, 0, 0, 0, 0, BTN.e);
+    const deny = await a?.wait((m) => m.t === 'snap' && m.ev.some((e) => e.k === 'deny' && e.r === 'cd'));
+    expect(deny).toBeTruthy();
     a?.input(1, 0, 0, 0, 0, BTN.dodge);
     await sleep(70);
     expect(p?.lastDodgeTick).toBeGreaterThan(0);
@@ -190,6 +190,55 @@ describe('rede: partida sincronizada', () => {
     expect(me?.c).toBe('dog');
     expect(me?.hp).toBe(33);
     expect(srv?.room.world.players.get(bid)?.connected).toBe(true);
+  });
+
+  it('v1.3 em rede: Lapanha carrega a Melancia Madura, sacrifício e Ferida aparecem no snapshot; reconexão durante a carga', async () => {
+    const url = await server();
+    const [a, b] = await lobbyWith(url, 2, ['lapanha', 'vampire']);
+    a?.send({ t: 'start' });
+    await a?.wait((m) => m.t === 'phase' && m.phase === 'wave');
+    const aid = a?.id ?? 0;
+    const pa = srv?.room.world.players.get(aid);
+    const hp0 = pa?.hp ?? 0;
+    // segura Q (carga) — o snapshot traz o progresso da carga
+    a?.input(0, 0, (pa?.x ?? 0) + 80, pa?.y ?? 0, BTN.q, BTN.q);
+    for (let i = 0; i < 12; i++) {
+      a?.input(0, 0, (pa?.x ?? 0) + 80, pa?.y ?? 0, BTN.q);
+      await sleep(33);
+    }
+    const charging = await b?.wait<Extract<ServerMessage, { t: 'snap' }>>((m) => m.t === 'snap' && m.p.some((p) => p.id === aid && p.ch > 0));
+    expect(charging).toBeTruthy();
+    // solta: arremessa e paga vida (evento 'sac', não dano)
+    const sac = b?.wait((m) => m.t === 'snap' && m.ev.some((e) => e.k === 'dmg' && e.c === 'sac' && e.ti === aid));
+    for (let i = 0; i < 12; i++) {
+      a?.input(0, 0, (pa?.x ?? 0) + 80, pa?.y ?? 0, 0);
+      await sleep(33);
+    }
+    expect(await sac).toBeTruthy();
+    expect(pa?.hp ?? 0).toBeLessThan(hp0);
+    expect(pa?.hp ?? 0).toBeGreaterThanOrEqual(1);
+    // Ferida Profana no Vampiro: flag e duração chegam aos dois clientes
+    const pv = srv?.room.world.players.get(b?.id ?? 0);
+    const { applyWound } = await import('../src/server/world/healing.js');
+    if (srv && pv) applyWound(srv.room.world, pv, null);
+    const wounded = await a?.wait<Extract<ServerMessage, { t: 'snap' }>>((m) => m.t === 'snap' && m.p.some((p) => p.id === pv?.id && p.wd > 0));
+    expect(wounded).toBeTruthy();
+    // reconexão no meio de uma nova carga: estado completo, sem carga presa
+    a?.input(0, 0, 0, 0, BTN.q, BTN.q);
+    const token = a?.token ?? '';
+    a?.ws.terminate();
+    await sleep(150);
+    const a2 = bot(url, 'Lap', { token });
+    const w = await a2.join();
+    expect(w).toMatchObject({ t: 'welcome', id: aid, reconnect: true });
+    const snap = await a2.wait<Extract<ServerMessage, { t: 'snap' }>>((m) => m.t === 'snap' && m.full);
+    const me = snap.p.find((p) => p.id === aid);
+    expect(me?.c).toBe('lapanha');
+    for (let i = 0; i < 70; i++) {
+      a2.input(0, 0, 0, 0, 0);
+      await sleep(20);
+    }
+    expect(srv?.room.world.players.get(aid)?.action?.name ?? 'idle').not.toBe('charge');
   });
 
   it('anfitrião encerrando avisa os demais com mensagem clara', async () => {

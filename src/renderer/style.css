@@ -102,6 +102,16 @@ select option { background: var(--bg0); }
 .upcard { cursor: url('./cursor-menu.svg') 2 2, pointer; padding: 6px; background: var(--bg1); box-shadow: inset 0 0 0 1px var(--line); }
 .upcard:hover, .upcard.sel { box-shadow: inset 0 0 0 1px var(--amber); background: #28395f; }
 .upcard.dim { opacity: 0.5; }
+/* Raridade: moldura por forma (não só cor) — comum fina, incomum dupla, rara com cantos, lendária animada em degraus */
+.rarity-tag { font-size: 9px; letter-spacing: 1px; margin: -2px 0 3px; color: var(--muted, #a3a9bb); }
+.rarity-tag.rar-uncommon { color: #7fc47a; }
+.rarity-tag.rar-rare { color: #8fd3f0; }
+.rarity-tag.rar-legendary { color: #f6c257; }
+.upcard.rar-uncommon { box-shadow: inset 0 0 0 1px #3e6a3a, inset 0 0 0 3px var(--bg1), inset 0 0 0 4px #3e6a3a; }
+.upcard.rar-rare { box-shadow: inset 0 0 0 2px #4f86a8; background-image: linear-gradient(#8fd3f0,#8fd3f0), linear-gradient(#8fd3f0,#8fd3f0), linear-gradient(#8fd3f0,#8fd3f0), linear-gradient(#8fd3f0,#8fd3f0); background-size: 6px 2px, 2px 6px, 6px 2px, 2px 6px; background-position: 0 0, 0 0, 100% 100%, 100% 100%; background-repeat: no-repeat; }
+.upcard.rar-legendary { box-shadow: inset 0 0 0 2px #f6c257, inset 0 0 0 4px #5a3a0a; animation: legendary-frame 1.2s steps(2) infinite; }
+@keyframes legendary-frame { 0% { box-shadow: inset 0 0 0 2px #f6c257, inset 0 0 0 4px #5a3a0a; } 100% { box-shadow: inset 0 0 0 2px #fff0ae, inset 0 0 0 4px #8a5a14; } }
+.upcard.rar-uncommon:hover, .upcard.rar-uncommon.sel, .upcard.rar-rare:hover, .upcard.rar-rare.sel, .upcard.rar-legendary.sel { outline: 1px solid var(--amber); outline-offset: -1px; background-color: #28395f; }
 .keycap { display: inline-block; min-width: 12px; padding: 0 2px; text-align: center; background: var(--bg2); box-shadow: inset 0 0 0 1px var(--line); color: var(--amber); }
 table { border-collapse: collapse; width: 100%; }
 td, th { padding: 1px 3px; text-align: left; font-weight: normal; }
@@ -144,26 +154,22 @@ tr:nth-child(even) td { background: rgba(28, 40, 72, 0.5); }
 .skill-guide-foot span:last-child { color: var(--ok); }
 
 /* Aparição de chefe: barras de cinema, retrato do atlas do jogo e cortes em steps. */
+
+/* Apresentação de chefe/minichefe: barras de cinema sólidas + painel dourado padrão da interface.
+   Sem gradientes, rotações ou escalas fracionárias; animações em degraus de pixel. */
 #ui .boss-intro, #ui .boss-intro * { pointer-events: none !important; }
 .boss-intro { position: absolute; inset: 0; z-index: 60; overflow: hidden; --boss-color: #ec6a5e; }
 .boss-intro.mini { --boss-color: #e07cff; }
-.boss-intro-shade { position: absolute; inset: 0; background: radial-gradient(ellipse at 57% 45%, transparent 8%, rgba(5, 5, 13, 0.54) 54%, rgba(5, 5, 13, 0.86) 100%); animation: boss-shade 0.4s steps(5) both; }
-.boss-intro-bar { position: absolute; left: 0; right: 0; height: 32px; background: #080b17; box-shadow: inset 0 -2px 0 var(--boss-color); }
-.boss-intro-bar.top { top: 0; animation: boss-bar-top 0.33s steps(6) both; }
-.boss-intro-bar.bottom { bottom: 0; height: 30px; padding: 9px 20px 0; display: flex; justify-content: space-between; color: var(--amber); box-shadow: inset 0 2px 0 var(--boss-color); animation: boss-bar-bottom 0.33s steps(6) both; }
-.boss-intro-focus { position: absolute; left: 392px; top: 60px; width: 190px; height: 220px; display: flex; align-items: center; justify-content: center; filter: drop-shadow(0 0 0 #080a11) drop-shadow(5px 6px 0 #080a11); animation: boss-reveal 0.65s steps(7) both; }
-.boss-intro-focus::before { content: ''; position: absolute; width: 180px; height: 180px; border: 2px solid var(--boss-color); transform: rotate(45deg); opacity: 0.8; box-shadow: 0 0 0 6px rgba(11, 10, 18, 0.7), inset 0 0 0 5px rgba(11, 10, 18, 0.7); animation: boss-sigil 1.3s steps(10) infinite alternate; }
-.boss-intro-portrait { z-index: 1; width: 150px; height: 150px; object-fit: contain; image-rendering: pixelated; filter: drop-shadow(3px 4px 0 var(--ink)); animation: boss-breathe 0.9s steps(3) infinite alternate; }
-.boss-intro-copy { position: absolute; left: 36px; top: 112px; width: 335px; text-shadow: 2px 2px 0 var(--ink); animation: boss-copy 0.5s 0.35s steps(6) both; }
-.boss-intro-kicker { color: var(--amber); font-size: 12px; letter-spacing: 2px; margin-bottom: 9px; }
-.boss-intro-name { color: var(--boss-color); font-size: 22px; line-height: 27px; max-width: 340px; }
-.boss-intro-rule { width: 210px; height: 3px; margin: 9px 0; background: var(--boss-color); box-shadow: 0 3px 0 var(--ink); animation: boss-rule 0.6s 0.7s steps(8) both; }
-.boss-intro-sub { color: #eef1f7; font-size: 11px; }
-@keyframes boss-shade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes boss-bar-top { from { transform: translateY(-100%); } to { transform: none; } }
-@keyframes boss-bar-bottom { from { transform: translateY(100%); } to { transform: none; } }
-@keyframes boss-reveal { from { opacity: 0; transform: translateX(55px) scale(0.65); } to { opacity: 1; transform: none; } }
-@keyframes boss-copy { from { opacity: 0; transform: translateX(-35px); } to { opacity: 1; transform: none; } }
-@keyframes boss-sigil { from { opacity: 0.35; transform: rotate(45deg) scale(0.88); } to { opacity: 0.9; transform: rotate(45deg) scale(1); } }
-@keyframes boss-breathe { from { transform: translateY(2px); } to { transform: translateY(-2px); } }
-@keyframes boss-rule { from { width: 0; } to { width: 210px; } }
+.boss-intro-bar { position: absolute; left: 0; right: 0; height: 28px; background: var(--ink); }
+.boss-intro-bar.top { top: 0; box-shadow: 0 2px 0 0 var(--boss-color); animation: boss-bar-top 0.3s steps(7) both; }
+.boss-intro-bar.bottom { bottom: 0; box-shadow: 0 -2px 0 0 var(--boss-color); animation: boss-bar-bottom 0.3s steps(7) both; }
+.boss-card { left: 120px; bottom: 36px; width: 400px; display: flex; gap: 10px; align-items: center; animation: boss-card-in 0.36s 0.15s steps(6) both; }
+.boss-card-frame { flex: 0 0 auto; min-width: 72px; min-height: 72px; display: flex; align-items: flex-end; justify-content: center; padding: 3px; background: var(--bg0); box-shadow: inset 0 0 0 1px var(--boss-color), inset 0 0 0 2px var(--ink); }
+.boss-card-portrait { display: block; image-rendering: pixelated; }
+.boss-card-copy { flex: 1; min-width: 0; }
+.boss-card-name { font-size: 22px; line-height: 24px; margin: 2px 0 3px; color: var(--boss-color); text-shadow: 2px 2px 0 var(--ink); letter-spacing: 1px; }
+.boss-card-rule { height: 2px; width: 120px; margin: 0 0 4px; background: var(--boss-color); box-shadow: 0 1px 0 var(--ink); animation: boss-rule 0.4s 0.45s steps(6) both; }
+@keyframes boss-bar-top { from { transform: translateY(-28px); } to { transform: none; } }
+@keyframes boss-bar-bottom { from { transform: translateY(28px); } to { transform: none; } }
+@keyframes boss-card-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes boss-rule { from { width: 0; } to { width: 120px; } }

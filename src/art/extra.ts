@@ -3,7 +3,7 @@
  * totens, carrinho funerário, ritualista), minichefes, a Noiva do Inverno, itens no chão e
  * variantes de clima (inverno/cinzas) dos inimigos. Mesmo pipeline de matrizes e primitivas.
  */
-import { type ClassArt, composeArt, type Dir, mirror, back } from './characters.js';
+import { autoShade, type ClassArt, composeArt, type Dir, mirror, back } from './characters.js';
 import { bayer, type Color, mix, PixelCanvas, SheetBuilder } from './pixel.js';
 import { P } from './palette.js';
 import type { Climate } from '../shared/config/chapters.js';
@@ -477,30 +477,65 @@ export function renameRecolor(src: { canvas: PixelCanvas; frames: Record<string,
 
 // ================================================================ montagem
 
-/** Bardo errante: silhueta pequena com violão legível em qualquer temática. */
+/**
+ * Bardo errante: chapéu de aba larga com pena, manto azul, túnica vinho e alaúde de madeira
+ * em diagonal. Mesmas regras de pixel art dos personagens (matriz + contorno). Quatro quadros:
+ * a mão direita dedilha, o pé marca o tempo e o corpo balança de leve.
+ */
+const BARD_ROWS = [
+  '..........FF........',
+  '.........FfF........',
+  '......HHHHf.........',
+  '.....HHHHHHH........',
+  '....hhhhhhhhh.......',
+  '..HHHHHHHHHHHHH.....',
+  '.....sssss..........',
+  '.....sesse..........',
+  '.....sssss..........',
+  '......SSS...........',
+  '....CCTTTCC.........',
+  '...CCCTTTTCC....WN..',
+  '..CCCTTTTTTCC..NNs..',
+  '..CCTTTTTTTTC.NN....',
+  '..CCTTTTTTTNNNN.....',
+  '..CCLLLLLTNN.C......',
+  '.CCLLLLLLLLTTCC.....',
+  '.CCLLLKKLLLLTCC.....',
+  '.CCLLLKKLLLLTCC.....',
+  '.CCLLLLLLLLLTCC.....',
+  '..CClLLLLLLlCCC.....',
+  '..CCClllllCCCCC.....',
+  '..CCCCCCCCCCCC......',
+  '...CcCCCCCCcC.......',
+  '....PPP..PPP........',
+  '....PPP..PPP........',
+  '...BBBB..BBBB.......',
+  '...BBBB..BBBB.......',
+];
+const BARD_PAL: Record<string, number> = {
+  F: P.red4, f: P.amb4, H: P.brn2, h: P.red3, s: P.skin2, S: P.skin1, e: P.ink,
+  C: P.blue4, c: P.blue3, T: P.red3, L: P.brn4, l: P.brn2, K: P.ink, N: P.brn3, W: P.amb3,
+  P: P.gray2, B: P.brn1,
+};
+
 function bardPlay(frame: number): PixelCanvas {
   const c = new PixelCanvas(32, 36);
-  const bob = frame % 2;
-  // botas, manto e chapéu
-  c.rect(10, 30, 5, 4, P.brn1);
-  c.rect(18, 30, 5, 4, P.brn1);
-  c.rect(9, 16 + bob, 15, 15, P.blue4);
-  c.rect(11, 17 + bob, 11, 10, P.blue3);
-  c.rect(12, 8 + bob, 9, 8, P.skin2);
-  c.rect(15, 11 + bob, 2, 2, P.ink);
-  c.rect(10, 7 + bob, 13, 3, P.brn1);
-  c.rect(13, 3 + bob, 8, 5, P.brn2);
-  c.rect(9, 8 + bob, 15, 2, P.brn3);
-  // corpo arredondado do violão, braço e cordas
-  c.rect(13, 21 + bob, 12, 9, P.brn1);
-  c.rect(15, 20 + bob, 8, 10, P.brn3);
-  c.rect(17, 22 + bob, 4, 5, P.brn1);
-  c.rect(20, 17 + bob, 9, 3, P.brn2);
-  c.rect(27, 15 + bob, 2, 5, P.brn1);
-  c.line(17, 22 + bob, 28, 18 + bob, P.amb5);
-  c.line(17, 24 + bob, 28, 19 + bob, P.amb3);
-  c.rect(12 + (frame % 2), 21 + bob + (frame % 3), 3, 3, P.skin1);
-  c.rect(23, 17 + bob, 3, 2, P.skin1);
+  const bob = frame === 1 || frame === 3 ? 1 : 0;
+  const ox = 6;
+  const oy = 6 + bob;
+  // pés ficam no chão; só o corpo balança
+  const upper = BARD_ROWS.slice(0, 24);
+  const feet = BARD_ROWS.slice(24).map((r, i) => (frame >= 2 && i >= 2 ? r.replace('...BBBB', '....BBB') : r));
+  c.matrix(upper, BARD_PAL, ox, oy);
+  c.matrix(feet, BARD_PAL, ox, 6 + 24);
+  if (frame >= 2) c.rect(ox + 3, 6 + 25, 4, 1, BARD_PAL.B as number); // pé batendo o tempo
+  // cordas (1 px) do corpo do alaúde até a cravelha
+  c.line(ox + 7, oy + 17, ox + 16, oy + 12, P.amb5);
+  // mão que dedilha: sobe e desce sobre as cordas
+  const hy = oy + 16 + (frame % 2 === 0 ? 0 : 2);
+  c.rect(ox + 11, hy, 2, 2, P.skin2);
+  c.set(ox + 11, hy + 1, P.skin1);
+  autoShade(c, new Set([P.ink, P.amb5, P.amb4]));
   c.outline(P.outline);
   return c;
 }

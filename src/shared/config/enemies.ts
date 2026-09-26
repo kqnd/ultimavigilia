@@ -4,12 +4,14 @@ export type EnemyType =
   | 'shambler' | 'runner' | 'werewolf' | 'acolyte' | 'father'
   | 'moonDevourer' | 'patriarch' | 'frostBride'
   | 'alphaWolf' | 'highAcolyte' | 'elderFather'
-  | 'falseMoon' | 'abyssTotem' | 'funeralCart' | 'ritualist';
+  | 'falseMoon' | 'abyssTotem' | 'funeralCart' | 'ritualist'
+  | 'shadowAcolyte' | 'mistStalker' | 'ossuaryBearer';
 export const ENEMY_TYPES: readonly EnemyType[] = [
   'shambler', 'runner', 'werewolf', 'acolyte', 'father',
   'moonDevourer', 'patriarch', 'frostBride',
   'alphaWolf', 'highAcolyte', 'elderFather',
   'falseMoon', 'abyssTotem', 'funeralCart', 'ritualist',
+  'shadowAcolyte', 'mistStalker', 'ossuaryBearer',
 ];
 export type Tier = 'common' | 'elite' | 'boss';
 
@@ -55,6 +57,9 @@ export const ENEMIES: Record<EnemyType, EnemyDef> = {
   falseMoon: { name: 'Lua Falsa', tier: 'elite', hp: 170, speed: 0, radius: 12, poise: 9999, staggerTime: 0, ccResist: 0, knockResist: 1, budget: 0, contactDamage: 0, objective: true, stationary: true },
   abyssTotem: { name: 'Totem do Abismo', tier: 'elite', hp: 280, speed: 0, radius: 12, poise: 9999, staggerTime: 0, ccResist: 0, knockResist: 1, budget: 0, contactDamage: 0, objective: true, stationary: true },
   funeralCart: { name: 'Carrinho Funerário', tier: 'elite', hp: 460, speed: 24, radius: 15, poise: 9999, staggerTime: 0, ccResist: 0.5, knockResist: 1, budget: 0, contactDamage: 0, objective: true },
+  shadowAcolyte: { name: 'Acólito Sombrio', tier: 'common', hp: 58, speed: 60, radius: 7, poise: 16, staggerTime: 0.8, ccResist: 1, knockResist: 0.1, budget: 4.5, contactDamage: 0 },
+  mistStalker: { name: 'Caçador de Névoa', tier: 'elite', hp: 95, speed: 100, radius: 8, poise: 34, staggerTime: 0.8, ccResist: 0.85, knockResist: 0.3, budget: 5.5, contactDamage: 0 },
+  ossuaryBearer: { name: 'Portador do Ossário', tier: 'elite', hp: 190, speed: 36, radius: 11, poise: 70, staggerTime: 0.9, ccResist: 0.7, knockResist: 0.6, budget: 7, contactDamage: 0 },
   ritualist: { name: 'Acólito Ritualista', tier: 'elite', hp: 240, speed: 0, radius: 9, poise: 9999, staggerTime: 0, ccResist: 0, knockResist: 1, budget: 0, contactDamage: 0, objective: true, stationary: true },
 };
 
@@ -65,13 +70,67 @@ export const isBossTier = (t: EnemyType): boolean => ENEMIES[t].tier === 'boss';
 /** Após um stagger, chefes ficam imunes a novo stagger por este tempo (s). */
 export const BOSS_STAGGER_IMMUNITY = 5;
 /** Retorno decrescente: cada controle dentro da janela reduz a duração do próximo. */
+/** Especiais anti-kite: limite simultâneo por tipo em solo (vivos + a surgir). */
+export const SPECIAL_CAPS: Partial<Record<EnemyType, number>> = { shadowAcolyte: 2, mistStalker: 2, ossuaryBearer: 3 };
+export type SpecialType = 'shadowAcolyte' | 'mistStalker' | 'ossuaryBearer';
+export const SPECIAL_TYPES: readonly SpecialType[] = ['shadowAcolyte', 'mistStalker', 'ossuaryBearer'];
+/**
+ * Frequência dos especiais (v1.3): aparecem desde a onda de introdução, cada um primeiro sozinho;
+ * o diretor garante presença mínima e alterna o tipo para não repetir.
+ */
+export const SPECIAL_RULES = {
+  /** Primeira onda em que cada especial pode surgir (introdução isolada). */
+  unlockWave: { shadowAcolyte: 4, ossuaryBearer: 6, mistStalker: 8 } as Record<SpecialType, number>,
+  /** Limite simultâneo extra por jogador além do primeiro (arredondado para baixo). */
+  capPerExtraPlayer: 0.5,
+  /** A partir desta onda (e fora de chefes), toda onda comum traz ao menos um especial. */
+  guaranteeFrom: 9,
+  /** A partir desta onda, ondas comuns tendem a combinar dois tipos. */
+  pairFrom: 15,
+  /** Chance de uma onda comum a partir de `pairFrom` combinar dois tipos (o trio fica para as ondas marcadas). */
+  pairChance: 0.6,
+} as const;
+/** Limite simultâneo de um especial para N jogadores. */
+export const specialCap = (t: EnemyType, players: number): number | undefined => {
+  const base = SPECIAL_CAPS[t];
+  if (base === undefined) return undefined;
+  return base + Math.floor(Math.max(0, players - 1) * SPECIAL_RULES.capPerExtraPlayer);
+};
+
+/** Chefes e minichefes: alvo prioritário inteligente, travado até provocação ou queda. */
+export const BOSS_AI = {
+  /** Peso por alcance da classe (maior = mais visado). */
+  rangePriority: { ranged: 3, mid: 2, melee: 1 },
+  /** Penalidade por distância de caminho (por px). */
+  distanceWeight: 0.004,
+  /** Após provocação, o chefe fica travado no provocador por este tempo (s). */
+  tauntLock: 6,
+  /** Perseguição: alvo além desta distância por este tempo faz o chefe acelerar. */
+  pursuitDistance: 200, pursuitDelay: 1.5, pursuitSpeedMul: 1.3,
+  /**
+   * Ameaça: dano recente ao chefe entra na pontuação de alvo (com decaimento exponencial),
+   * para não perseguir um único jogador à distância pelo resto da luta enquanto outros
+   * batem nele de perto. `threatWindow` é a janela de decaimento (s, mesmo estilo de
+   * HEAL_RULES.recentWindow); `threatWeight` converte ameaça acumulada em pontos de
+   * prioridade (mesma escala de rangePriority/distanceWeight).
+   */
+  threatWindow: 8, threatWeight: 0.0016,
+  /**
+   * A cada `retargetSeconds` sem provocação, o chefe reavalia o alvo do zero (ameaça +
+   * alcance + distância) mesmo com o alvo atual ainda vivo — evita perseguição infinita de
+   * um único jogador quando há vários de longo alcance. `switchMargin` exige vantagem
+   * mínima do novo alvo para trocar, evitando alternância por diferenças marginais.
+   */
+  retargetSeconds: 14, switchMargin: 1.2,
+} as const;
+
 export const CC_DR = { window: 6, factor: 0.5, minMul: 0.15 } as const;
 
 export const ATK = {
   shambler: { swipe: { windup: 16, active: 3, recovery: 14, damage: 9, range: 24, arc: 100, cooldown: 1.1 } },
   runner: { lunge: { windup: 10, dashTicks: 8, dashSpeed: 250, recovery: 16, damage: 7, triggerRange: 84, hitRadius: 12, cooldown: 1.6 } },
   werewolf: {
-    pounce: { windup: 18, airTicks: 12, recovery: 16, damage: 18, landRadius: 30, maxRange: 180, minRange: 60, cooldown: 3.5 },
+    pounce: { windup: 18, airTicks: 12, recovery: 16, damage: 18, landRadius: 30, maxRange: 180, minRange: 60, cooldown: 3.5, minibossWindup: 26, minibossStun: 0.6 },
     claw: { windup: 10, active: 3, recovery: 12, damage: 12, range: 32, arc: 110, cooldown: 0.9 },
   },
   acolyte: {
@@ -81,7 +140,7 @@ export const ATK = {
     keepMax: 220,
   },
   father: {
-    slam: { windup: 22, active: 4, recovery: 18, damage: 22, range: 44, arc: 140, cooldown: 2.2 },
+    slam: { windup: 22, active: 4, recovery: 18, damage: 22, range: 44, arc: 140, cooldown: 2.2, minibossWindup: 30, minibossStun: 0.6 },
     slipper: { windup: 22, recovery: 14, damage: 14, speed: 300, radius: 7, maxRange: 250, cooldown: 4.5 },
     shoutCooldown: 9,
     shoutChance: 0.35,
@@ -119,7 +178,78 @@ export const ATK = {
   falseMoon: { pulse: { interval: 6, windup: 1.2, radius: 60, damage: 12 }, damageReductionPerMoon: 0.2, minDamageMul: 0.2, exposedTime: 12, exposedDamageMul: 1.3, relightDelay: 25 },
   abyssTotem: { orb: { interval: 4, speed: 150, damage: 12, radius: 6, range: 300 } },
   ritualist: { channel: 40 },
+  /** Acólito Sombrio — Condutor da Caçada: suporte que acelera a horda (Marcha Sombria). */
+  shadowAcolyte: {
+    march: {
+      cooldown: 10, windup: 36, recovery: 10, radius: 150, duration: 5,
+      /** Bônus de velocidade por categoria (não acumula; nova aplicação só renova a duração). */
+      commonBonus: 0.2, eliteBonus: 0.1, bossBonus: 0.08,
+      /** Peso mínimo de aliados perseguindo (comum 1, elite 2) para valer a conjuração. */
+      minAllyWeight: 3,
+      /** Aliados a menos disto do próprio alvo "já chegaram" e não contam. */
+      arrivedDistance: 70,
+      /** Outro Acólito conjurando a esta distância bloqueia a conjuração (mesmo grupo). */
+      exclusiveRadius: 220,
+      /** Primeira avaliação após surgir (s) e intervalo entre reavaliações quando falha (ticks). */
+      firstDelay: 3, retryTicks: 20,
+    },
+    bolt: { windup: 20, recovery: 12, damage: 7, speed: 140, radius: 5, range: 300, cooldown: 4 },
+    /**
+     * Ferida Profana: canaliza ~0,9 s com símbolo no alvo e linha até o Acólito, depois lança um
+     * pulso reto (não teleguiado). Se acertar: -70% de cura por 4 s (o primeiro 0,75 s bloqueia
+     * toda a cura, claramente indicado). Não acumula; nova aplicação só renova até o limite.
+     */
+    wound: {
+      cooldown: 11, windup: 27, lockTicks: 7, recovery: 14, firstDelay: 5,
+      range: 260, speed: 230, radius: 7, damage: 4,
+      duration: 4, blockSeconds: 0.75, reduction: 0.7,
+      /** Prefere quem curou pelo menos isto nos últimos segundos (senão, o alvo mais próximo). */
+      minRecentHeal: 6,
+      /** Não relança em quem ainda tem mais que isto de Ferida (s). */
+      skipIfRemaining: 1.5,
+      /** Intervalo mínimo entre Marcha e Ferida do mesmo Acólito (s). */
+      spacing: 1.2,
+    },
+    keepMin: 150, keepMax: 250, fleeMelee: 95, coverOffset: 42, repositionSeconds: 1.6, evalTicks: 15,
+  },
+  /** Caçador de Névoa: flanqueia e salta sobre quem atira à distância. */
+  mistStalker: {
+    leap: {
+      cooldown: 5.5, windup: 16, airTicks: 11, recovery: 30, damage: 20, landRadius: 24, minRange: 70, maxRange: 175,
+      /** Antecipação: segundos à frente e deslocamento máximo previsto (px). */
+      leadSeconds: 0.45, maxLead: 60,
+      /** Só salta com o Caçador dentro da área visível do alvo (meia tela lógica, com folga). */
+      viewHalfW: 300, viewHalfH: 165,
+      /** Durante a recuperação recebe mais poise (fica exposto). */
+      recoverPoiseMul: 2,
+      /** Impacto direto (a até `stunRadius` px do centro do pouso): atordoa brevemente. */
+      stunRadius: 12, stun: 0.5,
+    },
+    claw: { windup: 9, active: 2, recovery: 12, damage: 9, range: 22, arc: 100, cooldown: 1.2 },
+    /** Fica velado (parcialmente oculto) além desta distância do alvo, fora de ataques. */
+    veilDistance: 140,
+    /** Desvia da linha de tiro quando o alvo mira nele (rad) dentro deste alcance. */
+    dodgeAimAngle: 0.35, dodgeAimRange: 240,
+    flankAngle: 0.7, crowdedMelee: 4, retargetTicks: 45,
+  },
+  /** Portador do Ossário: escudo frontal com vida própria que bloqueia projéteis. */
+  ossuaryBearer: {
+    shield: {
+      hp: 160, arc: 120, turnRate: 2.4,
+      /** Frontal: fração do dano que chega ao corpo e ao poise. */
+      projBodyMul: 0.1, projPoiseMul: 0.2, meleeBodyMul: 0.4, aoeBodyMul: 0.6,
+      /** Dano no escudo por tipo; golpes com poise alto (pesados, investidas) causam mais. */
+      projShieldMul: 1, meleeShieldMul: 1.4, aoeShieldMul: 1.5, heavyPoise: 28, heavyShieldMul: 2.5,
+    },
+    bash: { windup: 18, active: 3, recovery: 16, damage: 16, range: 30, arc: 100, cooldown: 1.8, brokenWindup: 22, brokenStun: 0.5 },
+    brokenSpeed: 64, brokenCooldownMul: 0.6,
+    /** Não sai da formação atrás de alvos muito distantes; mantém espaço entre Portadores. */
+    leashDistance: 380, spacing: 44,
+    debrisSeconds: 4,
+  },
   funeralCart: { arriveRadius: 70 },
+  /** Canalização à distância contra fogueira/altar (ondas avançadas): visível e interrompível. */
+  siege: { windup: 48, recovery: 18, cooldown: 7, range: 190 },
 } as const;
 
 /** Falas do Pai de Família Amaldiçoado: bronca doméstica com um pé no além. */

@@ -162,6 +162,50 @@ export function drawTelegraph(g: Phaser.GameObjects.Graphics, e: RenderEnemy, r:
       }
       return true;
     }
+    case 'march': {
+      // Marcha Sombria: runas no chão crescem durante a canalização
+      const M = ATK.shadowAcolyte.march;
+      const prog = Math.min(1, t / M.windup);
+      g.lineStyle(1, 0x7dffb0, 0.25 + prog * 0.5).strokeCircle(e.x, e.y, M.radius);
+      g.fillStyle(0x2a1a3a, 0.08 + prog * 0.12).fillCircle(e.x, e.y, M.radius * prog);
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + performance.now() / 1400;
+        const rx = Math.round(e.x + Math.cos(a) * 16);
+        const ry = Math.round(e.y + Math.sin(a) * 10);
+        g.fillStyle(0x7dffb0, 0.5 + prog * 0.5).fillRect(rx - 1, ry - 1, 3, 1).fillRect(rx, ry - 2, 1, 3);
+      }
+      return true;
+    }
+    case 'mistLeap': {
+      const L = ATK.mistStalker.leap;
+      if (e.state !== 'windup') return false;
+      dashedLine(g, e.x, e.y, e.tx, e.ty, 0xd8f6ff, 0.55, Math.floor(performance.now() / 80));
+      circle(g, e.tx, e.ty, L.landRadius, t / L.windup, 0x8fd3f0);
+      return true;
+    }
+    case 'siege': {
+      // canalização contra o objetivo: feixe tracejado até a fogueira/altar + anel que fecha
+      const prog = Math.min(1, t / ATK.siege.windup);
+      dashedLine(g, e.x, e.y - 12, e.tx, e.ty - 6, 0xe07cff, 0.35 + prog * 0.5, Math.floor(performance.now() / 80));
+      g.lineStyle(2, pulse ? 0xffffff : 0xe07cff, 0.9);
+      g.beginPath();
+      g.arc(e.x, e.y - 12, 9, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2, false);
+      g.strokePath();
+      return true;
+    }
+    case 'wound': {
+      // Ferida Profana: runa girando no Acólito (a linha até o alvo é desenhada pela cena)
+      const prog = Math.min(1, t / ATK.shadowAcolyte.wound.windup);
+      g.lineStyle(1, 0x7dffb0, 0.5 + prog * 0.5).strokeCircle(e.x, e.y - 12, 8 + (1 - prog) * 6);
+      for (let i = 0; i < 4; i++) {
+        const a = (i / 4) * Math.PI * 2 + performance.now() / 300;
+        g.fillStyle(0x9a4acb, 1).fillRect(Math.round(e.x + Math.cos(a) * 11) - 1, Math.round(e.y - 12 + Math.sin(a) * 7) - 1, 3, 3);
+      }
+      return true;
+    }
+    case 'bash':
+      sector(g, e.x, e.y, ATK.ossuaryBearer.bash.range + r * 0.5, e.facing, ATK.ossuaryBearer.bash.arc, t / ATK.ossuaryBearer.bash.windup, RED_HOT, true);
+      return true;
     case 'leap':
     case 'eruption':
       return false;
@@ -287,6 +331,17 @@ export function drawZone(g: Phaser.GameObjects.Graphics, z: ZoneTuple, now: numb
       circle(g, x, y, r, prog, 0xd9512c);
       break;
     }
+    case 'assaultWarn':
+    case 'ambushWarn': {
+      // portão/ponto de ataque destacado: seta pulsante apontando para o chão + anel
+      const col = kind === 'assaultWarn' ? AMBER : RED_HOT;
+      const k = (now / 350) % 1;
+      g.fillStyle(col, 0.18).fillEllipse(x, y, r * 2.2, r * 1.1);
+      g.lineStyle(2, col, 1 - k).strokeEllipse(x, y, r * 2.2 * (0.5 + k * 0.5), r * 1.1 * (0.5 + k * 0.5));
+      const by = Math.round(y - r - 16 + (pulse ? 0 : 2));
+      g.fillStyle(col, 1).fillRect(x - 1, by, 3, 7).fillTriangle(x - 4, by + 7, x + 4, by + 7, x, by + 11);
+      break;
+    }
     case 'spawnWarn': {
       const boss = extra === 1;
       const k = (now / 400) % 1;
@@ -298,4 +353,35 @@ export function drawZone(g: Phaser.GameObjects.Graphics, z: ZoneTuple, now: numb
     default:
       break;
   }
+}
+
+/** Feixes da Marcha Sombria: ligam o Acólito aos aliados que serão acelerados. */
+export function drawMarchBeams(g: Phaser.GameObjects.Graphics, caster: RenderEnemy, all: readonly RenderEnemy[]): void {
+  const M = ATK.shadowAcolyte.march;
+  const prog = Math.min(1, caster.stateT / M.windup);
+  for (const o of all) {
+    if (o.id === caster.id) continue;
+    if ((o.x - caster.x) ** 2 + (o.y - caster.y) ** 2 > M.radius * M.radius) continue;
+    g.lineStyle(1, 0x7dffb0, 0.15 + prog * 0.45).lineBetween(Math.round(caster.x), Math.round(caster.y - 12), Math.round(o.x), Math.round(o.y - 8));
+  }
+}
+
+/** Ferida Profana: linha rúnica do Acólito até o jogador marcado e símbolo sobre ele. */
+export function drawWoundLink(g: Phaser.GameObjects.Graphics, caster: RenderEnemy, tx: number, ty: number, locked: boolean): void {
+  const W = ATK.shadowAcolyte.wound;
+  const prog = Math.min(1, caster.stateT / W.windup);
+  const now = performance.now();
+  dashedLine(g, caster.x, caster.y - 12, tx, ty - 10, locked ? 0xffffff : 0x9a4acb, 0.3 + prog * 0.5, Math.floor(now / 70));
+  // símbolo sobre o alvo: losango que fecha conforme a canalização
+  const cy = Math.round(ty - 46);
+  const rr = Math.round(10 - prog * 5);
+  g.lineStyle(2, locked ? 0xffffff : 0x7dffb0, 0.95);
+  g.beginPath();
+  g.moveTo(tx, cy - rr);
+  g.lineTo(tx + rr, cy);
+  g.lineTo(tx, cy + rr);
+  g.lineTo(tx - rr, cy);
+  g.closePath();
+  g.strokePath();
+  g.fillStyle(0x9a4acb, 0.6 + prog * 0.4).fillRect(tx - 1, cy - 1, 3, 3);
 }

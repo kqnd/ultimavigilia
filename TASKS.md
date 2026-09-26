@@ -85,3 +85,13 @@ Item 15
 - [~] Executar o `.exe` em Windows real (o Chromium do Electron não roda sob Wine) — roteiro em `docs/TESTES.md §4`
 - [~] Dois computadores via Radmin VPN — roteiro em `docs/TESTES.md §5`
 - [~] 60 FPS com GPU real — medido apenas com renderização por software (llvmpipe); ver `docs/TESTES.md §3`
+
+## Etapa 9 — v1.3 (dificuldade, Vampiro, missões, Lapanha, raridades)
+- [x] T9.1 Cura central (`healing.ts`): dano válido, retorno decrescente, cartas, Ferida, teto por uso e por segundo — T `v13 cura central`
+- [x] T9.2 Ferida Profana do Acólito Sombrio (telegraph, evitável, -70%, bloqueio inicial 0,75 s) — T `v13 Ferida`, E2E `v13`
+- [x] T9.3 Atordoamento raro com resistência de 2,5 s — T `v13 atordoamento`
+- [x] T9.4 Especiais mais frequentes (presença mínima, pares, trio raro), log do diretor — `tools/specials.ts`
+- [x] T9.5 Escolta com emboscadas e atacantes; fogueira e altar com pressão por categoria, rampa, teto, assaltos e estados — E2E `v13`
+- [x] T9.6 Classe Lapanha (servidor, protocolo, sprites, HUD, F1, áudio, falas, cartas) — T `v13 Lapanha`, rede `v1.3 em rede`, E2E `showcase lapanha`, `v13`
+- [x] T9.7 Raridades 60/27/11/2, lendária única, tetos globais, cartas com moldura/tipo/comparação — T `v13 raridades`
+- [x] T9.8 Telemetria (`telemetry.ts`, comando `tele`) e simulações (`tools/sim.ts`)

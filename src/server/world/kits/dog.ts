@@ -39,7 +39,7 @@ export const dogKit: Kit = {
     if (a.name === 'basic1' && firstActive(a)) {
       const s = DOG.shout;
       const resonant = p.resonance >= resonanceMax(p);
-      const throat = 1 + (p.mods['d_throat'] ?? 0) * 0.2;
+      const throat = 1 + w.mod(p, 'd_throat');
       const range = s.range * throat * (resonant ? DOG.resonance.rangeMul : 1);
       const dmgMul = resonant ? DOG.resonance.damageMul : 1;
       const kb = s.knockback * (resonant ? DOG.resonance.knockbackMul : 1);
@@ -63,7 +63,8 @@ export const dogKit: Kit = {
     } else if (a.name === 'e' && firstActive(a)) {
       const s = DOG.polarity;
       const mag = p.mods['d_magnet'] ?? 0;
-      w.addZone({ kind: 'polarity', x: a.tx, y: a.ty, r: s.radius + mag * 20, ttl: sec(s.duration), owner: p.id, a: s.pullCommon * (1 + mag * 0.4), b: s.pullElite * (1 + mag * 0.4) });
+      const pull = 1 + w.mod(p, 'd_magnet');
+      w.addZone({ kind: 'polarity', x: a.tx, y: a.ty, r: s.radius + mag * DOG.magnetRadiusPerStack, ttl: sec(s.duration), owner: p.id, a: s.pullCommon * pull, b: s.pullElite * pull });
       w.addUlt(p, 4);
       w.emit({ k: 'sfx', n: 'polarity', x: a.tx, y: a.ty });
     } else if (a.name === 'r') {
