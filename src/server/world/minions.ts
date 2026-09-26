@@ -86,9 +86,11 @@ export function minionsOf(w: World, owner: number, kind?: MinionKind): Minion[] 
 }
 
 /** Dano recebido por um servo/sobrevivente. */
-export function hitMinion(w: World, m: Minion, dmg: number): void {
+export function hitMinion(w: World, m: Minion, dmg: number, attacker?: Enemy): void {
   if (m.state === 'dead' || m.state === 'rise') return;
-  const d = Math.max(1, Math.round(dmg * (m.kind === 'survivor' ? w.guardianReductionAt(m.x, m.y) : 1)));
+  // Golpes telegráficos de chefes e minibosses limpam lacaios com rapidez.
+  const eliteMul = attacker?.def.tier === 'boss' ? 1.8 : attacker?.def.miniboss ? 1.5 : 1;
+  const d = Math.max(1, Math.round(dmg * eliteMul * (m.kind === 'survivor' ? w.guardianReductionAt(m.x, m.y) : 1)));
   const before = m.hp;
   m.hp -= d;
   if (m.kind === 'survivor') w.recordGuardianDamage(m.x, m.y, Math.min(before, d));
@@ -127,7 +129,7 @@ export function killMinion(w: World, m: Minion, reason: 'killed' | 'expired' | '
 /** Dano de servo em inimigo, com redução e teto contra chefes (a suprema não trivializa a luta). */
 export function minionDamage(w: World, owner: Player | null, m: Minion, e: Enemy, dmg: number, o: { poise: number; kb: number; kind: 'melee' | 'aoe' }): void {
   let amount = dmg;
-  if (e.def.tier === 'boss') {
+  if (e.def.tier === 'boss' || e.def.miniboss) {
     amount *= NECRO.army.bossDamageMul;
     if (m.group) {
       const used = w.armyBossDamage.get(m.group) ?? 0;
@@ -369,7 +371,7 @@ export function clearMinions(w: World, owner?: number): void {
 
 /** Servo mais próximo que um inimigo comum/elite pode escolher atacar (aggro). */
 export function minionAggro(w: World, e: Enemy, playerDist: number): Minion | null {
-  if (e.def.tier === 'boss' || e.def.objective || w.minions.size === 0) return null;
+  if (e.def.tier === 'boss' || e.def.miniboss || e.def.objective || w.minions.size === 0) return null;
   // Três em cinco inimigos tentam interceptar a escolta; os demais pressionam os jogadores.
   if (w.objectives.event?.kind === 'escort' && w.objectives.event.state === 0 && e.id % 5 < 3) {
     const survivor = [...w.minions.values()].find((m) => m.kind === 'survivor' && m.state !== 'dead' && m.state !== 'rise');

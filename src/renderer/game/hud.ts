@@ -301,10 +301,14 @@ export class HudScene extends Phaser.Scene {
       const sx = survivor.x - cam.scrollX;
       const sy = survivor.y - cam.scrollY;
       edge(survivor.x, survivor.y - 12, 0x7fc47a, 'survivor', 'SOBREV.');
-      if (sx >= 12 && sx <= 628 && sy >= 48 && sy <= 345) {
-        const below = sy < 185 && sx < 390;
-        this.icon('survivorPin', 'ping', sx - 6, sy + (below ? 23 : -55)).setTint(0x7fc47a);
-        this.text('survivorLabel', sx, sy + (below ? 38 : -65), 'SOBREVIVENTE', 0x7fc47a, [0.5, 0]);
+      if (sx >= 12 && sx <= 628 && sy >= 8 && sy <= 352) {
+        // A posição depende apenas do sobrevivente na tela, nunca do lado onde
+        // o jogador está. Só vira para baixo quando falta espaço no topo.
+        const below = sy < 62;
+        const pinY = below ? sy + 14 : sy - 43;
+        const labelY = below ? sy + 28 : sy - 59;
+        this.icon('survivorPin', 'ping', sx - 6, pinY).setTint(0x7fc47a);
+        this.text('survivorLabel', sx, labelY, 'SOBREVIVENTE', 0x7fc47a, [0.5, 0]);
       }
     }
     gs.pings.forEach((p, i) => edge(p.x, p.y, 0xf6c257, `ping${i}`));

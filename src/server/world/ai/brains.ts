@@ -19,7 +19,37 @@ export interface Brain {
 const STILL: [number, number] = [0, 0];
 
 function chase(w: World, e: Enemy, t: Target, speed: number): [number, number] {
-  const [dx, dy] = w.chaseDir(e, t);
+  let [dx, dy] = w.chaseDir(e, t);
+  const d = dist(e.x, e.y, t.x, t.y);
+  // Aproximação em ângulos diferentes evita filas e faz a horda fechar espaço.
+  if (d > 42 && d < 150 && !t.isMinion) {
+    const side = e.id % 2 === 0 ? 1 : -1;
+    const tangentX = (-(t.y - e.y) / d) * side;
+    const tangentY = ((t.x - e.x) / d) * side;
+    const weight = Math.max(0, 1 - Math.abs(d - 92) / 58) * 0.42;
+    dx += tangentX * weight;
+    dy += tangentY * weight;
+  }
+  // Separação suave quando aliados se amontoam, mantendo a direção do alvo.
+  let sx = 0;
+  let sy = 0;
+  for (const other of w.enemiesInCircle(e.x, e.y, e.r * 2.8)) {
+    if (other.id === e.id || other.state === 'air' || other.def.stationary) continue;
+    const ox = e.x - other.x;
+    const oy = e.y - other.y;
+    const od = Math.hypot(ox, oy) || 0.01;
+    const reach = e.r + other.r + 10;
+    if (od < reach) {
+      const push = (reach - od) / reach;
+      sx += (ox / od) * push;
+      sy += (oy / od) * push;
+    }
+  }
+  dx += sx * 0.75;
+  dy += sy * 0.75;
+  const len = Math.hypot(dx, dy) || 1;
+  dx /= len;
+  dy /= len;
   if (dx !== 0 || dy !== 0) e.facing = Math.atan2(dy, dx);
   return [dx * speed, dy * speed];
 }

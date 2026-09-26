@@ -1531,7 +1531,7 @@ export class World {
               if (pr.dead || m.state === 'dead' || m.state === 'rise' || pr.hit.has(-m.id)) continue;
               if (dist2(m.x, m.y, pr.x, pr.y) > (m.r + pr.r) ** 2) continue;
               pr.hit.add(-m.id);
-              hitMinion(this, m, pr.dmg);
+              hitMinion(this, m, pr.dmg, pr.owner < 0 ? this.enemies.get(-pr.owner) : undefined);
               if (pr.kind !== 'slipper') pr.dead = true;
             }
           }
@@ -1638,7 +1638,10 @@ export class World {
         this.hitPlayer(p, { dmg: z.b * mul, heavy: z.kind === 'eruption' || z.kind === 'nova', fromX: z.x, fromY: z.y, enemy: null, proj: null, blockable: false });
       }
     }
-    for (const m of this.minions.values()) if (m.state !== 'dead' && dist2(m.x, m.y, z.x, z.y) <= (z.r + m.r) ** 2) hitMinion(this, m, z.b);
+    for (const m of this.minions.values()) if (m.state !== 'dead' && dist2(m.x, m.y, z.x, z.y) <= (z.r + m.r) ** 2) {
+      const attacker = z.owner < 0 ? this.enemies.get(-z.owner) : undefined;
+      hitMinion(this, m, z.b, attacker);
+    }
     const fx = z.kind === 'rune' ? 'runeBlast' : z.kind === 'moonPulse' ? 'moonBlast' : z.kind === 'nova' || z.kind === 'iceSpike' ? 'frostBlast' : 'eruptionBlast';
     this.emit({ k: 'fx', n: fx, x: z.x, y: z.y, a: 0, o: 0, r: z.r });
   }
@@ -1760,14 +1763,20 @@ export class World {
       let best: Player | null = null;
       let bestD = Infinity;
       let bestRaw = Infinity;
+      const currentId = cur?.id ?? 0;
       for (const p of this.players.values()) {
         if (p.status !== 0) continue;
         const f = this.fields.get(p.id);
         const fd = f ? f.at(e.x, e.y) : 0xffff;
-        const d = fd === 0xffff ? dist(e.x, e.y, p.x, p.y) / 3.2 + 500 : fd;
-        const adj = cur && p.id === cur.id ? d * 0.8 : d;
-        if (adj < bestD) {
-          bestD = adj;
+        const pathCost = fd === 0xffff ? dist(e.x, e.y, p.x, p.y) / 3.2 + 500 : fd;
+        // Pressiona quem está vulnerável ou ocupado revivendo, com peso limitado para
+        // não trocar de alvo a cada tick nem produzir perseguições inevitáveis.
+        const healthPressure = Math.max(0, 1 - p.hp / Math.max(1, p.maxHp)) * 45;
+        const revivePressure = p.revivingId ? 55 : 0;
+        const sticky = p.id === currentId ? -18 : 0;
+        const score = pathCost - healthPressure - revivePressure + sticky;
+        if (score < bestD) {
+          bestD = score;
           best = p;
           bestRaw = dist(e.x, e.y, p.x, p.y);
         }
@@ -1970,7 +1979,7 @@ export class World {
       if (m.state === 'dead' || m.state === 'rise' || e.hitBy.has(-m.id)) continue;
       if (!inArc(m.x, m.y, m.r)) continue;
       e.hitBy.add(-m.id);
-      hitMinion(this, m, dmg * this.edm(e));
+      hitMinion(this, m, dmg * this.edm(e), e);
     }
   }
 
@@ -1985,7 +1994,7 @@ export class World {
       if (m.state === 'dead' || m.state === 'rise' || e.hitBy.has(-m.id)) continue;
       if (dist2(x, y, m.x, m.y) > (r + m.r) ** 2) continue;
       e.hitBy.add(-m.id);
-      hitMinion(this, m, dmg * this.edm(e));
+      hitMinion(this, m, dmg * this.edm(e), e);
     }
   }
 

@@ -17,7 +17,6 @@ import { audio } from '../audio.js';
 import { FlowField } from '../../server/world/nav.js';
 import type { Session, Snapshot } from '../session.js';
 import { Effects } from './effects.js';
-import { survivorTorchAnchor } from './entity-anchors.js';
 import { reflectionAlpha } from './graphics-quality.js';
 import type { InputCapture } from './input.js';
 import { Predictor } from './predict.js';
@@ -108,6 +107,9 @@ export class GameScene extends Phaser.Scene {
   private acc = 0;
   private camX = 0;
   private camY = 0;
+  private cameraFollowId = -1;
+  private cameraFollowX = 0;
+  private cameraFollowY = 0;
   private menuT = 0;
   private hitstopUntil = 0;
   rendered: RenderedPlayer[] = [];
@@ -217,6 +219,7 @@ export class GameScene extends Phaser.Scene {
     this.mode = 'match';
     this.predictor.active = false;
     this.acc = 0;
+    this.cameraFollowId = -1;
   }
 
   toMenu(): void {
@@ -839,7 +842,7 @@ export class GameScene extends Phaser.Scene {
     const cy = this.map.campfire.y + Math.sin(this.menuT * 0.07) * 180;
     this.camX += (cx - 320 - this.camX) * 0.02;
     this.camY += (cy - 180 - this.camY) * 0.02;
-    this.cameras.main.setScroll(this.camX, this.camY);
+    this.setCameraScroll();
     this.zoneG.clear();
     this.teleG.clear();
   }
@@ -1221,7 +1224,7 @@ export class GameScene extends Phaser.Scene {
       const k = 1 - Math.exp(-dt / 180);
       this.camX += (tx - this.camX) * k;
       this.camY += (ty - this.camY) * k;
-      cam.setScroll(this.camX, this.camY);
+      this.setCameraScroll();
       return;
     }
     if (cam.zoom !== 1) cam.setZoom(1);
@@ -1239,6 +1242,18 @@ export class GameScene extends Phaser.Scene {
       }
     } else this.spectateId = 0;
     if (!target) return;
+    // Um spawn/teleporte de objetivo pode deixar o jogador longe do alvo antigo.
+    // Nesse caso, a câmera deve acompanhá-lo imediatamente (a máscara de luz é
+    // atualizada logo depois, usando o mesmo scroll), sem atravessar o mapa.
+    const jumped = target.id !== this.cameraFollowId
+      || Math.hypot(target.x - this.cameraFollowX, target.y - this.cameraFollowY) > 180;
+    if (jumped) {
+      this.camX = target.x - 320;
+      this.camY = target.y - 190;
+      this.cameraFollowId = target.id;
+    }
+    this.cameraFollowX = target.x;
+    this.cameraFollowY = target.y;
     // leve antecipação na direção da mira
     const lookX = me && me.data.s === 0 ? (this.input2.mouseX - 320) * 0.12 : 0;
     const lookY = me && me.data.s === 0 ? (this.input2.mouseY - 180) * 0.12 : 0;
@@ -1251,6 +1266,15 @@ export class GameScene extends Phaser.Scene {
       this.camX = tx;
       this.camY = ty;
     }
+    this.setCameraScroll();
+  }
+
+  private setCameraScroll(): void {
+    const cam = this.cameras.main;
+    // O Phaser só limita o scroll às bordas no preRender, depois de updateLighting.
+    // Limitar aqui mantém a máscara de luz na mesma posição usada para desenhar o mundo.
+    this.camX = cam.clampX(this.camX);
+    this.camY = cam.clampY(this.camY);
     cam.setScroll(this.camX, this.camY);
   }
 
@@ -1405,9 +1429,8 @@ export class GameScene extends Phaser.Scene {
     }
     for (const m of this.minions.values()) {
       if (m.kind === 'survivor') {
-        const flame = survivorTorchAnchor(m.x, m.y);
-        light(flame.x, flame.y, 72, 0.9);
-        light(flame.x, flame.y, 24, 1);
+        light(m.x, m.y - 10, 112, 1);
+        light(m.x, m.y - 12, 24, 1);
       } else light(m.x, m.y - 10, 24, 0.6);
     }
     if (this.bard) light(this.bard.x, this.bard.y - 13, 24, 0.35);

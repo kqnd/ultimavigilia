@@ -1,11 +1,11 @@
 /** Representação visual de jogadores, inimigos e servos (sem lógica de jogo). */
 import Phaser from 'phaser';
-import { survivorTorchAnchor } from './entity-anchors.js';
 import { CLASS_WEAPON } from '../../art/characters.js';
 import { AFFIX_IDS, AFFIXES, type AffixId } from '../../shared/config/affixes.js';
 import type { Climate } from '../../shared/config/chapters.js';
 import { ATK, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
 import { BERSERKER, CLASSES, type ClassId, DOG, HUNTER, MAGE, NECRO, TANK, VAMPIRE } from '../../shared/config/classes.js';
+import { EVENT_RULES } from '../../shared/config/objectives.js';
 import { ACTIONS, ENEMY_ATTACKS, ENEMY_FLAGS, ENEMY_STATES, MINION_KINDS, MINION_STATES, type MinionTuple, PLAYER_FLAGS, type SnapPlayer } from '../../shared/protocol.js';
 import { FONT, frameSheet, placeText, tf } from './textures.js';
 
@@ -583,6 +583,7 @@ export class MinionView {
   readonly shadow: Phaser.GameObjects.Image;
   readonly body: Phaser.GameObjects.Image;
   readonly bar: Phaser.GameObjects.Graphics;
+  readonly range: Phaser.GameObjects.Graphics | null;
   private walkT = Math.random() * 4;
   readonly kind: string;
   x = 0;
@@ -593,12 +594,14 @@ export class MinionView {
     this.shadow = scene.add.image(0, 0, ...tf('shadow_s')).setOrigin(0.5, 0.5);
     this.body = scene.add.image(0, 0, ...tf(`${this.kind}_walk_down_0`)).setOrigin(0.5, 30 / 32);
     this.bar = scene.add.graphics().setDepth(93000);
+    this.range = this.kind === 'survivor' ? scene.add.graphics() : null;
   }
 
   destroy(): void {
     this.shadow.destroy();
     this.body.destroy();
     this.bar.destroy();
+    this.range?.destroy();
   }
 
   update(m: MinionTuple, x: number, y: number, dt: number, moving: boolean): void {
@@ -616,6 +619,20 @@ export class MinionView {
     setFrame(this.body, frame, `${this.kind}_walk_down_0`);
     this.body.setFlipX(f.flip).setPosition(rx, ry).setDepth(ry);
     this.shadow.setPosition(rx, ry).setDepth(ry - 40);
+    if (this.range) {
+      const radius = EVENT_RULES.escort.followRadius;
+      const color = m[9] > 0 ? 0x7fc47a : 0xf6c257;
+      const ring = this.range;
+      ring.clear().setDepth(ry - 1);
+      ring.lineStyle(1, color, 0.8).beginPath();
+      for (let i = 0; i < 48; i++) {
+        const start = (i * Math.PI * 2) / 48;
+        const end = ((i + 0.58) * Math.PI * 2) / 48;
+        ring.moveTo(rx + Math.cos(start) * radius, ry + Math.sin(start) * radius);
+        ring.lineTo(rx + Math.cos(end) * radius, ry + Math.sin(end) * radius);
+      }
+      ring.strokePath();
+    }
     // servos quase no fim piscam; exército levemente translúcido
     const life = m[9];
     const now = performance.now();
@@ -631,16 +648,6 @@ export class MinionView {
       // Barra violeta: duração restante; evita que a expiração pareça uma perda aleatória.
       g.fillStyle(0x0b0a12, 1).fillRect(rx - w / 2 - 1, top + 3, w + 2, 3);
       g.fillStyle(life < 20 ? 0xe09a73 : 0x9474d3, 1).fillRect(rx - w / 2, top + 4, Math.max(1, Math.round(w * life / 100)), 1);
-    }
-      if (this.kind === 'survivor') {
-      // anel de "fique perto": verde quando escoltado
-        g.lineStyle(1, life > 0 ? 0x7fc47a : 0xf6c257, 0.5 + Math.sin(now / 200) * 0.2).strokeCircle(rx, ry, 90);
-        // Tocha erguida: cabo, brasa e chama pixelada em dois tempos.
-        const flame = survivorTorchAnchor(rx, ry, Math.floor(now / 160) % 2);
-        g.fillStyle(0x5d392a, 1).fillRect(rx + 9, ry - 29, 2, 13);
-        g.fillStyle(0xf6c257, 1).fillRect(flame.x - 2, flame.y - 1, 4, 5);
-        g.fillStyle(0xfff0aa, 1).fillRect(flame.x - 1, flame.y - 4, 2, 4);
-        g.fillStyle(0xe78239, 0.35).fillCircle(flame.x, flame.y, 8);
     }
   }
 }
