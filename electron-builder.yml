@@ -1,0 +1,36 @@
+appId: com.alexalmeida.ultimavigilia
+productName: Última Vigília
+executableName: UltimaVigilia
+copyright: Copyright © 2026 Álex Almeida
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - "!dist/**/*.map"
+  - package.json
+asar: true
+# o servidor roda como processo separado (utilityProcess): fica fora do asar
+asarUnpack:
+  - dist/server/**
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  artifactName: UltimaVigilia-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Última Vigília
+  artifactName: UltimaVigilia-${version}-Instalador.${ext}
+portable:
+  artifactName: UltimaVigilia-${version}-Portatil.${ext}
+linux:
+  target: [dir]
+publish: null

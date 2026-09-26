@@ -1,0 +1,93 @@
+/**
+ * Paleta controlada: azul profundo, cinza frio, roxo escuro, vermelho sangue, âmbar de fogo.
+ * Cenário usa tons escuros e dessaturados; personagens e perigos usam tons mais claros.
+ */
+export const P = {
+  ink: 0x0b0a12,
+  outline: 0x0e0c16,
+  // azuis profundos
+  blue0: 0x0c1122,
+  blue1: 0x131b33,
+  blue2: 0x1c2848,
+  blue3: 0x28395f,
+  blue4: 0x37507e,
+  blue5: 0x4d6fa3,
+  blue6: 0x7da0cf,
+  // cinzas frios
+  gray0: 0x1d1f29,
+  gray1: 0x2a2d3a,
+  gray2: 0x3d4152,
+  gray3: 0x565b70,
+  gray4: 0x7a8096,
+  gray5: 0xa3a9bb,
+  gray6: 0xcfd4df,
+  white: 0xeef1f7,
+  // roxos escuros
+  pur0: 0x170f21,
+  pur1: 0x24172f,
+  pur2: 0x352244,
+  pur3: 0x4b2f60,
+  pur4: 0x684285,
+  pur5: 0x8d62b3,
+  pur6: 0xb894e0,
+  // vermelho sangue
+  red0: 0x260911,
+  red1: 0x440d1a,
+  red2: 0x6e1424,
+  red3: 0x9c1e2e,
+  red4: 0xc83838,
+  red5: 0xec6a5e,
+  // âmbar de fogo
+  amb0: 0x3e1e08,
+  amb1: 0x6e360d,
+  amb2: 0xa8591a,
+  amb3: 0xe0902a,
+  amb4: 0xf6c257,
+  amb5: 0xfff0ae,
+  // verdes noturnos (vegetação)
+  grn0: 0x0f1a17,
+  grn1: 0x16241f,
+  grn2: 0x1f3129,
+  grn3: 0x2c4436,
+  grn4: 0x3e5c47,
+  grn5: 0x5a7c5c,
+  // marrons
+  brn0: 0x1f1512,
+  brn1: 0x2e1f1a,
+  brn2: 0x46302a,
+  brn3: 0x654536,
+  brn4: 0x8a6049,
+  brn5: 0xb08262,
+  // peles
+  skin0: 0x6a4034,
+  skin1: 0x9c6750,
+  skin2: 0xc98f6c,
+  skin3: 0xebbd95,
+  pale0: 0x6f6a8a,
+  pale1: 0x9d98b8,
+  pale2: 0xcbc6dd,
+  pale3: 0xe8e5f2,
+  // mágicos
+  arc0: 0x3a2a8a,
+  arc1: 0x5c4fd6,
+  arc2: 0x8f86ff,
+  arc3: 0xc7c2ff,
+  ice0: 0x2b5d80,
+  ice1: 0x4f9cc8,
+  ice2: 0x8fd3f0,
+  ice3: 0xd8f6ff,
+  mag0: 0x145a6a,
+  mag1: 0x2aa3b8,
+  mag2: 0x6fe3ef,
+  mag3: 0xd2fbff,
+  sil0: 0x8a93a8,
+  sil1: 0xc0c8d8,
+  sil2: 0xf2f6ff,
+  abyss0: 0x14061c,
+  abyss1: 0x2c0b3c,
+  abyss2: 0x5a1470,
+  abyss3: 0x9a2cc0,
+  abyss4: 0xe07cff,
+} as const;
+
+export const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;

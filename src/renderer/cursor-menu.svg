@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="29" height="29" viewBox="0 0 29 29" shape-rendering="crispEdges">
+  <!-- Seta em degraus, como os sprites e as molduras da interface. -->
+  <path fill="#080a11" d="M0 0h5v3h3v3h3v3h3v3h3v3h3v3h3v3h3v3h-8v5h-5v-5h-3v-5H7v-3H4v-3H2V9H0z"/>
+  <path fill="#f6c257" d="M2 2h3v3h3v3h3v3h3v3h3v3h3v3h3v2h-7v5h-2v-5h-3v-5H8v-3H5v-3H2z"/>
+  <path fill="#fff4cf" d="M3 3h2v3h3v3h3v3h3v3h-3v-2H8v-3H5V7H3z"/>
+</svg>

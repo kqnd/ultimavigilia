@@ -1,0 +1,184 @@
+/** Efeitos: projéteis, partículas, sombras, impactos, luzes e marcadores. */
+import { bayer, type Color, PixelCanvas, SheetBuilder } from './pixel.js';
+import { P } from './palette.js';
+
+function shadow(w: number, h: number): PixelCanvas {
+  const c = new PixelCanvas(w, h);
+  c.ellipse(w / 2, h / 2, w / 2, h / 2, P.ink, 120);
+  c.ellipse(w / 2, h / 2, w / 2 - 2, h / 2 - 1, P.ink, 60);
+  return c;
+}
+
+function orbSprite(size: number, ramp: [Color, Color, Color, Color], frame: number): PixelCanvas {
+  const c = new PixelCanvas(size, size);
+  const r = size / 2 - 1;
+  c.ellipse(size / 2, size / 2, r, r, ramp[0]);
+  c.ellipse(size / 2, size / 2, r - 1, r - 1, ramp[1]);
+  c.ellipse(size / 2 - 0.5, size / 2 - 0.5, r - 2.2, r - 2.2, ramp[2]);
+  c.set(Math.floor(size / 2) - 1 + frame, Math.floor(size / 2) - 1, ramp[3]);
+  c.set(Math.floor(size / 2) - 1, Math.floor(size / 2) - 2 + frame, ramp[3]);
+  return c;
+}
+
+/** Círculo com anéis de alfa escalonados (luz pixelada para a máscara de escuridão). */
+export function lightDisc(r: number): PixelCanvas {
+  const c = new PixelCanvas(r * 2, r * 2);
+  for (let y = 0; y < r * 2; y++)
+    for (let x = 0; x < r * 2; x++) {
+      const d = Math.hypot(x + 0.5 - r, y + 0.5 - r) / r;
+      if (d > 1) continue;
+      // faixas + dithering nas bordas das faixas
+      const v = 1 - d;
+      const band = Math.min(1, Math.floor((v + bayer(x >> 1, y >> 1) * 0.12) * 5) / 4);
+      c.set(x, y, 0xffffff, Math.round(band * 255));
+    }
+  return c;
+}
+
+export function buildFxSheet(): SheetBuilder {
+  const sb = new SheetBuilder();
+  // projéteis (apontando para a direita)
+  const bolt = new PixelCanvas(11, 3);
+  bolt.hline(0, 8, 1, P.brn4);
+  bolt.hline(8, 10, 1, P.sil2);
+  bolt.set(9, 0, P.sil1);
+  bolt.set(9, 2, P.sil1);
+  bolt.set(0, 0, P.gray5);
+  bolt.set(0, 2, P.gray5);
+  sb.add('proj_bolt', bolt);
+  const pb = new PixelCanvas(16, 5);
+  pb.hline(0, 11, 2, P.sil1);
+  pb.hline(11, 15, 2, P.white);
+  pb.hline(12, 14, 1, P.sil2);
+  pb.hline(12, 14, 3, P.sil2);
+  pb.set(0, 1, P.sil0);
+  pb.set(0, 3, P.sil0);
+  sb.add('proj_pierceBolt', pb);
+  for (let f = 0; f < 2; f++) {
+    sb.add(`proj_missile_${f}`, orbSprite(9, [P.arc0, P.arc1, P.arc2, P.white], f));
+    sb.add(`proj_empMissile_${f}`, orbSprite(14, [P.arc1, P.arc2, P.arc3, P.white], f));
+    sb.add(`proj_orb_${f}`, orbSprite(11, [P.abyss1, P.abyss2, P.abyss3, P.abyss4], f));
+    sb.add(`proj_abyssOrb_${f}`, orbSprite(11, [P.abyss0, P.abyss2, P.abyss4, P.white], f));
+  }
+  const sl = new PixelCanvas(10, 6);
+  sl.rect(1, 1, 8, 4, P.amb3);
+  sl.rect(3, 1, 1, 4, P.blue4);
+  sl.set(4, 2, P.blue4);
+  sl.set(4, 3, P.blue4);
+  sl.hline(1, 8, 4, P.amb1);
+  sl.outline(P.outline);
+  sb.add('proj_slipper', sl);
+  // sombras
+  sb.add('shadow_s', shadow(14, 5));
+  sb.add('shadow_m', shadow(22, 7));
+  sb.add('shadow_l', shadow(36, 11));
+  sb.add('shadow_xl', shadow(64, 18));
+  // partículas
+  const px = (name: string, w: number, h: number, col: Color): void => {
+    const c = new PixelCanvas(w, h);
+    c.rect(0, 0, w, h, col);
+    sb.add(name, c);
+  };
+  px('p_white', 2, 2, P.white);
+  px('p_px', 1, 1, P.white);
+  px('p_ember', 2, 2, P.amb4);
+  px('p_blood', 2, 2, P.red3);
+  px('p_bone', 3, 2, P.gray5);
+  px('p_arc', 2, 2, P.arc3);
+  px('p_ice', 2, 2, P.ice3);
+  px('p_mag', 2, 2, P.mag2);
+  px('p_abyss', 2, 2, P.abyss4);
+  px('p_dust', 2, 2, P.gray3);
+  px('p_leaf', 3, 2, P.grn4);
+  px('p_silver', 2, 2, P.sil2);
+  px('p_snow', 2, 2, P.gray6);
+  px('p_snowbig', 3, 3, P.ice3);
+  px('p_ash', 2, 2, 0x8a7a6a);
+  px('p_cinder', 2, 1, P.amb3);
+  px('p_soul', 2, 2, 0xa8d05a);
+  px('p_frost', 2, 2, P.ice2);
+  px('p_heal', 2, 2, P.red5);
+  px('p_wood', 3, 2, P.brn4);
+  // projétil de osso (Rajada Óssea)
+  const bone = new PixelCanvas(12, 7);
+  bone.hline(2, 9, 3, P.gray6);
+  bone.hline(2, 9, 4, P.gray5);
+  for (const x of [0, 10]) {
+    bone.rect(x, 1, 2, 2, P.gray6);
+    bone.rect(x, 4, 2, 2, P.gray5);
+  }
+  bone.set(11, 3, 0xd8f08a);
+  bone.outline(P.outline);
+  sb.add('proj_bone', bone);
+  // estilhaço de gelo (Noiva do Inverno)
+  for (let f = 0; f < 2; f++) {
+    const sh = new PixelCanvas(12, 8);
+    sh.line(0, 4, 10, 3 + f, P.ice3);
+    sh.line(1, 5, 9, 4 + f, P.ice2);
+    sh.line(2, 3, 8, 3, P.ice1);
+    sh.set(11, 3 + f, P.white);
+    sh.outline(P.outline);
+    sb.add(`proj_iceShard_${f}`, sh);
+  }
+  for (let f = 0; f < 4; f++) {
+    const d = new PixelCanvas(10, 10);
+    const r = 2 + f;
+    for (let y = 0; y < 10; y++)
+      for (let x = 0; x < 10; x++) {
+        const dd = Math.hypot(x + 0.5 - 5, y + 0.5 - 5);
+        if (dd <= r && bayer(x, y) < 0.9 - f * 0.2) d.set(x, y, f < 2 ? P.gray3 : P.gray2);
+      }
+    sb.add(`dust_${f}`, d);
+  }
+  // impacto
+  for (let f = 0; f < 3; f++) {
+    const c = new PixelCanvas(17, 17);
+    const len = 3 + f * 3;
+    const col = f === 2 ? P.gray5 : P.white;
+    for (let a = 0; a < 8; a++) {
+      const ang = (a / 8) * Math.PI * 2 + (f % 2) * 0.39;
+      const l = a % 2 ? len * 0.6 : len;
+      c.line(8, 8, 8 + Math.cos(ang) * l, 8 + Math.sin(ang) * l, col);
+    }
+    if (f === 0) c.ellipse(8.5, 8.5, 3, 3, P.white);
+    sb.add(`hit_${f}`, c);
+  }
+  // armadilha de prata
+  const trap = new PixelCanvas(18, 10);
+  trap.ellipse(9, 5, 8, 4, P.gray2);
+  trap.ellipse(9, 5, 5, 2, P.gray1);
+  for (let x = 2; x < 17; x += 2) {
+    trap.set(x, 1, P.sil2);
+    trap.set(x, 8, P.sil2);
+  }
+  trap.ellipse(9, 5, 1.5, 1.5, P.sil1);
+  trap.outline(P.outline);
+  sb.add('trap', trap);
+  // marcadores
+  const ping = new PixelCanvas(13, 17);
+  ping.ellipse(6.5, 6, 6, 6, P.amb4);
+  ping.ellipse(6.5, 6, 3, 3, P.white);
+  for (let y = 10; y < 17; y++) ping.hline(6 - Math.max(0, 16 - y) / 2, 6 + Math.max(0, 16 - y) / 2, y, P.amb4);
+  ping.outline(P.ink);
+  sb.add('ping', ping);
+  const arrow = new PixelCanvas(9, 9);
+  for (let y = 0; y < 9; y++) {
+    const w = 4 - Math.abs(4 - y);
+    arrow.hline(0, w * 2, y, P.white);
+  }
+  sb.add('arrow', arrow);
+  const mark = new PixelCanvas(7, 7);
+  mark.line(0, 3, 3, 0, P.red4);
+  mark.line(3, 0, 6, 3, P.red4);
+  mark.line(6, 3, 3, 6, P.red4);
+  mark.line(3, 6, 0, 3, P.red4);
+  mark.set(3, 3, P.red5);
+  sb.add('mark', mark);
+  // cabeça do jogador (ícone de aliados)
+  const dot = new PixelCanvas(5, 5);
+  dot.ellipse(2.5, 2.5, 2.5, 2.5, P.white);
+  sb.add('dot', dot);
+  return sb;
+}
+
+export const LIGHT_RADII = [24, 48, 72, 112, 160] as const;

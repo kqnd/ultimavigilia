@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="31" height="31" viewBox="0 0 31 31" shape-rendering="crispEdges">
+  <!-- Contorno escuro e miolo claro para contraste em qualquer mapa. -->
+  <path fill="#080a11" d="M12 0h7v10h-7zM12 21h7v10h-7zM0 12h10v7H0zM21 12h10v7H21zM11 11h9v9h-9z"/>
+  <path fill="#f6c257" d="M13 1h5v8h-5zM13 22h5v8h-5zM1 13h8v5H1zM22 13h8v5h-8zM12 12h7v7h-7z"/>
+  <path fill="#fff4cf" d="M14 2h3v7h-3zM14 22h3v7h-3zM2 14h7v3H2zM22 14h7v3h-7z"/>
+  <path fill="#080a11" d="M13 13h5v5h-5z"/>
+  <path fill="#ffffff" d="M15 14h1v3h-1zM14 15h3v1h-3z"/>
+  <rect x="15" y="15" width="1" height="1" fill="#ec6a5e"/>
+</svg>
