@@ -111,6 +111,34 @@ async function soloStart(page, cls) {
 }
 const dbg = (page, c, n = 0, s = '') => page.evaluate(([c, n, s]) => window.__app.session.send({ t: 'dbg', c, n, s }), [c, n, s]);
 
+scenarios.clickmove = async () => {
+  const { app, page, logs } = await launch('clickmove');
+  try {
+    await soloStart(page, 'hunter');
+    await dbg(page, 'god');
+    const start = await page.evaluate(() => {
+      const game = window.__app.game;
+      const p = game.predictor.state;
+      const cam = game.cameras.main;
+      const rect = document.querySelector('#game canvas').getBoundingClientRect();
+      const wx = p.x + 90;
+      const wy = p.y + 30;
+      return { x: p.x, y: p.y, clickX: rect.left + ((wx - cam.scrollX) / 640) * rect.width, clickY: rect.top + ((wy - cam.scrollY) / 360) * rect.height };
+    });
+    await page.mouse.click(start.clickX, start.clickY, { button: 'right' });
+    const target = await page.evaluate(() => window.__app.game.moveTarget);
+    assert.ok(target && Math.abs(target.x - (start.x + 90)) < 4 && Math.abs(target.y - (start.y + 30)) < 4, `destino incorreto: ${JSON.stringify({ start, target })}`);
+    await shot(page, 'clickmove-marker');
+    await sleep(1250);
+    const end = await page.evaluate(() => ({ x: window.__app.game.predictor.state.x, y: window.__app.game.predictor.state.y }));
+    assert.ok(Math.hypot(end.x - start.x, end.y - start.y) > 12, `clique direito não moveu: ${JSON.stringify({ start, end })}`);
+    await shot(page, 'clickmove-arrival');
+    fs.writeFileSync(path.join(out, 'logs-clickmove.txt'), logs.join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
 scenarios.skills = async () => {
   const cls = rest[0] ?? 'berserker';
   const { app, page, logs } = await launch(`skills-${cls}`);
@@ -278,6 +306,143 @@ scenarios.boss = async () => {
   await app.close();
 };
 
+scenarios.bossintro = async () => {
+  const wave = Number(rest[0] ?? 10);
+  const { app, page, logs } = await launch(`boss-intro-${wave}`);
+  try {
+    await soloStart(page, 'hunter');
+    await dbg(page, 'god');
+    await dbg(page, 'wave', wave);
+    await page.waitForFunction(() => {
+      const i = window.__app.session.latest()?.w.intro;
+      return i && i.t > i.d - i.reveal;
+    }, null, { timeout: wave % 10 === 5 ? 45000 : 13000 });
+    await sleep(650);
+    const reveal = await page.evaluate(() => {
+      const { session } = window.__app;
+      const intro = session.latest()?.w.intro;
+      const enemy = session.latest()?.e.find((e) => e[0] === intro?.id);
+      return { stateT: enemy?.[8], titleVisible: !!document.querySelector('#boss-intro') };
+    });
+    assert.ok(reveal.stateT >= 12, 'o sprite real do chefe deve aparecer antes do cartão');
+    assert.equal(reveal.titleVisible, false);
+    await shot(page, `boss-reveal-${wave}`);
+    await page.waitForSelector('#boss-intro', { timeout: wave % 10 === 5 ? 45000 : 13000 });
+    const before = await page.evaluate(() => {
+      const { session, app, game } = window.__app;
+      return { tick: session.latest()?.tick, id: session.latest()?.w.intro?.id,
+        t: session.latest()?.w.intro?.t, music: app ? true : false,
+        input: app.input.enabled, zoom: game.cameras.main.zoom };
+    });
+    assert.ok(before.id > 0);
+    assert.equal(before.input, false);
+    await sleep(450);
+    await shot(page, `boss-intro-${wave}`);
+    const during = await page.evaluate(() => ({ intro: window.__app.session.latest()?.w.intro, zoom: window.__app.game.cameras.main.zoom }));
+    assert.equal(during.intro?.id, before.id);
+    assert.ok(during.intro.t < before.t);
+    assert.ok(during.zoom > 1);
+    await page.waitForSelector('#boss-intro', { state: 'detached', timeout: 8000 });
+    const after = await page.evaluate(() => ({ input: window.__app.app.input.enabled, zoom: window.__app.game.cameras.main.zoom }));
+    assert.equal(after.input, true);
+    await sleep(500);
+    await shot(page, `boss-fight-${wave}`);
+    if (logs.some((l) => l.includes('[pageerror]'))) throw new Error(logs.join('\n'));
+    console.log('cinemática:', JSON.stringify({ reveal, before, during, after }));
+  } finally {
+    await app.close();
+  }
+};
+
+scenarios.bossphases = async () => {
+  const { app, page, logs } = await launch('boss-phases');
+  try {
+    await soloStart(page, 'hunter');
+    await dbg(page, 'god');
+    for (const wave of [10, 20, 30]) {
+      await dbg(page, 'wave', wave);
+      await page.waitForFunction((n) => window.__app.session.latest()?.w.n === n && !!window.__app.session.latest()?.w.intro, wave, { timeout: 18000 });
+      await page.waitForSelector('#boss-intro', { timeout: 8000 });
+      await sleep(700);
+      await shot(page, `chapter-boss-intro-${wave}`);
+      await page.waitForSelector('#boss-intro', { state: 'detached', timeout: 10000 });
+      await dbg(page, 'phase');
+      await page.waitForFunction((n) => {
+        const s = window.__app.session.latest();
+        return s?.w.n === n && s.e.some((e) => e[0] === s.w.boss && (e[12] & 16) !== 0);
+      }, wave, { timeout: 12000 });
+      await sleep(350);
+      await shot(page, `chapter-boss-phase2-${wave}`);
+      assert.equal(await page.locator('#boss-intro').count(), 0);
+    }
+    if (logs.some((l) => l.includes('[pageerror]'))) throw new Error(logs.join('\n'));
+    console.log('fases 2 verificadas nas ondas 10, 20 e 30');
+  } finally {
+    await app.close();
+  }
+};
+
+scenarios.brightness = async () => {
+  const { app, page, logs } = await launch('brightness');
+  try {
+    await soloStart(page, 'hunter');
+    await dbg(page, 'god');
+    await shot(page, 'brightness-default');
+    await page.keyboard.press('Escape');
+    await clickText(page, 'Configurações');
+    const slider = page.locator('#settings input[type=range]').nth(3);
+    await slider.evaluate((el) => { el.value = '85'; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); });
+    assert.equal(await page.evaluate(() => window.__app.game.brightness), 0.85);
+    await page.waitForFunction(async () => (await window.vigilia.settings.load()).brightness === 0.85);
+    await shot(page, 'brightness-settings');
+    await clickText(page, 'Fechar');
+    await page.keyboard.press('Escape');
+    await sleep(200);
+    await shot(page, 'brightness-85');
+    if (logs.some((l) => l.includes('[pageerror]'))) throw new Error(logs.join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
+scenarios.shaders = async () => {
+  const { app, page, logs } = await launch('shaders-check');
+  try {
+    await soloStart(page, 'hunter');
+    await dbg(page, 'god');
+    await dbg(page, 'wave', 7);
+    await sleep(1400);
+    await shot(page, 'shaders-classic-village');
+    await page.keyboard.press('Escape');
+    await clickText(page, 'Configurações');
+    await clickText(page, 'Shaders ambientais: desligados');
+    assert.equal(await page.evaluate(() => window.__app.game.enhancedLighting), true);
+    await page.waitForFunction(async () => (await window.vigilia.settings.load()).enhancedLighting === true);
+    await clickText(page, 'Fechar');
+    await page.keyboard.press('Escape');
+    await sleep(700);
+    await shot(page, 'shaders-enhanced-village');
+    for (const [wave, name] of [[18, 'winter'], [25, 'abyss']]) {
+      await dbg(page, 'wave', wave);
+      await sleep(1800);
+      await shot(page, `shaders-enhanced-${name}`);
+    }
+    await page.keyboard.press('Escape');
+    await clickText(page, 'Configurações');
+    await clickText(page, 'Shaders ambientais: ligados');
+    assert.equal(await page.evaluate(() => window.__app.game.enhancedLighting), false);
+    await page.waitForFunction(async () => (await window.vigilia.settings.load()).enhancedLighting === false);
+    await clickText(page, 'Fechar');
+    await page.keyboard.press('Escape');
+    await sleep(300);
+    await shot(page, 'shaders-classic-abyss');
+    assert.ok(!logs.some((l) => l.includes('[pageerror]')), logs.join('\n'));
+    fs.writeFileSync(path.join(out, 'logs-shaders.txt'), logs.join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
 scenarios.duo = async () => {
   const A = await launch('duoA', []);
   const B = await launch('duoB', []);
@@ -317,6 +482,9 @@ scenarios.duo = async () => {
   await sleep(400);
   await clickText(A.page, 'Iniciar partida');
   await sleep(4500);
+  const bardA = await A.page.evaluate(() => window.__app.session.latest()?.w.bd);
+  const bardB = await B.page.evaluate(() => window.__app.session.latest()?.w.bd);
+  assert.ok(bardA && bardB && String(bardA) === String(bardB), `bardo divergente entre clientes: ${bardA} / ${bardB}`);
   // ambos se movem
   await A.page.keyboard.down('KeyD');
   await B.page.keyboard.down('KeyS');
@@ -398,7 +566,8 @@ scenarios.chapter = async () => {
   await soloStart(page, rest[1] ?? 'necromancer');
   await dbg(page, 'god');
   await dbg(page, 'wave', from);
-  await sleep(3000);
+  await page.waitForFunction((n) => window.__app.session.latest()?.w.n === n && !!window.__app.session.latest()?.w.intro, from, { timeout: 18000 });
+  await page.waitForFunction((n) => window.__app.session.latest()?.w.n === n && !window.__app.session.latest()?.w.intro, from, { timeout: 10000 });
   for (let i = 0; i < 40; i++) {
     await dbg(page, 'kill');
     await sleep(600);
@@ -483,6 +652,45 @@ scenarios.wave = async () => {
   await app.close();
 };
 
+scenarios.guardian = async () => {
+  const { app, page, logs } = await launch('guardian-check');
+  try {
+    await soloStart(page, 'tank');
+    await dbg(page, 'god');
+    let oldBard = null;
+    for (const wave of [7, 18]) {
+      await dbg(page, 'wave', wave);
+      await page.waitForFunction((n) => {
+        const s = window.__app.session.latest();
+        return s?.w.n === n && !!s.w.bd && (s.m ?? []).some((m) => m[1] === 2);
+      }, wave, { timeout: 12000 });
+      const bard = await page.evaluate(() => window.__app.session.latest().w.bd);
+      assert.ok(bard && (oldBard === null || String(bard) !== String(oldBard)), 'bardo ausente ou não mudou de local');
+      oldBard = bard;
+      await shot(page, `guardian-wave-${wave}`);
+      await page.keyboard.down('KeyQ');
+      await sleep(320);
+      await shot(page, `guardian-guard-${wave}`);
+      await page.keyboard.up('KeyQ');
+      await page.keyboard.press('KeyE');
+      await sleep(240);
+      await shot(page, `guardian-dash-${wave}`);
+      await dbg(page, 'ult');
+      await sleep(180);
+      await page.keyboard.press('KeyR');
+      await sleep(550);
+      await shot(page, `guardian-ultimate-${wave}`);
+      await page.keyboard.press('KeyR');
+      await sleep(250);
+      await shot(page, `guardian-detonate-${wave}`);
+    }
+    assert.ok(!logs.some((l) => l.includes('[pageerror]')), logs.join('\n'));
+    fs.writeFileSync(path.join(out, 'logs-guardian.txt'), logs.join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
 scenarios.sizes = async () => {
   const { app, page } = await launch('sizes', []);
   await soloStart(page, 'dog');
@@ -502,6 +710,7 @@ scenarios.sizes = async () => {
 scenarios.perf = async () => {
   const { app, page } = await launch('perf', []);
   await soloStart(page, 'tank');
+  if (rest[0] === 'shaders') await page.evaluate(() => window.__app.game.setEnhancedLighting(true));
   await dbg(page, 'god');
   for (const [n, t] of [[60, 'shambler'], [20, 'runner'], [8, 'acolyte'], [6, 'werewolf'], [6, 'father']]) await dbg(page, 'spawn', n, t);
   await sleep(1500);

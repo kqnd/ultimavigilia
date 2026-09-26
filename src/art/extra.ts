@@ -477,11 +477,40 @@ export function renameRecolor(src: { canvas: PixelCanvas; frames: Record<string,
 
 // ================================================================ montagem
 
+/** Bardo errante: silhueta pequena com violão legível em qualquer temática. */
+function bardPlay(frame: number): PixelCanvas {
+  const c = new PixelCanvas(32, 36);
+  const bob = frame % 2;
+  // botas, manto e chapéu
+  c.rect(10, 30, 5, 4, P.brn1);
+  c.rect(18, 30, 5, 4, P.brn1);
+  c.rect(9, 16 + bob, 15, 15, P.blue4);
+  c.rect(11, 17 + bob, 11, 10, P.blue3);
+  c.rect(12, 8 + bob, 9, 8, P.skin2);
+  c.rect(15, 11 + bob, 2, 2, P.ink);
+  c.rect(10, 7 + bob, 13, 3, P.brn1);
+  c.rect(13, 3 + bob, 8, 5, P.brn2);
+  c.rect(9, 8 + bob, 15, 2, P.brn3);
+  // corpo arredondado do violão, braço e cordas
+  c.rect(13, 21 + bob, 12, 9, P.brn1);
+  c.rect(15, 20 + bob, 8, 10, P.brn3);
+  c.rect(17, 22 + bob, 4, 5, P.brn1);
+  c.rect(20, 17 + bob, 9, 3, P.brn2);
+  c.rect(27, 15 + bob, 2, 5, P.brn1);
+  c.line(17, 22 + bob, 28, 18 + bob, P.amb5);
+  c.line(17, 24 + bob, 28, 19 + bob, P.amb3);
+  c.rect(12 + (frame % 2), 21 + bob + (frame % 3), 3, 3, P.skin1);
+  c.rect(23, 17 + bob, 3, 2, P.skin1);
+  c.outline(P.outline);
+  return c;
+}
+
 export function buildExtraSheet(): SheetBuilder {
   const sb = new SheetBuilder();
   unitFrames(sb, 'thrall');
   unitFrames(sb, 'horde');
   unitFrames(sb, 'survivor');
+  for (let i = 0; i < 4; i++) sb.add(`bard_play_${i}`, bardPlay(i));
   frameAll(sb, 'falseMoon', (i) => falseMoon(i));
   frameAll(sb, 'abyssTotem', (i) => abyssTotem(i));
   frameAll(sb, 'funeralCart', (i, dir) => funeralCart(i, dir === 'side'));

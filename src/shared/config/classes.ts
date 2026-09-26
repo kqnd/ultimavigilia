@@ -75,6 +75,7 @@ const DODGE_STD: DodgeSpec = { cost: 22, speed: 270, ticks: 9, iframes: 7, coold
 // ---------------------------------------------------------------- CAÇADOR
 export const HUNTER = {
   bolt: { windup: 5, active: 1, recovery: 8, stamina: 3, speed: 440, damage: 14, range: 340, radius: 4, pierce: 0, poise: 6, knockback: 30 },
+  upgrades: { pierceDamageRetention: 0.75, ricochetDamage: 0.4, ricochetRange: 95, fanSideDamage: 0.5 },
   trap: { cooldown: 8, windup: 6, recovery: 6, maxActive: 3, armTime: 0.5, radius: 18, damage: 20, rootCommon: 2.6, slowElite: 0.5, slowEliteTime: 2.2, lifetime: 30 },
   recoil: { cooldown: 6, stamina: 14, distance: 92, ticks: 8, iframes: 5, bolt: { speed: 520, damage: 32, range: 380, radius: 5, pierce: 6, poise: 25, knockback: 80 } },
   rain: { windup: 10, recovery: 8, maxRange: 270, radius: 66, pulses: 9, interval: 6, damage: 16, poise: 10 },
@@ -95,10 +96,10 @@ export const MAGE = {
 // ---------------------------------------------------------------- TANK
 export const TANK = {
   mace: { windup: 8, active: 3, recovery: 12, damage: 20, range: 36, arc: 110, poise: 34, knockback: 110, stamina: 10, moveMul: 0.45 },
-  guard: { arc: 130, moveMul: 0.45, staminaPerDamage: 0.75, minStaminaCost: 4, breakStun: 1.0, chipDamage: 0 },
-  taunt: { cooldown: 12, radius: 160, duration: 4, bossDuration: 1.5, damageReduction: 0.3, windup: 6, recovery: 8 },
-  bastion: { windup: 8, recovery: 10, radius: 86, duration: 6, damageReduction: 0.4, enemySlow: 0.2 },
-  wall: { ultPerBlock: 5 },
+  guard: { arc: 360, moveMul: 0.65, staminaPerDamage: 0.8, minStaminaCost: 5, breakStun: 1.0, perfectTicks: 7, counterBonus: 16, counterRadius: 48, counterKnockback: 170 },
+  charge: { cooldown: 9, stamina: 20, distance: 92, ticks: 11, recovery: 8, damage: 18, radius: 23, tauntRadius: 65, duration: 3, bossDuration: 0.8 },
+  bastion: { duration: 4, radius: 104, reduction: 0.12, baseDamage: 60, damageRatio: 0.6, bonusCap: 120, bossDamageCap: 95, knockback: 230 },
+  wall: { ultPerBlock: 2, blockUltIntervalTicks: 12 },
 } as const;
 
 // ---------------------------------------------------------------- VAMPIRO
@@ -161,7 +162,7 @@ export const NECRO = {
   /** Limites de entidades: por necromante e globais. */
   maxMinions: 12,
   /** Senhor dos Mortos: segundos extras de duração por acúmulo (a vida extra vem do valor da melhoria). */
-  lordExtraSeconds: 4,
+  lordExtraSeconds: 2,
   /** Velocidade de movimento durante cada conjuração. */
   moveMul: { bone: 0.65, raise: 0.4, hand: 0.4, army: 0.2 },
 } as const;
@@ -175,7 +176,7 @@ export const CLASSES: Record<ClassId, ClassBase> = {
     difficulty: 2,
     blurb: 'Capuz, sobretudo e besta. Prepara o terreno com armadilhas e pune alvos marcados.',
     weakness: `Cercado por ${HUNTER.surrounded.count}+ inimigos, recebe +${Math.round((HUNTER.surrounded.damageTakenMul - 1) * 100)}% de dano.`,
-    hp: 100,
+    hp: 85,
     stamina: 100,
     staminaRegen: 34,
     staminaDelay: 0.5,
@@ -220,7 +221,7 @@ export const CLASSES: Record<ClassId, ClassBase> = {
   tank: {
     id: 'tank',
     tag: 'Proteção',
-    name: 'Tank',
+    name: 'Guardião',
     role: 'Proteção, bloqueio e controle',
     difficulty: 1,
     blurb: 'Armadura pesada e escudo enorme. Segura a linha para os outros brilharem.',
@@ -232,14 +233,14 @@ export const CLASSES: Record<ClassId, ClassBase> = {
     speed: 84,
     radius: 8,
     dodge: { cost: 28, speed: 210, ticks: 9, iframes: 6, cooldown: 6 },
-    ultPerDamage: 0.22,
+    ultPerDamage: 0.09,
     color: 0x7f93b0,
     texts: {
       basic: { name: 'Golpe de Maça', desc: `Golpe curto e pesado: ${TANK.mace.damage} de dano, grande stagger.` },
-      q: { name: 'Guarda de Ferro', desc: `Segure para bloquear ataques frontais (${TANK.guard.arc}°) gastando stamina. Stamina zerada = quebra de guarda (${TANK.guard.breakStun}s atordoado).` },
-      e: { name: 'Provocação', desc: `Atrai inimigos em ${TANK.taunt.radius}px por ${TANK.taunt.duration}s e reduz o dano recebido em ${TANK.taunt.damageReduction * 100}%. Recarga ${TANK.taunt.cooldown}s.` },
-      r: { name: 'Bastião', desc: `Zona de ${TANK.bastion.radius}px por ${TANK.bastion.duration}s: aliados recebem -${TANK.bastion.damageReduction * 100}% de dano.` },
-      passive: { name: 'Muralha', desc: `Cada bloqueio bem-sucedido recupera ${TANK.wall.ultPerBlock}% da suprema.` },
+      q: { name: 'Égide dos Mortos', desc: `Segure para bloquear em 360° gastando stamina. Bloqueio perfeito prepara um contra-ataque; guarda quebrada atordoa por ${TANK.guard.breakStun}s.` },
+      e: { name: 'Investida de Escudo', desc: `Avança ${TANK.charge.distance}px, interrompe e provoca inimigos atingidos. Recarga ${TANK.charge.cooldown}s.` },
+      r: { name: 'Última Vigília', desc: `Fica imóvel por ${TANK.bastion.duration}s. Aliados e sobrevivente na área recebem -12% de dano. Detona: ${TANK.bastion.baseDamage} + 60% do dano real sofrido (até ${TANK.bastion.baseDamage + TANK.bastion.bonusCap}). Aperte R novamente para detonar cedo.` },
+      passive: { name: 'Almas Presas', desc: `Bloqueios relevantes carregam a suprema; bloqueio perfeito fortalece a próxima maçada.` },
     },
   },
   vampire: {

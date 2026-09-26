@@ -60,7 +60,7 @@ export const berserkerKit: Kit = {
         p.move.ft = L.ticks;
         p.iframes = Math.max(p.iframes, L.iframes);
         w.startAction(p, 'e', { windup: 0, active: L.ticks + 1, recovery: L.recovery }, { moveMul: 1, tx: dest.x, ty: dest.y });
-        w.setCooldown(p, 'e', L.cooldown - (p.mods['b_quake'] ?? 0));
+        w.setCooldown(p, 'e', L.cooldown - (p.mods['b_quake'] ?? 0) * 0.5);
         w.addZone({ kind: 'leapLand', x: dest.x, y: dest.y, r: L.radius * (1 + w.mod(p, 'b_quake')), ttl: L.ticks, owner: p.id, extra: L.ticks });
         w.emit({ k: 'sfx', n: 'leap', x: p.x, y: p.y });
         return null;

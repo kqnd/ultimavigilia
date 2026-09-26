@@ -4,7 +4,7 @@ import type { Player } from '../types.js';
 import type { Kit } from './kit.js';
 import { clampTarget, firstActive } from './kit.js';
 
-const resonanceMax = (p: Player): number => DOG.resonance.max - (p.mods['d_resonance'] ?? 0) * 5;
+const resonanceMax = (p: Player): number => DOG.resonance.max - (p.mods['d_resonance'] ?? 0) * 3;
 
 export const dogKit: Kit = {
   start(w, p, slot) {

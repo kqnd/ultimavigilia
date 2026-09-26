@@ -8,13 +8,17 @@ import type { Climate, MapId } from '../../shared/config/chapters.js';
 import { BERSERKER, CLASSES, type ClassId, VAMPIRE } from '../../shared/config/classes.js';
 import { ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
 import { EVENT_RULES, CHALLENGE_RULES } from '../../shared/config/objectives.js';
-import { TICK_MS } from '../../shared/constants.js';
+import { TICK_MS, TILE } from '../../shared/constants.js';
+import { circleFree, lineOfSight } from '../../shared/collision.js';
 import { type ArenaMap, cloneMap, getMap, mapByIndex, setBroken, WORLD_H, WORLD_W } from '../../shared/map.js';
 import type { InputFrame } from '../../shared/movement.js';
 import { ACTIONS, type EnemyTuple, type GameEvent, type MinionTuple, PROJECTILE_KINDS, type ProjTuple, type SnapPlayer, ZONE_KINDS, type ZoneTuple } from '../../shared/protocol.js';
 import { audio } from '../audio.js';
+import { FlowField } from '../../server/world/nav.js';
 import type { Session, Snapshot } from '../session.js';
 import { Effects } from './effects.js';
+import { survivorTorchAnchor } from './entity-anchors.js';
+import { reflectionAlpha } from './graphics-quality.js';
 import type { InputCapture } from './input.js';
 import { Predictor } from './predict.js';
 import { drawTelegraph, drawZone } from './telegraphs.js';
@@ -77,9 +81,20 @@ export class GameScene extends Phaser.Scene {
   private animated: { p: Placed; img: Phaser.GameObjects.Image }[] = [];
   private breaks = new Map<number, BreakView>();
   private minions = new Map<number, MinionView>();
+  survivorPosition(): { x: number; y: number } | null {
+    const survivor = [...this.minions.values()].find((m) => m.kind === 'survivor');
+    return survivor ? { x: survivor.x, y: survivor.y } : null;
+  }
   private pickups = new Map<number, Phaser.GameObjects.Image>();
   private altar: Phaser.GameObjects.Image | null = null;
+  private bard: Phaser.GameObjects.Image | null = null;
   private storm = 0;
+  brightness = 0;
+  enhancedLighting = false;
+  private moodFilter: Phaser.Filters.ColorMatrix | null = null;
+  private vignetteFilter: Phaser.Filters.Vignette | null = null;
+  private reflectionG!: Phaser.GameObjects.Graphics;
+  private reflections = new Map<number, Phaser.GameObjects.Image>();
   private players = new Map<number, PlayerView>();
   private enemies = new Map<number, EnemyView>();
   private projectiles = new Map<number, Phaser.GameObjects.Image>();
@@ -100,6 +115,8 @@ export class GameScene extends Phaser.Scene {
   spectateId = 0;
   localClass: ClassId = 'hunter';
   pings: { x: number; y: number; from: number; until: number }[] = [];
+  private moveTarget: { x: number; y: number; field: FlowField; at: number; lastX: number; lastY: number; stuck: number } | null = null;
+  private moveClick: { x: number; y: number; at: number; valid: boolean } | null = null;
   fpsSamples: number[] = [];
   onLocalEvent: ((ev: GameEvent) => void) | null = null;
 
@@ -113,6 +130,7 @@ export class GameScene extends Phaser.Scene {
     this.cameras.main.setRoundPixels(true);
     this.fog = this.add.tileSprite(0, 0, 704, 424, 'fog').setOrigin(0, 0).setScrollFactor(0).setDepth(-9000).setAlpha(0.16);
     this.zoneG = this.add.graphics().setDepth(-8000);
+    this.reflectionG = this.add.graphics().setDepth(-8500);
     this.teleG = this.add.graphics().setDepth(-7000);
     this.dark = this.add.renderTexture(0, 0, 640, 360).setOrigin(0, 0).setScrollFactor(0).setDepth(150000);
     this.fx = new Effects(this);
@@ -122,6 +140,22 @@ export class GameScene extends Phaser.Scene {
     this.scale.on('resize', () => undefined);
   }
 
+  /** Filtros WebGL reais sobre o mundo; o HUD continua em outra cena, sem pós-processamento. */
+  setEnhancedLighting(enabled: boolean): void {
+    this.enhancedLighting = enabled;
+    if (enabled && !this.moodFilter) {
+      this.moodFilter = this.cameras.main.filters.internal.addColorMatrix();
+      this.moodFilter.colorMatrix.contrast(0.14).saturate(0.12, true);
+      this.vignetteFilter = this.cameras.main.filters.external.addVignette(0.5, 0.5, 0.8, 0.11, 0x071019);
+    }
+    this.moodFilter?.setActive(enabled);
+    this.vignetteFilter?.setActive(enabled);
+    if (!enabled) {
+      this.reflectionG?.clear();
+      for (const image of this.reflections.values()) image.setVisible(false);
+    }
+  }
+
   get climate(): Climate {
     return this.map.climate;
   }
@@ -129,6 +163,8 @@ export class GameScene extends Phaser.Scene {
   /** Troca o mapa desenhado (chão, objetos, luzes) e o mapa de colisão do preditor. */
   setMap(id: MapId, force = false): void {
     if (!force && id === this.mapId) return;
+    this.moveTarget = null;
+    this.moveClick = null;
     this.mapId = id;
     this.map = cloneMap(getMap(id));
     this.predictor.map = this.map;
@@ -189,10 +225,16 @@ export class GameScene extends Phaser.Scene {
     this.predictor.active = false;
     this.storm = 0;
     this.setMap('village');
+    audio.stopBard();
   }
 
   clearEntities(): void {
+    this.moveTarget = null;
+    this.moveClick = null;
     for (const v of this.players.values()) v.destroy();
+    for (const image of this.reflections.values()) image.destroy();
+    this.reflections.clear();
+    this.reflectionG?.clear();
     for (const v of this.enemies.values()) v.destroy();
     for (const v of this.projectiles.values()) v.destroy();
     for (const v of this.traps.values()) v.destroy();
@@ -200,6 +242,8 @@ export class GameScene extends Phaser.Scene {
     for (const v of this.pickups.values()) v.destroy();
     this.altar?.destroy();
     this.altar = null;
+    this.bard?.destroy();
+    this.bard = null;
     this.minions.clear();
     this.pickups.clear();
     this.players.clear();
@@ -370,6 +414,51 @@ export class GameScene extends Phaser.Scene {
       return p ? { x: p.x, y: p.y - 10 } : null;
     };
     switch (ev.n) {
+      case 'guardianGuard':
+        f.ring(ev.x, ev.y - 10, 4, 22, 0xa7e9d9, 0.25, 2);
+        f.burst('p_soul', ev.x, ev.y - 10, 6, 35, 0.35);
+        break;
+      case 'guardianBlockPhysical':
+        f.burst('p_silver', ev.x, ev.y, 7, 70, 0.25, { dir: ev.a, spread: 1.4 });
+        f.particle('hit_0', ev.x, ev.y, 0, 0, 0.08, { fade: false });
+        break;
+      case 'guardianBlockProjectile':
+        f.ring(ev.x, ev.y, 2, 15, 0x9fe4d8, 0.2, 2);
+        f.burst('p_soul', ev.x, ev.y, 5, 65, 0.25, { dir: ev.a, spread: 1.7 });
+        break;
+      case 'guardianBreak':
+        f.ring(ev.x, ev.y, 22, 42, 0xb6f2df, 0.32, 3);
+        f.burst('p_silver', ev.x, ev.y, 24, 140, 0.55, { g: 160 });
+        f.burst('p_soul', ev.x, ev.y, 14, 100, 0.5);
+        f.shake(4, 150);
+        break;
+      case 'guardianDash':
+        f.ring(ev.x, ev.y, 3, 24, 0x9fe4d8, 0.2, 2);
+        break;
+      case 'guardianTrail':
+        f.burst('p_soul', ev.x, ev.y - 8, 2, 22, 0.28);
+        break;
+      case 'guardianImpact':
+        f.ring(ev.x, ev.y, 3, Math.min(34, ev.r), 0xb9f5e7, 0.24, 3);
+        f.burst('p_silver', ev.x, ev.y, 9, 85, 0.3);
+        f.number(ev.x, ev.y - 22, 'PROVOCADO', 0x9fe4d8);
+        break;
+      case 'guardianCounter':
+        f.arc(ev.x, ev.y - 9, ev.a, 190, ev.r, 0xd5fff2, 0x75b5ae, 0.22, 3);
+        break;
+      case 'guardianPlant':
+        f.ring(ev.x, ev.y, 5, ev.r, 0x79b7aa, 0.55, 2);
+        f.burst('p_soul', ev.x, ev.y - 12, 8, 35, 0.7, { up: 15 });
+        break;
+      case 'guardianCharge':
+        if (ev.a > 0.06) f.burst('p_soul', ev.x, ev.y - 10, Math.min(4, 1 + Math.floor(ev.a * 3)), 25 + ev.a * 30, 0.42, { up: 18 });
+        break;
+      case 'guardianBurst':
+        f.ring(ev.x, ev.y, 4, ev.r, ev.a > 0.5 ? 0xd5fff2 : 0x8cc7bb, 0.4, ev.a > 0.5 ? 4 : 2);
+        f.burst('p_soul', ev.x, ev.y - 8, 12 + Math.round(ev.a * 22), 75 + ev.a * 70, 0.55, { up: 20 });
+        f.burst('p_silver', ev.x, ev.y, 6 + Math.round(ev.a * 12), 90, 0.42);
+        f.shake(2 + ev.a * 3, 160);
+        break;
       case 'mace':
         f.arc(ev.x, ev.y - 8, ev.a, 110, ev.r, 0xcfd4df, 0x565b70, 0.18, 3, follow(ev.o));
         f.burst('p_dust', ev.x + Math.cos(ev.a) * 24, ev.y + Math.sin(ev.a) * 24, 5, 40, 0.4);
@@ -669,6 +758,37 @@ export class GameScene extends Phaser.Scene {
     audio.play('telegraph', x, y, 0.8);
   }
 
+  /** Destino do clique direito; o servidor continua autoritativo sobre o movimento. */
+  setMoveTarget(x: number, y: number): void {
+    if (this.mode !== 'match' || !this.predictor.active) return;
+    const radius = CLASSES[this.predictor.cls].radius;
+    let point = { x, y };
+    if (!circleFree(this.map, x, y, radius)) {
+      let found = false;
+      for (let ring = 1; ring <= 5 && !found; ring++) for (let a = 0; a < 16; a++) {
+        const angle = a * Math.PI / 8;
+        const nx = x + Math.cos(angle) * ring * TILE;
+        const ny = y + Math.sin(angle) * ring * TILE;
+        if (circleFree(this.map, nx, ny, radius)) {
+          point = { x: nx, y: ny };
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        this.moveTarget = null;
+        this.moveClick = { x, y, at: performance.now(), valid: false };
+        return;
+      }
+    }
+    const field = new FlowField(this.map);
+    field.compute(point.x, point.y);
+    const current = this.predictor.state;
+    const valid = field.at(current.x, current.y) !== 0xffff;
+    this.moveTarget = valid ? { ...point, field, at: performance.now(), lastX: current.x, lastY: current.y, stuck: 0 } : null;
+    this.moveClick = { x: point.x, y: point.y, at: performance.now(), valid };
+  }
+
   private ghost(frame: string, x: number, y: number, flip: boolean): void {
     const [tex, fr] = tf(frame);
     const img = this.add.image(x, y, tex, fr).setOrigin(0.5, 30 / 32).setFlipX(flip).setDepth(y - 1).setAlpha(0.45).setTint(0x7da0cf).setTintMode(Phaser.TintModes.FILL);
@@ -703,6 +823,7 @@ export class GameScene extends Phaser.Scene {
     this.fx.update(dt);
     this.ambientParticles(dt);
     this.updateLighting();
+    this.drawLightReflections();
     const cam = this.cameras.main;
     this.fog.tilePositionX = cam.scrollX * 1 + performance.now() / 90;
     this.fog.tilePositionY = cam.scrollY * 1 + performance.now() / 260;
@@ -725,6 +846,26 @@ export class GameScene extends Phaser.Scene {
 
   private localFrame(): InputFrame {
     const s = this.input2.sample();
+    if (s.mx !== 0 || s.my !== 0) this.moveTarget = null;
+    else if (this.moveTarget && this.predictor.active) {
+      const p = this.predictor.state;
+      const t = this.moveTarget;
+      const d = Math.hypot(t.x - p.x, t.y - p.y);
+      if (d < 6) this.moveTarget = null;
+      else {
+        const direct = d < TILE * 1.5 && lineOfSight(this.map, p.x, p.y, t.x, t.y);
+        const dir = direct ? [(t.x - p.x) / d, (t.y - p.y) / d] : t.field.direction(p.x, p.y);
+        if (dir && (dir[0] !== 0 || dir[1] !== 0)) {
+          s.mx = dir[0];
+          s.my = dir[1];
+        }
+        if (Math.hypot(p.x - t.lastX, p.y - t.lastY) < 0.2) t.stuck++;
+        else t.stuck = 0;
+        t.lastX = p.x;
+        t.lastY = p.y;
+        if (t.stuck > 45 || !dir) this.moveTarget = null;
+      }
+    }
     const cam = this.cameras.main;
     const ax = Math.round(cam.scrollX + this.input2.mouseX);
     const ay = Math.round(cam.scrollY + this.input2.mouseY);
@@ -744,7 +885,7 @@ export class GameScene extends Phaser.Scene {
     while (this.acc >= TICK_MS && steps < 4) {
       this.acc -= TICK_MS;
       steps++;
-      if (sess.paused) continue;
+      if (sess.paused || latest.w.intro) continue;
       const f = this.localFrame();
       sess.send({ t: 'in', i: [[f.seq, f.mx, f.my, f.ax, f.ay, f.held, f.pressed]] });
       if (this.predictor.active && alive) this.predictor.step(f);
@@ -813,8 +954,26 @@ export class GameScene extends Phaser.Scene {
       if (!seen.has(id)) {
         v.destroy();
         this.players.delete(id);
+        this.reflections.get(id)?.destroy();
+        this.reflections.delete(id);
       }
     }
+    this.updatePlayerReflections();
+
+    // Bardo não é entidade de combate; a posição vem somente do servidor.
+    const bd = latest.w.bd;
+    if (bd) {
+      if (!this.bard) this.bard = this.add.image(bd[0], bd[1], ...tf('bard_play_0')).setOrigin(0.5, 34 / 36);
+      const frame = `bard_play_${Math.floor(performance.now() / 180) % 4}`;
+      const [tex, fr] = tf(frame);
+      if (this.bard.frame.name !== fr) this.bard.setTexture(tex, fr);
+      this.bard.setPosition(bd[0], bd[1]).setDepth(bd[1]);
+    } else if (this.bard) {
+      this.bard.destroy();
+      this.bard = null;
+    }
+    const listener = this.rendered.find((p) => p.id === sess.myId);
+    audio.setBard(bd ? { x: bd[0], y: bd[1] } : null, listener?.x ?? 0, listener?.y ?? 0, !!bd && !!listener && latest.w.ph !== 'victory' && latest.w.ph !== 'defeat' && !sess.paused && !latest.w.intro && !document.hidden && document.hasFocus());
 
     // inimigos
     const seenE = new Set<number>();
@@ -988,11 +1147,31 @@ export class GameScene extends Phaser.Scene {
       const k = (now / 500) % 1;
       this.zoneG.lineStyle(2, 0xf6c257, 1 - k).strokeCircle(p.x, p.y, 6 + k * 20);
     }
+    this.drawMoveClick(now);
 
     this.drawObjectives(latest, now);
 
     this.updateCamera(dt);
     this.updateOcclusion();
+  }
+
+  private drawMoveClick(now: number): void {
+    const mark = this.moveTarget ?? this.moveClick;
+    if (!mark || (!this.moveTarget && now - mark.at > 650)) return;
+    const x = Math.round(mark.x);
+    const y = Math.round(mark.y);
+    const fresh = Math.max(0, 1 - (now - mark.at) / 350);
+    const color = 'valid' in mark && !mark.valid ? 0xec6a5e : 0x8fd3f0;
+    const g = this.zoneG;
+    const size = Math.round(7 + fresh * 8);
+    g.lineStyle(1, color, 0.45 + fresh * 0.5);
+    g.strokeRect(x - size, y - size / 2, size * 2, size);
+    g.fillStyle(color, 0.7 + fresh * 0.3);
+    g.fillRect(x - 2, y - 2, 4, 4);
+    g.fillRect(x - size - 2, y - 1, 3, 3);
+    g.fillRect(x + size, y - 1, 3, 3);
+    g.fillRect(x - 1, y - size / 2 - 3, 3, 3);
+    g.fillRect(x - 1, y + size / 2, 3, 3);
   }
 
   /** Marcadores de objetivos no mapa: vida da fogueira, altar, área proibida. */
@@ -1031,6 +1210,21 @@ export class GameScene extends Phaser.Scene {
 
   private updateCamera(dt: number): void {
     const sess = this.session;
+    const intro = sess.latest()?.w.intro;
+    const cam = this.cameras.main;
+    if (intro) {
+      const close = Math.max(0, intro.d - intro.t - intro.reveal);
+      const zoom = 1 + 0.32 * Math.min(1, close / 18);
+      cam.setZoom(zoom);
+      const tx = intro.x - 320 / zoom;
+      const ty = intro.y - 180 / zoom;
+      const k = 1 - Math.exp(-dt / 180);
+      this.camX += (tx - this.camX) * k;
+      this.camY += (ty - this.camY) * k;
+      cam.setScroll(this.camX, this.camY);
+      return;
+    }
+    if (cam.zoom !== 1) cam.setZoom(1);
     const me = this.rendered.find((p) => p.id === sess.myId);
     let target = me;
     if (me && me.data.s !== 0) {
@@ -1045,7 +1239,6 @@ export class GameScene extends Phaser.Scene {
       }
     } else this.spectateId = 0;
     if (!target) return;
-    const cam = this.cameras.main;
     // leve antecipação na direção da mira
     const lookX = me && me.data.s === 0 ? (this.input2.mouseX - 320) * 0.12 : 0;
     const lookY = me && me.data.s === 0 ? (this.input2.mouseY - 180) * 0.12 : 0;
@@ -1135,6 +1328,50 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  private updatePlayerReflections(): void {
+    for (const p of this.rendered) {
+      const alpha = this.enhancedLighting && p.data.s === 0 ? reflectionAlpha(this.map, p.x, p.y + 8) : 0;
+      let image = this.reflections.get(p.id);
+      if (alpha <= 0) {
+        image?.setVisible(false);
+        continue;
+      }
+      const view = this.players.get(p.id);
+      if (!view) continue;
+      if (!image) {
+        image = this.add.image(p.x, p.y + 2, view.body.texture.key, view.body.frame.name).setOrigin(0.5, 0).setFlipY(true);
+        this.reflections.set(p.id, image);
+      }
+      if (image.texture.key !== view.body.texture.key || image.frame.name !== view.body.frame.name) image.setTexture(view.body.texture.key, view.body.frame.name);
+      image.setPosition(Math.round(p.x), Math.round(p.y + 3)).setDepth(Math.round(p.y) - 1).setFlipX(view.body.flipX).setScale(1, 0.45).setAlpha(alpha).setVisible(true);
+      image.setTint(this.map.climate === 'winter' ? 0xaed9ed : this.map.climate === 'ash' ? 0xc4a3a0 : 0xe0b892);
+    }
+  }
+
+  /** Riscos de luz em pedra úmida/gelo/mármore, quantizados em pixels e limitados à câmera. */
+  private drawLightReflections(): void {
+    const g = this.reflectionG;
+    g.clear();
+    if (!this.enhancedLighting || this.mode !== 'match') return;
+    const cam = this.cameras.main;
+    const color = this.map.climate === 'winter' ? 0xb7e3ef : this.map.climate === 'ash' ? 0xbf80d0 : 0xf6c257;
+    const lights = [this.map.campfire, ...this.map.torches, ...this.map.lights];
+    let drawn = 0;
+    for (const source of lights) {
+      if (drawn >= 24) break;
+      if (source.x < cam.scrollX - 60 || source.x > cam.scrollX + 700 || source.y < cam.scrollY - 70 || source.y > cam.scrollY + 380) continue;
+      const alpha = reflectionAlpha(this.map, source.x, source.y + 28);
+      if (alpha <= 0) continue;
+      drawn++;
+      for (let row = 0; row < 5; row++) {
+        const shimmer = Math.round(Math.sin(performance.now() / 430 + source.x * 0.17 + row * 1.9) * 2);
+        const width = (row % 2 ? 19 : 30) - row * 2;
+        g.fillStyle(color, alpha * (0.85 - row * 0.11));
+        g.fillRect(Math.round(source.x - width / 2 + shimmer), Math.round(source.y + 20 + row * 4), width, 1);
+      }
+    }
+  }
+
   private updateLighting(): void {
     const cam = this.cameras.main;
     const rt = this.dark;
@@ -1142,8 +1379,8 @@ export class GameScene extends Phaser.Scene {
     const look = CLIMATE_LOOK[this.map.climate];
     const storm = this.storm > 0 && this.mode === 'match';
     rt.clear();
-    rt.fill(look.dark, Math.min(0.8, look.alpha + (storm ? 0.08 : 0) - (this.mode === 'match' ? 0 : 0.02)));
-    this.fog.setAlpha(look.fogAlpha + (storm ? 0.16 : 0));
+    rt.fill(look.dark, Math.max(0.08, Math.min(0.8, look.alpha + (storm ? 0.08 : 0) - (this.mode === 'match' ? 0 : 0.02) - this.brightness * 0.5 - (this.enhancedLighting ? 0.055 : 0))));
+    this.fog.setAlpha(Math.max(0.04, look.fogAlpha + (storm ? 0.16 : 0) - this.brightness * 0.08));
     const E = Phaser.BlendModes.ERASE;
     const light = (x: number, y: number, r: 24 | 48 | 72 | 112 | 160, alpha = 1): void => {
       const sx = Math.round(x - cam.scrollX);
@@ -1166,7 +1403,14 @@ export class GameScene extends Phaser.Scene {
       const r = def.tier === 'boss' ? 72 : def.miniboss || def.objective || e.type === 'werewolf' || e.type === 'father' ? 48 : 24;
       light(e.x, e.y - 10, r, e.type === 'falseMoon' ? 0.9 : 0.55);
     }
-    for (const m of this.minions.values()) light(m.x, m.y - 10, 24, 0.6);
+    for (const m of this.minions.values()) {
+      if (m.kind === 'survivor') {
+        const flame = survivorTorchAnchor(m.x, m.y);
+        light(flame.x, flame.y, 72, 0.9);
+        light(flame.x, flame.y, 24, 1);
+      } else light(m.x, m.y - 10, 24, 0.6);
+    }
+    if (this.bard) light(this.bard.x, this.bard.y - 13, 24, 0.35);
     for (const img of this.pickups.values()) light(img.x, img.y - 6, 24, 0.7);
     if (this.altar) light(this.altar.x, this.altar.y - 12, 48, 0.7);
     for (const img of this.projectiles.values()) light(img.x, img.y, 24, 0.8);
@@ -1181,6 +1425,6 @@ export class GameScene extends Phaser.Scene {
     }
     for (const p of this.pings) light(p.x, p.y, 48, 0.7);
     rt.render();
-    for (const g of this.glows) g.setAlpha(0.18 + Math.sin(now / 80 + g.x) * 0.03);
+    for (const g of this.glows) g.setAlpha((this.enhancedLighting ? 0.3 : 0.18) + Math.sin(now / 80 + g.x) * 0.03);
   }
 }

@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { AFFIX_RULES, affixChance } from '../src/shared/config/affixes.js';
 import { CHAPTERS } from '../src/shared/config/chapters.js';
-import { type ClassId, DOG, NECRO, VAMPIRE } from '../src/shared/config/classes.js';
+import { type ClassId, DOG, HUNTER, NECRO, VAMPIRE } from '../src/shared/config/classes.js';
 import { ATK } from '../src/shared/config/enemies.js';
 import { PICKUPS } from '../src/shared/config/loot.js';
 import { EVENT_RULES } from '../src/shared/config/objectives.js';
@@ -212,6 +212,39 @@ describe('Necromante: essência, servos e limites', () => {
     expect(w.pickups.filter((c) => c.kind === 'corpse').length).toBe(0);
   });
 
+  it('servos criados no mesmo cadáver ficam visíveis e continuam separados ao seguir o dono', () => {
+    const w = mkWorld(['necromancer']);
+    quiet(w);
+    const p = w.players.get(1) as Player;
+    const units = Array.from({ length: 3 }, () => spawnMinion(w, p.id, 'thrall', p.x + 35, p.y, {
+      hp: 50, ttl: sec(30), speed: 90, damage: 5,
+    }));
+    expect(units.every(Boolean)).toBe(true);
+    const separated = (): boolean => units.every((a, i) => units.every((b, j) => i === j || Math.hypot(a!.x - b!.x, a!.y - b!.y) >= 2));
+    expect(separated()).toBe(true);
+    run(w, 60);
+    expect(minionsOf(w, p.id, 'thrall')).toHaveLength(3);
+    expect(separated()).toBe(true);
+  });
+
+  it('Q não consome essência ou cadáver quando o teto de invocações está cheio', () => {
+    const w = mkWorld(['necromancer']);
+    quiet(w);
+    const p = w.players.get(1) as Player;
+    for (let i = 0; i < NECRO.maxMinions; i++) spawnMinion(w, p.id, 'horde', p.x + 30, p.y, {
+      hp: 50, ttl: sec(30), speed: 90, damage: 5,
+    });
+    const corpse = addPickup(w, 'corpse', p.x + 20, p.y);
+    p.essence = NECRO.essence.max;
+    const before = p.essence;
+    w.drainEvents();
+    run(w, 1, () => ({ pressed: BTN.q, ax: p.x + 20, ay: p.y }));
+    expect(w.drainEvents().some((e) => e.k === 'deny' && e.r === 'busy')).toBe(true);
+    expect(p.essence).toBe(before);
+    expect(w.pickups).toContain(corpse);
+    expect(minionsOf(w, p.id)).toHaveLength(NECRO.maxMinions);
+  });
+
   it('servos atacam, atraem inimigos, expiram e não contam para o fim da onda', () => {
     const w = mkWorld(['necromancer', 'tank']);
     quiet(w);
@@ -293,6 +326,40 @@ describe('Necromante: essência, servos e limites', () => {
   });
 });
 
+describe('escolta: entrada, navegação e ameaça', () => {
+  it('coloca a equipe perto do sobrevivente no início das ondas 7 e 18', () => {
+    for (const wave of [7, 18]) {
+      const w = mkWorld(['berserker', 'hunter']);
+      w.debug('wave', wave, '');
+      const survivor = [...w.minions.values()].find((m) => m.kind === 'survivor');
+      expect(survivor).toBeTruthy();
+      expect(w.objectives.event?.kind).toBe('escort');
+      for (const p of w.players.values()) {
+        expect(Math.hypot(p.x - survivor!.x, p.y - survivor!.y)).toBeLessThan(EVENT_RULES.escort.followRadius);
+        expect(circleFree(w.map, p.x, p.y, p.r)).toBe(true);
+      }
+      expect(Math.hypot(survivor!.x - w.map.campfire.x, survivor!.y - w.map.campfire.y)).toBeGreaterThan(EVENT_RULES.escort.arriveRadius);
+    }
+  });
+
+  it('parte dos inimigos prioriza o sobrevivente e usa um caminho até ele', () => {
+    const w = mkWorld(['berserker']);
+    w.debug('wave', 7, '');
+    const survivor = [...w.minions.values()].find((m) => m.kind === 'survivor')!;
+    survivor.state = 'move';
+    let e = dummy(w, 'shambler', survivor.x + 55, survivor.y);
+    // Seleciona um inimigo do grupo designado para pressionar a escolta.
+    while (e.id % 5 >= 3) {
+      w.enemies.delete(e.id);
+      e = dummy(w, 'shambler', survivor.x + 55, survivor.y);
+    }
+    e.targetT = 0;
+    expect(w.targetOf(e)).toBe(survivor);
+    const dir = w.chaseDir(e, survivor);
+    expect(Math.hypot(...dir)).toBeGreaterThan(0);
+  });
+});
+
 // ================================================================== bifurcações e confirmação
 
 describe('bifurcações de melhorias', () => {
@@ -323,7 +390,65 @@ describe('bifurcações de melhorias', () => {
   });
 });
 
+describe('balanceamento das melhorias do Caçador', () => {
+  it('Presa Profunda amplifica somente projéteis e respeita 1,5% por nível', () => {
+    const w = mkWorld(['hunter']);
+    const p = w.players.get(1) as Player;
+    const e = dummy(w, 'father', p.x + 40, p.y);
+    p.mods['h_mark'] = 2;
+    e.markBy = p.id;
+    e.markT = sec(2);
+    e.marks = HUNTER.mark.maxStacks;
+    expect(w.damageMul(p, e, 'proj')).toBeCloseTo(1.55);
+    expect(w.damageMul(p, e, 'aoe')).toBe(1);
+    expect(w.damageMul(p, e, 'melee')).toBe(1);
+  });
+
+  it('Virote Farpado perde 25% do dano depois de atravessar cada alvo', () => {
+    const w = mkWorld(['hunter']);
+    const p = w.players.get(1) as Player;
+    p.mods['h_pierce'] = 2;
+    quiet(w);
+    run(w, 1, () => ({ pressed: BTN.attack, ax: p.x + 100, ay: p.y }));
+    run(w, HUNTER.bolt.windup + 1, () => ({ ax: p.x + 100, ay: p.y }));
+    const bolt = w.projectiles.find((pr) => pr.owner === p.id && pr.kind === 'bolt');
+    expect(bolt).toMatchObject({ pierce: 2, pierceFalloff: 0.75 });
+  });
+});
+
 // ================================================================== afixos
+
+describe('entrada cinematográfica de chefes', () => {
+  it('congela combate, inputs e temporizadores no servidor e retoma após a apresentação', () => {
+    const w = mkWorld(['hunter'], true);
+    w.debug('god', 0, '');
+    w.debug('wave', 10, '');
+    w.phaseTimer = 0;
+    run(w, sec(2) + 1);
+    const intro = w.waveInfo().intro;
+    expect(intro).toBeTruthy();
+    expect(intro?.et).toBeGreaterThanOrEqual(0);
+    const p = w.players.get(1) as Player;
+    const x = p.x;
+    const timer = w.phaseTimer;
+    const boss = w.enemies.get(intro?.id ?? 0);
+    const stateT = boss?.stateT;
+    run(w, 12, () => ({ mx: 1, pressed: BTN.attack }));
+    expect(p.x).toBe(x);
+    expect(w.phaseTimer).toBe(timer);
+    expect((boss?.stateT ?? 0)).toBeGreaterThan(stateT ?? 0); // aparece antes do close
+    expect(w.waveInfo().intro?.t).toBe((intro?.t ?? 0) - 12);
+    run(w, intro?.reveal ?? 0);
+    const revealed = boss?.stateT;
+    run(w, 8);
+    expect(boss?.stateT).toBe(revealed); // restante do combate segue congelado
+    run(w, w.intro?.t ?? 0);
+    expect(w.waveInfo().intro).toBeNull();
+    expect(p.queue.length).toBe(0);
+    run(w, 3, () => ({ mx: 1 }));
+    expect(p.x).toBeGreaterThan(x);
+  });
+});
 
 describe('afixos de elite', () => {
   it('chance cresce com a onda até o teto; Sangrento cura ao acertar; Blindado resiste a poise', () => {

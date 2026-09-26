@@ -84,6 +84,17 @@ describe('conteúdo', () => {
     for (const c of CLASS_IDS) expect(UPGRADES.filter((u) => u.cls === c).length).toBeGreaterThanOrEqual(3);
     expect(new Set(UPGRADES.map((u) => u.id)).size).toBe(UPGRADES.length);
   });
+
+  it('melhorias têm valores coerentes com os limites anunciados', () => {
+    const byId = new Map(UPGRADES.map((u) => [u.id, u]));
+    expect(byId.get('h_rain')).toMatchObject({ maxStacks: 2, value: 2 });
+    expect(byId.get('h_mark')).toMatchObject({ maxStacks: 2, value: 0.015 });
+    expect(byId.get('h_ricochet')).toMatchObject({ maxStacks: 1, value: 0.4 });
+    expect(byId.get('t_taunt')).toMatchObject({ maxStacks: 2, value: 18 });
+    expect(byId.get('b_quake')).toMatchObject({ maxStacks: 2, value: 0.15 });
+    expect(byId.get('d_resonance')).toMatchObject({ maxStacks: 2, value: 3 });
+    expect(byId.get('n_lord')).toMatchObject({ maxStacks: 2, value: 0.25 });
+  });
 });
 
 describe('mapas dos três capítulos', () => {
@@ -116,14 +127,19 @@ describe('mapas dos três capítulos', () => {
 
 describe('configurações salvas', () => {
   it('normaliza valores do disco: faixas, escala de pixels e teclas inválidas', () => {
-    const s = normalizeSettings({ volumeMaster: 5, port: 80, pixelScale: 'fit', shake: -1, keys: { q: 'KeyZ', e: '<script>' } });
+    const s = normalizeSettings({ volumeMaster: 5, port: 80, pixelScale: 'fit', shake: -1, brightness: 2, keys: { q: 'KeyZ', e: '<script>' } });
     expect(s.volumeMaster).toBe(1);
     expect(s.port).toBe(1024);
     expect(s.pixelScale).toBe('fit');
     expect(s.shake).toBe(0);
+    expect(s.brightness).toBe(1);
     expect(s.keys.q).toBe('KeyZ');
     expect(s.keys.e).toBe(DEFAULT_KEYS.e);
     expect(normalizeSettings({ pixelScale: 'qualquer' }).pixelScale).toBe('integer');
     expect(normalizeSettings('lixo').port).toBe(7777);
+    expect(normalizeSettings('lixo').brightness).toBe(0);
+    expect(normalizeSettings('lixo').enhancedLighting).toBe(false);
+    expect(normalizeSettings({ enhancedLighting: true }).enhancedLighting).toBe(true);
+    expect(normalizeSettings({ enhancedLighting: 'true' }).enhancedLighting).toBe(false);
   });
 });

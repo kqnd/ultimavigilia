@@ -101,7 +101,7 @@ export type ClientMessage =
   | { t: 'again' }
   | { t: 'bye' }
   /** Somente com UV_DEBUG=1 no servidor (ferramenta de desenvolvimento/testes visuais). */
-  | { t: 'dbg'; c: 'wave' | 'ult' | 'god' | 'kill' | 'spawn'; n: number; s: string };
+  | { t: 'dbg'; c: 'wave' | 'ult' | 'god' | 'kill' | 'spawn' | 'phase'; n: number; s: string };
 
 const isStr = (v: unknown, max: number): v is string => typeof v === 'string' && v.length <= max;
 const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
@@ -163,7 +163,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     case 'bye':
       return { t: 'bye' };
     case 'dbg':
-      if (!(m.c === 'wave' || m.c === 'ult' || m.c === 'god' || m.c === 'kill' || m.c === 'spawn') || !inRange(m.n, 0, 200) || !isStr(m.s, 24)) return null;
+      if (!(m.c === 'wave' || m.c === 'ult' || m.c === 'god' || m.c === 'kill' || m.c === 'spawn' || m.c === 'phase') || !inRange(m.n, 0, 200) || !isStr(m.s, 24)) return null;
       return { t: 'dbg', c: m.c, n: Math.floor(m.n), s: m.s };
     default:
       return null;
@@ -290,6 +290,8 @@ export interface WaveInfo {
   tm: number;
   title: string;
   boss: number;
+  /** Apresentação sincronizada de chefe/minichefe; a simulação fica congelada enquanto t > 0. */
+  intro: { id: number; et: number; x: number; y: number; t: number; d: number; reveal: number } | null;
   /** Capítulo (1–3) e mapa ativo (índice em MAP_IDS). */
   ch: number;
   mp: number;
@@ -300,7 +302,9 @@ export interface WaveInfo {
   ev: ObjectiveInfo | null;
   cg: ObjectiveInfo | null;
   /** Objetivo de chefe: luas/totens ativos e total. */
-  bo: { k: 'moon' | 'totem'; n: number; tot: number; x: number } | null;
+    bo: { k: 'moon' | 'totem'; n: number; tot: number; x: number } | null;
+    /** Posição autoritativa do bardo nesta onda. */
+    bd: [number, number] | null;
 }
 
 export interface MatchStats {

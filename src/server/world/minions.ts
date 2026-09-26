@@ -62,13 +62,19 @@ export function spawnMinion(w: World, owner: number, kind: MinionKind, x: number
   return m;
 }
 
-function freeSpot(w: World, x: number, y: number, r: number): { x: number; y: number } {
-  if (circleFree(w.map, x, y, r)) return { x, y };
-  for (let k = 1; k <= 6; k++)
-    for (let a = 0; a < 8; a++) {
-      const nx = x + Math.cos((a / 8) * Math.PI * 2) * k * 10;
-      const ny = y + Math.sin((a / 8) * Math.PI * 2) * k * 10;
-      if (circleFree(w.map, nx, ny, r)) return { x: nx, y: ny };
+function freeSpot(w: World, x: number, y: number, r: number, ignoreId = 0): { x: number; y: number } {
+  const open = (nx: number, ny: number): boolean => {
+    if (!circleFree(w.map, nx, ny, r)) return false;
+    for (const m of w.minions.values())
+      if (m.id !== ignoreId && m.state !== 'dead' && m.kind !== 'survivor' && dist2(nx, ny, m.x, m.y) < (r + m.r + 3) ** 2) return false;
+    return true;
+  };
+  if (open(x, y)) return { x, y };
+  for (let k = 1; k <= 12; k++)
+    for (let a = 0; a < 12; a++) {
+      const nx = x + Math.cos((a / 12) * Math.PI * 2) * k * 10;
+      const ny = y + Math.sin((a / 12) * Math.PI * 2) * k * 10;
+      if (open(nx, ny)) return { x: nx, y: ny };
     }
   return { x, y };
 }
@@ -82,8 +88,10 @@ export function minionsOf(w: World, owner: number, kind?: MinionKind): Minion[] 
 /** Dano recebido por um servo/sobrevivente. */
 export function hitMinion(w: World, m: Minion, dmg: number): void {
   if (m.state === 'dead' || m.state === 'rise') return;
-  const d = Math.max(1, Math.round(dmg));
+  const d = Math.max(1, Math.round(dmg * (m.kind === 'survivor' ? w.guardianReductionAt(m.x, m.y) : 1)));
+  const before = m.hp;
   m.hp -= d;
+  if (m.kind === 'survivor') w.recordGuardianDamage(m.x, m.y, Math.min(before, d));
   w.emit({ k: 'fx', n: 'minionHit', x: m.x, y: m.y - 10, a: 0, o: m.kindIdx, r: d });
   if (m.hp <= 0) killMinion(w, m, 'killed');
 }
@@ -132,14 +140,20 @@ export function minionDamage(w: World, owner: Player | null, m: Minion, e: Enemy
   w.hitEnemy(owner, e, amount, { poise: o.poise, kb: o.kb, fromX: m.x, fromY: m.y, kind: o.kind, noProc: true, fromMinion: true });
 }
 
-function nearestEnemy(w: World, x: number, y: number, radius: number): Enemy | null {
+function nearestEnemy(w: World, m: Minion, radius: number): Enemy | null {
   let best: Enemy | null = null;
-  let bd = radius * radius;
+  let score = Infinity;
   for (const e of w.enemies.values()) {
     if (e.state === 'dead' || e.state === 'spawn' || e.state === 'air') continue;
-    const d = dist2(x, y, e.x, e.y);
-    if (d < bd) {
-      bd = d;
+    const d = dist(m.x, m.y, e.x, e.y);
+    if (d >= radius) continue;
+    // Distribui servos entre alvos próximos, sem perder a prioridade por distância.
+    let assigned = 0;
+    for (const other of w.minions.values())
+      if (other.id !== m.id && other.owner === m.owner && other.targetId === e.id && other.state !== 'dead') assigned++;
+    const candidate = d + assigned * 45;
+    if (candidate < score) {
+      score = candidate;
       best = e;
     }
   }
@@ -178,7 +192,7 @@ export function stepMinions(w: World): void {
     if (target && (target.state === 'dead' || target.state === 'air')) target = null;
     if (!target || --m.retarget <= 0) {
       const seek = m.kind === 'horde' ? 420 : T.seekRadius;
-      target = nearestEnemy(w, m.x, m.y, seek);
+      target = nearestEnemy(w, m, seek);
       // servos comuns não se afastam demais do dono
       if (target && m.kind === 'thrall' && dist(owner.x, owner.y, target.x, target.y) > T.leash) target = null;
       m.targetId = target?.id ?? 0;
@@ -218,6 +232,30 @@ export function stepMinions(w: World): void {
     }
     moveToward(w, m, tx, ty);
   }
+  separateMinions(w);
+}
+
+/** Servos não bloqueiam o combate, mas nunca devem ocupar o mesmo pixel. */
+function separateMinions(w: World): void {
+  const units = [...w.minions.values()].filter((m) => m.kind !== 'survivor' && m.state !== 'dead');
+  for (let i = 0; i < units.length; i++) for (let j = i + 1; j < units.length; j++) {
+    const a = units[i]!;
+    const b = units[j]!;
+    const min = a.r + b.r + 3;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const d = Math.hypot(dx, dy);
+    if (d >= min) continue;
+    const ux = d > 0.001 ? dx / d : 1;
+    const uy = d > 0.001 ? dy / d : 0;
+    const push = (min - d) / 2;
+    const pa = { x: a.x, y: a.y };
+    const pb = { x: b.x, y: b.y };
+    moveCircle(w.map, pa, a.r, -ux * push, -uy * push);
+    moveCircle(w.map, pb, b.r, ux * push, uy * push);
+    a.x = pa.x; a.y = pa.y;
+    b.x = pb.x; b.y = pb.y;
+  }
 }
 
 function moveToward(w: World, m: Minion, tx: number, ty: number): void {
@@ -234,6 +272,24 @@ function moveToward(w: World, m: Minion, tx: number, ty: number): void {
       vx = dir[0];
       vy = dir[1];
     }
+    // Com alvo atrás de um obstáculo, tenta contorná-lo em vez de pressionar a parede.
+    if (m.targetId !== 0 && !circleFree(w.map, m.x + vx * 12, m.y + vy * 12, m.r)) {
+      const base = Math.atan2(vy, vx);
+      const side = m.id % 2 === 0 ? 1 : -1;
+      for (const turn of [0.45, 0.9, 1.35, 1.8, 2.3]) {
+        let found = false;
+        for (const sign of [side, -side]) {
+          const a = base + turn * sign;
+          const cx = Math.cos(a);
+          const cy = Math.sin(a);
+          if (!circleFree(w.map, m.x + cx * 12, m.y + cy * 12, m.r)) continue;
+          vx = cx; vy = cy;
+          found = true;
+          break;
+        }
+        if (found) break;
+      }
+    }
   }
   m.facing = Math.atan2(vy, vx);
   const step = (m.speed / 30) * w.stormMinionMul();
@@ -249,7 +305,7 @@ function moveToward(w: World, m: Minion, tx: number, ty: number): void {
   if (m.stuckT > sec(3)) {
     const owner = w.players.get(m.owner);
     if (m.kind === 'thrall' && owner) {
-      const p = freeSpot(w, owner.x + 14, owner.y + 8, m.r);
+      const p = freeSpot(w, owner.x + 14, owner.y + 8, m.r, m.id);
       m.x = p.x;
       m.y = p.y;
     } else if (m.kind === 'horde') killMinion(w, m, 'expired');
@@ -314,12 +370,19 @@ export function clearMinions(w: World, owner?: number): void {
 /** Servo mais próximo que um inimigo comum/elite pode escolher atacar (aggro). */
 export function minionAggro(w: World, e: Enemy, playerDist: number): Minion | null {
   if (e.def.tier === 'boss' || e.def.objective || w.minions.size === 0) return null;
+  // Três em cinco inimigos tentam interceptar a escolta; os demais pressionam os jogadores.
+  if (w.objectives.event?.kind === 'escort' && w.objectives.event.state === 0 && e.id % 5 < 3) {
+    const survivor = [...w.minions.values()].find((m) => m.kind === 'survivor' && m.state !== 'dead' && m.state !== 'rise');
+    if (survivor) {
+      const d = dist(e.x, e.y, survivor.x, survivor.y);
+      if (d < 260 && d < Math.max(90, playerDist * 1.3)) return survivor;
+    }
+  }
   let best: Minion | null = null;
   let bd = Math.min(NECRO.thrall.aggroRadius, playerDist * 0.8);
   for (const m of w.minions.values()) {
-    if (m.state === 'dead' || m.state === 'rise') continue;
-    // o sobrevivente atrai a horda de mais longe
-    const reach = m.kind === 'survivor' ? Math.max(bd, 140) : bd;
+    if (m.state === 'dead' || m.state === 'rise' || m.kind === 'survivor') continue;
+    const reach = bd;
     const d = dist(e.x, e.y, m.x, m.y);
     if (d < reach && (!best || d < bd)) {
       best = m;
@@ -328,4 +391,3 @@ export function minionAggro(w: World, e: Enemy, playerDist: number): Minion | nu
   }
   return best;
 }
-

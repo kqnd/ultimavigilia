@@ -46,6 +46,7 @@ export const hunterKit: Kit = {
         x: shot.x, y: shot.y,
         vx: Math.cos(shot.dir) * b.speed, vy: Math.sin(shot.dir) * b.speed,
         r: b.radius, dmg: b.damage, range: b.range, pierce: b.pierce + (p.mods['h_pierce'] ?? 0), poise: b.poise, kb: b.knockback,
+        pierceFalloff: (p.mods['h_pierce'] ?? 0) > 0 ? HUNTER.upgrades.pierceDamageRetention : 1,
         ricochet: (p.mods['h_ricochet'] ?? 0) > 0 ? 1 : 0,
       });
       w.emit({ k: 'sfx', n: 'crossbow', x: p.x, y: p.y });
@@ -59,17 +60,18 @@ export const hunterKit: Kit = {
       const fan = p.mods['h_fan'] ? [-0.2, 0, 0.2] : [0];
       for (const off of fan) {
         const d = shot.dir + off;
+        const damageMul = off === 0 ? 1 : HUNTER.upgrades.fanSideDamage;
         w.spawnProjectile({
           kind: 'pierceBolt', team: 'p', owner: p.id,
           x: p.x + Math.cos(d) * 10, y: p.y - 6 + Math.sin(d) * 10,
           vx: Math.cos(d) * b.speed, vy: Math.sin(d) * b.speed,
-          r: b.radius, dmg: b.damage, range: b.range, pierce: b.pierce, poise: b.poise, kb: b.knockback,
+          r: b.radius, dmg: b.damage * damageMul, range: b.range, pierce: b.pierce, poise: b.poise * damageMul, kb: b.knockback * damageMul,
         });
       }
       w.emit({ k: 'sfx', n: 'crossbowHeavy', x: p.x, y: p.y });
     } else if (a.name === 'r' && firstActive(a)) {
       const r = HUNTER.rain;
-      const pulses = r.pulses + Math.round((p.mods['h_rain'] ?? 0) * 3);
+      const pulses = r.pulses + Math.round(w.mod(p, 'h_rain'));
       w.addZone({ kind: 'rain', x: a.tx, y: a.ty, r: r.radius, ttl: pulses * r.interval + 2, owner: p.id, a: pulses, b: r.interval });
       w.emit({ k: 'sfx', n: 'rainCall', x: p.x, y: p.y });
     }
@@ -97,7 +99,7 @@ export const hunterKit: Kit = {
     // Armadilha Explosiva (bifurcação): explosão ao redor
     if (owner && (owner.mods['h_blast'] ?? 0) > 0) {
       const dmg = w.mod(owner, 'h_blast');
-      for (const o of w.enemiesInCircle(z.x, z.y, 48)) if (o !== e) w.hitEnemy(owner, o, dmg, { poise: 20, kb: 140, fromX: z.x, fromY: z.y, kind: 'aoe' });
+      for (const o of w.enemiesInCircle(z.x, z.y, 48)) w.hitEnemy(owner, o, dmg, { poise: 20, kb: 140, fromX: z.x, fromY: z.y, kind: 'aoe' });
       w.breakInCircle(z.x, z.y, 48, dmg, owner);
       w.emit({ k: 'fx', n: 'trapBlast', x: z.x, y: z.y, a: 0, o: z.owner, r: 48 });
     }

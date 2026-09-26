@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * Áudio 100% procedural (WebAudio): nenhum arquivo externo. Barramentos separados para efeitos,
  * ambiente, interface e alertas; alertas abaixam ("ducking") os efeitos para permanecerem
@@ -5,12 +6,29 @@
  */
 
 type Recipe = (a: Audio, t: number, out: AudioNode, v: number) => void;
+const BARD_TRACKS = Object.values(import.meta.glob('./music/bardo/*.mp3', { eager: true, query: '?url', import: 'default' })) as string[];
+
+export function bardSpatial(sourceX: number, sourceY: number, listenerX: number, listenerY: number): { pan: number; gain: number } {
+  const dx = sourceX - listenerX;
+  const dy = sourceY - listenerY;
+  return {
+    pan: Math.max(-1, Math.min(1, dx / 220)),
+    gain: Math.max(0, 1 - Math.hypot(dx, dy) / 560) ** 1.5 * 0.66,
+  };
+}
 
 export class Audio {
   ctx: AudioContext | null = null;
   private master!: GainNode;
   private sfx!: GainNode;
   private amb!: GainNode;
+  private music!: GainNode;
+  private themeBus: GainNode | null = null;
+  private themeTimer: ReturnType<typeof setInterval> | null = null;
+  private themeNext = 0;
+  private themeBeat = 0;
+  private themeType = '';
+  private themePhase = 1;
   private alert!: GainNode;
   private ui!: GainNode;
   private noiseBuf!: AudioBuffer;
@@ -18,6 +36,13 @@ export class Audio {
   private listener = { x: 0, y: 0 };
   private vol = { master: 0.8, sfx: 0.9, amb: 0.6 };
   private ambStarted = false;
+  private bardEl: HTMLAudioElement | null = null;
+  private bardGain: GainNode | null = null;
+  private bardPan: StereoPannerNode | null = null;
+  private bardTrack = 0;
+  private bardFailures = 0;
+  private bardDisabled = false;
+  bardPaused = false;
 
   /** Precisa de um gesto do usuário para iniciar (política de autoplay). */
   unlock(): void {
@@ -36,10 +61,12 @@ export class Audio {
     this.master.connect(comp).connect(ctx.destination);
     this.sfx = ctx.createGain();
     this.amb = ctx.createGain();
+    this.music = ctx.createGain();
     this.alert = ctx.createGain();
     this.ui = ctx.createGain();
     this.sfx.connect(this.master);
     this.amb.connect(this.master);
+    this.music.connect(this.master);
     this.alert.connect(this.master);
     this.ui.connect(this.master);
     const len = ctx.sampleRate;
@@ -48,6 +75,57 @@ export class Audio {
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.applyVolumes();
     this.startAmbience();
+  }
+
+  /** Música real do bardo: uma fonte WebAudio estéreo, sem reiniciar entre ondas. */
+  setBard(source: { x: number; y: number } | null, listenerX: number, listenerY: number, active: boolean): void {
+    const ctx = this.ctx;
+    if (!ctx || !BARD_TRACKS.length || this.bardDisabled) return;
+    if (!this.bardEl && active) this.createBardTrack();
+    if (!this.bardEl || !this.bardGain || !this.bardPan) return;
+    const spatial = source ? bardSpatial(source.x, source.y, listenerX, listenerY) : { pan: 0, gain: 0 };
+    const duck = this.themeType ? 0.16 : 1;
+    const target = active && !this.bardPaused && source && ctx.state === 'running' ? spatial.gain * duck : 0;
+    this.bardGain.gain.setTargetAtTime(target, ctx.currentTime, 0.18);
+    this.bardPan.pan.setTargetAtTime(spatial.pan, ctx.currentTime, 0.12);
+    if (active && this.bardEl.paused && ctx.state === 'running') void this.bardEl.play().catch(() => undefined);
+  }
+
+  private createBardTrack(): void {
+    const ctx = this.ctx;
+    if (!ctx || !BARD_TRACKS.length) return;
+    const el = document.createElement('audio');
+    el.src = BARD_TRACKS[this.bardTrack % BARD_TRACKS.length] as string;
+    el.preload = 'auto';
+    el.onended = () => {
+      this.bardFailures = 0;
+      this.bardTrack = (this.bardTrack + 1) % BARD_TRACKS.length;
+      el.src = BARD_TRACKS[this.bardTrack] as string;
+      void el.play().catch(() => undefined);
+    };
+    el.onerror = () => {
+      if (++this.bardFailures >= BARD_TRACKS.length) {
+        this.bardDisabled = true;
+        el.pause();
+        return;
+      }
+      this.bardTrack = (this.bardTrack + 1) % BARD_TRACKS.length;
+      el.src = BARD_TRACKS[this.bardTrack] as string;
+      void el.play().catch(() => undefined);
+    };
+    const src = ctx.createMediaElementSource(el);
+    const gain = ctx.createGain();
+    const pan = ctx.createStereoPanner();
+    gain.gain.value = 0;
+    src.connect(gain).connect(pan).connect(this.music);
+    this.bardEl = el;
+    this.bardGain = gain;
+    this.bardPan = pan;
+  }
+
+  stopBard(): void {
+    this.bardEl?.pause();
+    if (this.bardGain && this.ctx) this.bardGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.08);
   }
 
   setVolumes(master: number, sfx: number, amb: number): void {
@@ -62,6 +140,112 @@ export class Audio {
     this.alert.gain.value = Math.min(1, this.vol.sfx * 1.1);
     this.ui.gain.value = this.vol.sfx * 0.8;
     this.amb.gain.value = this.vol.amb * 0.5;
+    this.music.gain.value = this.vol.amb * 0.62;
+  }
+
+  /** Nota com ataque/decay suaves e duas camadas levemente desafinadas (timbre de cordas). */
+  private scoreNote(t: number, dur: number, out: AudioNode, hz: number, gain: number, lead = false): void {
+    const ctx = this.ctx as AudioContext;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = lead ? 1800 : 900;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(gain, t + (lead ? 0.025 : 0.11));
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain * 0.42), t + dur * 0.63);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    f.connect(g).connect(out);
+    for (const [kind, cents, level] of [['triangle', 0, 1], [lead ? 'sine' : 'sawtooth', lead ? 4 : -5, lead ? 0.26 : 0.18]] as const) {
+      const osc = ctx.createOscillator();
+      osc.type = kind;
+      osc.frequency.value = hz;
+      osc.detune.value = cents;
+      const mix = ctx.createGain();
+      mix.gain.value = level;
+      osc.connect(mix).connect(f);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    }
+  }
+
+  /** Trilha procedural orquestral: frases com pausas, acentos e leve swing. */
+  startBossTheme(type: string, introSeconds: number): void {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== 'running' || this.themeType === type) return;
+    this.stopBossTheme();
+    this.themeType = type;
+    this.themePhase = 1;
+    const bus = ctx.createGain();
+    bus.gain.value = 0.85;
+    bus.connect(this.music);
+    this.themeBus = bus;
+    const dark = type === 'patriarch' || type === 'elderFather';
+    const cold = type === 'frostBride' || type === 'highAcolyte';
+    const root = dark ? 65.41 : cold ? 92.5 : type === 'moonDevourer' ? 82.41 : 73.42;
+    const bpm = type === 'alphaWolf' ? 132 : dark ? 112 : cold ? 104 : 118;
+    const beat = 60 / bpm;
+    const step = beat / 2;
+    const intro = Math.max(0.5, introSeconds);
+    const t = ctx.currentTime + 0.06;
+    // Crescendo acompanha a materialização; a percussão abre a luta.
+    for (const [i, ratio] of [1, 1.189, 1.498].entries())
+      this.scoreNote(t + i * 0.24, Math.max(0.6, intro - i * 0.24), bus, root * ratio * 2, 0.08 + i * 0.018);
+    this.noise(t, intro * 0.7, bus, { type: 'lowpass', f0: 110, f1: 600, gain: 0.08, attack: 0.25 });
+    this.tone(t + intro - 0.2, 0.65, bus, { type: 'sine', f0: 70, f1: 35, gain: 0.32 });
+    this.noise(t + intro - 0.2, 0.28, bus, { type: 'lowpass', f0: 600, f1: 110, gain: 0.22 });
+    this.themeNext = t + intro;
+    this.themeBeat = 0;
+    const schedule = (): void => {
+      if (this.themeBus !== bus || !this.ctx) return;
+      while (this.themeNext < this.ctx.currentTime + 0.8) {
+        const n = this.themeBeat++;
+        const bar = Math.floor(n / 8);
+        const pos = n % 8;
+        const chord = [1, 0.7937, 1.1892, 0.8909][bar % 4];
+        const base = root * chord;
+        const swing = pos % 2 ? step * 0.13 : 0;
+        const at = this.themeNext + swing;
+        const intensity = this.themePhase >= 2 ? 1.18 : 1;
+        if (pos === 0) {
+          for (const ratio of [2, 2.378, 2.997]) this.scoreNote(at, beat * 3.8, bus, base * ratio, 0.04 * intensity);
+          this.tone(at, 0.26, bus, { type: 'sine', f0: 78, f1: 38, gain: 0.27 * intensity });
+        }
+        if (pos === 3 || pos === 6) this.scoreNote(at, beat * 0.8, bus, base / 2, 0.14 * intensity);
+        if (pos === 4) {
+          this.noise(at, 0.18, bus, { type: 'bandpass', f0: 820, f1: 340, gain: 0.12 * intensity });
+          this.tone(at, 0.13, bus, { type: 'sine', f0: 95, f1: 60, gain: 0.14 });
+        }
+        if (pos === 2 || pos === 5 || (pos === 7 && bar % 2 === 1)) {
+          const phrase = [1.5, 1.189, 1.335, 1.5, 1.189, 1, 0.891, 1.189];
+          const pitch = phrase[(bar * 2 + pos) % phrase.length];
+          this.scoreNote(at, step * (pos === 7 ? 2.2 : 1.5), bus, base * pitch * 4, 0.065 * (pos === 5 ? 0.8 : 1) * intensity, true);
+        }
+        if (this.themePhase >= 2 && (pos === 1 || pos === 7))
+          this.noise(at, 0.075, bus, { type: 'highpass', f0: 2100, gain: 0.035 });
+        this.themeNext += step;
+      }
+    };
+    schedule();
+    this.themeTimer = setInterval(schedule, 180);
+  }
+
+  setBossPhase(phase: number): void {
+    this.themePhase = phase;
+  }
+
+  stopBossTheme(): void {
+    if (this.themeTimer) clearInterval(this.themeTimer);
+    this.themeTimer = null;
+    this.themeType = '';
+    const bus = this.themeBus;
+    this.themeBus = null;
+    if (bus && this.ctx) {
+      const t = this.ctx.currentTime;
+      bus.gain.cancelScheduledValues(t);
+      bus.gain.setValueAtTime(bus.gain.value, t);
+      bus.gain.linearRampToValueAtTime(0.0001, t + 0.5);
+      setTimeout(() => bus.disconnect(), 1200);
+    }
   }
 
   setListener(x: number, y: number): void {
@@ -241,6 +425,43 @@ const ALERTS = new Set(['bossWarn', 'waveStart', 'howl', 'transform', 'telegraph
 const UI_SOUNDS = new Set(['uiClick', 'uiHover', 'uiBack', 'upgrade']);
 
 const RECIPES: Record<string, Recipe> = {
+  guardianGuard: (a, t, o) => {
+    a.tone(t, 0.36, o, { type: 'triangle', f0: 280, f1: 430, gain: 0.13, attack: 0.03, vib: 5 });
+    a.noise(t, 0.2, o, { type: 'bandpass', f0: 900, f1: 1800, gain: 0.1 });
+  },
+  guardianBlockPhysical: (a, t, o) => {
+    a.noise(t, 0.13, o, { type: 'lowpass', f0: 1000, f1: 240, gain: 0.42 });
+    a.tone(t, 0.2, o, { type: 'triangle', f0: 230, f1: 100, gain: 0.19 });
+  },
+  guardianBlockProjectile: (a, t, o) => {
+    a.tone(t, 0.22, o, { type: 'sine', f0: 750, f1: 260, gain: 0.19, vib: 15 });
+    a.noise(t, 0.1, o, { type: 'highpass', f0: 2200, gain: 0.2 });
+  },
+  guardianBreak: (a, t, o) => {
+    a.noise(t, 0.5, o, { type: 'bandpass', f0: 1900, f1: 260, gain: 0.5 });
+    a.tone(t, 0.45, o, { type: 'sawtooth', f0: 290, f1: 60, gain: 0.21, lp: 900 });
+  },
+  guardianDash: (a, t, o) => {
+    a.noise(t, 0.35, o, { type: 'bandpass', f0: 420, f1: 1200, gain: 0.25 });
+    a.tone(t, 0.3, o, { type: 'triangle', f0: 110, f1: 210, gain: 0.14 });
+  },
+  guardianImpact: (a, t, o) => {
+    a.noise(t, 0.24, o, { type: 'lowpass', f0: 1100, f1: 170, gain: 0.55 });
+    a.tone(t, 0.28, o, { type: 'square', f0: 125, f1: 50, gain: 0.19, lp: 600 });
+  },
+  guardianCounter: (a, t, o) => {
+    a.noise(t, 0.17, o, { type: 'bandpass', f0: 800, f1: 2200, gain: 0.32 });
+    a.tone(t, 0.23, o, { type: 'triangle', f0: 440, f1: 180, gain: 0.19 });
+  },
+  guardianPlant: (a, t, o) => {
+    a.tone(t, 0.65, o, { type: 'sawtooth', f0: 78, f1: 118, gain: 0.16, lp: 750, attack: 0.08 });
+    a.noise(t + 0.12, 0.25, o, { type: 'lowpass', f0: 600, gain: 0.27 });
+  },
+  guardianBurst: (a, t, o) => {
+    a.tone(t, 0.65, o, { type: 'sawtooth', f0: 180, f1: 48, gain: 0.25, lp: 1000 });
+    a.noise(t, 0.56, o, { type: 'lowpass', f0: 1600, f1: 170, gain: 0.5 });
+    a.tone(t + 0.05, 0.43, o, { type: 'triangle', f0: 510, f1: 125, gain: 0.16 });
+  },
   // --- Berserker
   axeHit: (a, t, o) => {
     a.noise(t, 0.1, o, { type: 'lowpass', f0: 1400, f1: 300, gain: 0.55 });

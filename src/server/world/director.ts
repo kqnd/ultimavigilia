@@ -139,6 +139,7 @@ export class Director {
         const e = w.spawnEnemy(this.bossType, bp.x, bp.y, this.players);
         if (this.bossType === 'patriarch') e.summonsLeft = ATK.patriarch.summon.perPhase;
         w.emit({ k: 'boss', et: e.typeIdx, ph: 1 });
+        w.startBossIntro(e);
         this.bossType = null;
       }
     }
@@ -170,7 +171,8 @@ export class Director {
       if (--g.t > 0) continue;
       g.types.forEach((t, i) => {
         const pos = this.freeAround(g.gate.x, g.gate.y, ENEMIES[t].radius, i);
-        w.spawnEnemy(t, pos.x, pos.y, this.players);
+        const e = w.spawnEnemy(t, pos.x, pos.y, this.players);
+        if (ENEMIES[t].miniboss) w.startBossIntro(e);
       });
       g.types = [];
     }

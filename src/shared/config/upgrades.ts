@@ -31,6 +31,7 @@ const U = (id: string, name: string, cls: ClassId | null, maxStacks: number, val
 
 /** Nome legível de cada bifurcação (interface). */
 export const FORKS: Record<string, { name: string }> = {
+  guardian_path: { name: 'Caminho do Guardião' },
   hunter_path: { name: 'Caminho do Caçador' },
   vampire_path: { name: 'Caminho do Sangue' },
   berserker_path: { name: 'Caminho da Fúria' },
@@ -49,12 +50,12 @@ export const UPGRADES: readonly UpgradeDef[] = [
   U('g_bond', 'Laço de Vigília', null, 2, 0.3, 'hands', 'Revive aliados 30% mais rápido.'),
   U('g_skin', 'Couro Curtido', null, 2, 0.08, 'shield', '-8% de dano recebido.'),
   // --- Caçador ---
-  U('h_pierce', 'Virote Farpado', 'hunter', 2, 1, 'bolt', 'Virotes básicos atravessam +1 inimigo.'),
+  U('h_pierce', 'Virote Farpado', 'hunter', 2, 1, 'bolt', 'Virotes básicos atravessam +1 inimigo; após cada alvo, o virote mantém 75% do dano.'),
   U('h_traps', 'Armadilheiro', 'hunter', 2, 1, 'trap', '+1 armadilha ativa simultânea e -1s de recarga da armadilha.'),
-  U('h_rain', 'Chuva Densa', 'hunter', 2, 3, 'rain', 'Chuva de Prata dispara +3 saraivadas.'),
-  U('h_mark', 'Presa Profunda', 'hunter', 2, 0.03, 'eye', '+3% de dano por marca em Presa Marcada.'),
-  U('h_fan', 'Recuo em Leque', 'hunter', 1, 2, 'fan', 'Recuo Preciso dispara +2 virotes em leque.'),
-  U('h_ricochet', 'Virote Ricocheteante', 'hunter', 1, 0.6, 'ricochet', 'BIFURCAÇÃO: cada virote básico ricocheteia 1 vez para outro inimigo a até 110px com 60% do dano.', 'hunter_path'),
+  U('h_rain', 'Chuva Densa', 'hunter', 2, 2, 'rain', 'Chuva de Prata dispara +2 saraivadas.'),
+  U('h_mark', 'Presa Profunda', 'hunter', 2, 0.015, 'eye', '+1,5% de dano de projéteis por marca em Presa Marcada.'),
+  U('h_fan', 'Recuo em Leque', 'hunter', 1, 2, 'fan', 'Recuo Preciso dispara +2 virotes laterais, cada um com 50% do dano.'),
+  U('h_ricochet', 'Virote Ricocheteante', 'hunter', 1, 0.4, 'ricochet', 'BIFURCAÇÃO: cada virote básico ricocheteia 1 vez para outro inimigo a até 95px com 40% do dano.', 'hunter_path'),
   U('h_blast', 'Armadilha Explosiva', 'hunter', 1, 34, 'blast', 'BIFURCAÇÃO: armadilhas explodem ao disparar: 34 de dano e empurrão em 48px (ainda prendem o alvo principal).', 'hunter_path'),
   // --- Mago ---
   U('m_area', 'Selo Ampliado', 'mage', 2, 0.25, 'snow', 'Selo Glacial com +25% de raio.'),
@@ -64,9 +65,11 @@ export const UPGRADES: readonly UpgradeDef[] = [
   U('m_blink', 'Passo Longo', 'mage', 1, 40, 'blink', 'Passo Etéreo alcança +40px.'),
   // --- Tank ---
   U('t_guard', 'Guarda Temperada', 'tank', 2, 0.25, 'shield', 'Bloqueios consomem 25% menos stamina.'),
-  U('t_taunt', 'Eco da Provocação', 'tank', 2, 50, 'horn', 'Provocação com +50px de raio.'),
-  U('t_bastion', 'Bastião Vivo', 'tank', 1, 4, 'tower', 'Bastião cura aliados em 4 de vida por segundo.'),
+  U('t_taunt', 'Eco da Investida', 'tank', 2, 18, 'horn', 'Investida de Escudo com +18px de raio de provocação.'),
+  U('t_bastion', 'Almas Generosas', 'tank', 1, 4, 'tower', 'Última Vigília cura aliados em 4 de vida por segundo.'),
   U('t_mace', 'Maça Pesada', 'tank', 2, 0.25, 'mace', 'Golpe de Maça: +25% de dano e de stagger.'),
+  U('t_protector', 'Juramento do Protetor', 'tank', 1, 0.06, 'shield', 'BIFURCAÇÃO: Última Vigília protege aliados e sobrevivente em mais 6%; Investida provoca por +1s.', 'guardian_path'),
+  U('t_vanguard', 'Juramento da Vanguarda', 'tank', 1, 0.25, 'mace', 'BIFURCAÇÃO: contra-ataque perfeito e Investida causam +25% de dano.', 'guardian_path'),
   // --- Vampiro ---
   U('v_fangs', 'Presas Afiadas', 'vampire', 2, 8, 'fang', 'Mordida: +8 de dano e +6 no teto de cura por uso.'),
   U('v_thirst', 'Sede Insaciável', 'vampire', 2, 2, 'drop', '+2 acúmulos máximos de Sede.'),
@@ -77,18 +80,18 @@ export const UPGRADES: readonly UpgradeDef[] = [
   // --- Berserker ---
   U('b_blood', 'Sangue Fervente', 'berserker', 2, 0.4, 'drop', '+40% de Fúria gerada ao causar e receber dano.'),
   U('b_cleave', 'Machado Largo', 'berserker', 2, 0.15, 'axe', 'Combo e Rasgo Frenético com +15% de alcance.'),
-  U('b_quake', 'Salto Sísmico', 'berserker', 2, 0.3, 'quake', 'Salto Brutal: +30% de raio no pouso e -1s de recarga.'),
+  U('b_quake', 'Salto Sísmico', 'berserker', 2, 0.15, 'quake', 'Salto Brutal: +15% de raio no pouso e -0,5s de recarga.'),
   U('b_rage', 'Fúria Ofensiva', 'berserker', 1, 0.2, 'fury', 'BIFURCAÇÃO: com Fúria acima de 60, +20% de dano adicional.', 'berserker_path'),
-  U('b_iron', 'Mente de Ferro', 'berserker', 1, 0.35, 'helm', 'BIFURCAÇÃO: durante a Loucura recebe -35% de dano (em vez de +20%) e não sofre exaustão.', 'berserker_path'),
+  U('b_iron', 'Mente de Ferro', 'berserker', 1, 1.5, 'helm', 'BIFURCAÇÃO: durante a Loucura recebe dano normal (em vez de +20%) e a exaustão dura 1,5s.', 'berserker_path'),
   // --- Dog ---
   U('d_pulse', 'Pulso Extra', 'dog', 2, 1, 'rings', 'GRITO DO FIM ganha +1 pulso.'),
   U('d_throat', 'Garganta de Ferro', 'dog', 2, 0.2, 'mouth', 'Grito com +20% de alcance.'),
   U('d_magnet', 'Ímã Forte', 'dog', 2, 0.4, 'magnet', 'Polaridade puxa 40% mais forte e com +20px de raio.'),
-  U('d_resonance', 'Ressonância Rápida', 'dog', 2, 5, 'wave', 'Ressonância precisa de 5 acertos a menos.'),
+  U('d_resonance', 'Ressonância Rápida', 'dog', 2, 3, 'wave', 'Ressonância precisa de 3 acertos a menos.'),
   // --- Necromante ---
-  U('n_bones', 'Ossos Afiados', 'necromancer', 2, 1, 'bone', 'Rajada Óssea atravessa +1 inimigo e causa +3 de dano.'),
+  U('n_bones', 'Ossos Afiados', 'necromancer', 2, 1, 'bone', 'Rajada Óssea atravessa +1 inimigo, causa +2 de dano e mantém 75% do dano após cada alvo.'),
   U('n_ritual', 'Ritualista', 'necromancer', 1, 0.2, 'hand', 'Com 3+ de Essência, a Mão da Sepultura gasta 1 para amaldiçoar: +25% de raio e inimigos dentro causam -20% de dano.'),
-  U('n_lord', 'Senhor dos Mortos', 'necromancer', 2, 0.4, 'skull', 'BIFURCAÇÃO: servos com +40% de vida e +4s de duração.', 'necro_path'),
+  U('n_lord', 'Senhor dos Mortos', 'necromancer', 2, 0.25, 'skull', 'BIFURCAÇÃO: servos com +25% de vida e +2s de duração.', 'necro_path'),
   U('n_reaper', 'Ceifador de Almas', 'necromancer', 1, 30, 'scythe', 'BIFURCAÇÃO: servos que morrem, expiram ou são sacrificados explodem (30 de dano, ×2 contra elites) e curam você em 5.', 'necro_path'),
 ];
 

@@ -4,13 +4,13 @@
  */
 import { AFFIX_IDS, AFFIX_RULES, affixChance, affixesFor, type AffixId } from '../../shared/config/affixes.js';
 import { CHAPTERS, type ChapterDef, chapterOfWave, CLIMATE_EFFECTS, type Route, ROUTE, TRAVEL_SECONDS } from '../../shared/config/chapters.js';
-import { BERSERKER, CLASSES, type ClassId, NECRO, PLAYER_RULES, VAMPIRE } from '../../shared/config/classes.js';
+import { BERSERKER, CLASSES, type ClassId, HUNTER, NECRO, PLAYER_RULES, TANK, VAMPIRE } from '../../shared/config/classes.js';
 import { BOSS_STAGGER_IMMUNITY, CC_DR, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
 import { BASE_OFFER_COUNT, INTERMISSION_SECONDS, MAX_OFFER_COUNT, UPGRADE_BY_ID } from '../../shared/config/upgrades.js';
 import { SCALING, TOTAL_WAVES, WAVES, waveInChapter } from '../../shared/config/waves.js';
 import { DT, sec, TICK_RATE, TILE } from '../../shared/constants.js';
 import { circleFree, lineOfSight, moveCircle, resolveCircle } from '../../shared/collision.js';
-import { type ArenaMap, blocksShot, breakableAt, cloneMap, getMap, mapIndex, WORLD_H, WORLD_W } from '../../shared/map.js';
+import { type ArenaMap, Obst, blocksShot, breakableAt, cloneMap, getMap, mapIndex, WORLD_H, WORLD_W } from '../../shared/map.js';
 import { angleDiff, clamp, dist, dist2, Rng } from '../../shared/math.js';
 import { BTN, type InputFrame, type MoveParams, stepMovement } from '../../shared/movement.js';
 import {
@@ -22,6 +22,7 @@ import {
 import { brainFor } from './ai/brains.js';
 import { Director } from './director.js';
 import { kitFor } from './kits/index.js';
+import { detonateGuardian } from './kits/tank.js';
 import { addPickup, damageBreakable, resetBreakables, respawnSomeBreakables, stepPickups } from './loot.js';
 import { clearMinions, hitMinion, minionAggro, stepMinions } from './minions.js';
 import { FlowField } from './nav.js';
@@ -47,6 +48,8 @@ export interface HitOpts {
   raw?: boolean;
   /** Dano vindo de servo (não dispara passivas de ataque do dono). */
   fromMinion?: boolean;
+  /** Explosões de suprema não carregam outra suprema em hordas densas. */
+  noUlt?: boolean;
 }
 
 export interface EnemyHit {
@@ -69,6 +72,7 @@ export class World {
   map: ArenaMap = cloneMap(getMap('village'));
   chapter: ChapterDef = CHAPTERS[0] as ChapterDef;
   readonly rng: Rng;
+  readonly seed: number;
   readonly solo: boolean;
   tick = 0;
   phase: Phase = 'lobby';
@@ -87,6 +91,8 @@ export class World {
   readonly fields = new Map<number, FlowField>();
   /** Campo de fluxo até a fogueira (carrinho funerário, sobrevivente). */
   fireField: FlowField | null = null;
+  /** Caminho dos inimigos até o sobrevivente durante a escolta. */
+  escortField: FlowField | null = null;
   readonly director: Director;
   readonly objectives: Objectives;
   /** Dano já causado a chefes por cada invocação do Exército (teto por conjuração). */
@@ -107,6 +113,8 @@ export class World {
   offerBonus = new Map<number, string>();
   picks = new Map<number, string>();
   bossId = 0;
+  intro: WaveInfo['intro'] = null;
+  bard: { x: number; y: number } | null = null;
   matchStartTick = 0;
   lastKillTick = 0;
   onPhaseChange: ((phase: Phase) => void) | null = null;
@@ -115,6 +123,7 @@ export class World {
   onRouteChange: (() => void) | null = null;
 
   constructor(opts: WorldOptions) {
+    this.seed = opts.seed;
     this.rng = new Rng(opts.seed);
     this.solo = opts.solo;
     this.director = new Director(this);
@@ -192,6 +201,11 @@ export class World {
       buffs: { madness: 0, exhausted: 0, feast: 0, tauntDr: 0, guardBroken: 0, chill: 0, burn: 0 },
       blocking: false,
       blockDir: 0,
+      guardianCharge: 0,
+      guardianCounter: false,
+      guardianCounterUntil: 0,
+      guardianGuardStart: -9999,
+      guardianLastUltBlock: -9999,
       thirst: 0,
       thirstT: 0,
       resonance: 0,
@@ -290,6 +304,7 @@ export class World {
     for (const id of this.fields.keys()) this.fields.set(id, new FlowField(this.map));
     this.fireField = new FlowField(this.map);
     this.fireField.compute(this.map.campfire.x, this.map.campfire.y + 48);
+    this.escortField = new FlowField(this.map);
     this.storm = { active: false, t: 0 };
     let i = 0;
     for (const p of this.players.values()) {
@@ -316,6 +331,7 @@ export class World {
     clearMinions(this);
     this.armyBossDamage.clear();
     this.bossId = 0;
+    this.intro = null;
   }
 
   // ------------------------------------------------------------------ partida
@@ -357,6 +373,11 @@ export class World {
     p.essence = 0;
     p.bonusCards = 0;
     p.comboStep = 0;
+    p.guardianCharge = 0;
+    p.guardianCounter = false;
+    p.guardianCounterUntil = 0;
+    p.guardianGuardStart = -9999;
+    p.guardianLastUltBlock = -9999;
   }
 
   private setPhase(ph: Phase): void {
@@ -365,6 +386,7 @@ export class World {
   }
 
   private beginWave(n: number): void {
+    this.intro = null;
     this.wave = n;
     const def = WAVES[n - 1];
     this.waveTitle = def?.title ?? '';
@@ -372,6 +394,7 @@ export class World {
     const risk = this.route === 'risk';
     this.director.start(n, players, { budgetMul: risk ? ROUTE.risk.budgetMul : 1, extraElites: risk ? ROUTE.risk.extraElites : 0 });
     this.objectives.beginWave(n);
+    this.pickBardSpot();
     this.phaseTimer = sec(3);
     this.lastKillTick = this.tick;
     this.offers.clear();
@@ -379,6 +402,60 @@ export class World {
     this.picks.clear();
     this.storm = { active: false, t: this.chapter.storm ? sec(this.chapter.storm.every * 0.6) : 0 };
     this.setPhase('wave');
+  }
+
+  /** Um local cênico, alcançável e estável para todos os clientes durante a onda. */
+  private pickBardSpot(): void {
+    const map = this.map;
+    const previous = this.bard;
+    const field = new FlowField(map);
+    const start = map.starts[0] ?? map.campfire;
+    field.compute(start.x, start.y);
+    const valid = (x: number, y: number): boolean =>
+      circleFree(map, x, y, 12) && field.at(x, y) !== 0xffff &&
+      dist2(x, y, map.campfire.x, map.campfire.y) > 340 ** 2 &&
+      map.starts.every((s) => dist2(x, y, s.x, s.y) > 420 ** 2) &&
+      map.spawns.every((s) => dist2(x, y, s.x, s.y) > 95 ** 2) &&
+      dist2(x, y, map.points.boss.x, map.points.boss.y) > 110 ** 2 &&
+      (!previous || dist2(x, y, previous.x, previous.y) > 180 ** 2);
+    const candidates: { x: number; y: number }[] = [];
+    const scenic = new Set([Obst.Ruin, Obst.Tree, Obst.Tomb, Obst.Crypt, Obst.Hedge, Obst.Pillar, Obst.Statue, Obst.Obelisk, Obst.House]);
+    for (const o of map.objects) {
+      if (!scenic.has(o.kind)) continue;
+      const cx = (o.tx + o.tw / 2) * TILE;
+      const cy = (o.ty + o.th / 2) * TILE;
+      for (const [dx, dy] of [[-64, 0], [64, 0], [0, -64], [0, 64], [-48, -48], [48, -48], [-48, 48], [48, 48]]) {
+        const x = Math.round((cx + dx) / TILE) * TILE + TILE / 2;
+        const y = Math.round((cy + dy) / TILE) * TILE + TILE / 2;
+        if (valid(x, y)) candidates.push({ x, y });
+      }
+    }
+    if (!candidates.length) for (let ty = 2; ty < map.h - 2; ty += 2) for (let tx = 2; tx < map.w - 2; tx += 2) {
+      const x = (tx + 0.5) * TILE;
+      const y = (ty + 0.5) * TILE;
+      if (valid(x, y)) candidates.push({ x, y });
+    }
+    const roll = new Rng((this.seed ^ Math.imul(this.wave, 0x9e3779b9) ^ Math.imul(mapIndex(map.id), 0x85ebca6b)) >>> 0);
+    this.bard = candidates.length ? candidates[roll.int(0, candidates.length - 1)] as { x: number; y: number } : null;
+  }
+
+  guardianReductionAt(x: number, y: number): number {
+    let reduction = 0;
+    for (const p of this.players.values()) {
+      if (p.status !== 0 || p.cls !== 'tank' || p.action?.name !== 'r') continue;
+      if (dist2(x, y, p.x, p.y) > TANK.bastion.radius ** 2) continue;
+      reduction = Math.max(reduction, TANK.bastion.reduction + (p.mods['t_protector'] ? 0.06 : 0));
+    }
+    return 1 - reduction;
+  }
+
+  recordGuardianDamage(x: number, y: number, actual: number): void {
+    if (actual <= 0) return;
+    for (const p of this.players.values()) {
+      if (p.status !== 0 || p.cls !== 'tank' || p.action?.name !== 'r') continue;
+      if (dist2(x, y, p.x, p.y) > TANK.bastion.radius ** 2) continue;
+      p.guardianCharge = Math.min(TANK.bastion.bonusCap / TANK.bastion.damageRatio, p.guardianCharge + actual);
+    }
   }
 
   private beginIntermission(): void {
@@ -538,13 +615,16 @@ export class World {
   god = false;
 
   /** Comandos de depuração (apenas com UV_DEBUG=1). */
-  debug(c: 'wave' | 'ult' | 'god' | 'kill' | 'spawn', n: number, s: string): void {
+  debug(c: 'wave' | 'ult' | 'god' | 'kill' | 'spawn' | 'phase', n: number, s: string): void {
     if (c === 'wave' && n >= 1 && n <= TOTAL_WAVES) {
       const ch = chapterOfWave(n);
       if (ch.n !== this.chapter.n) this.setChapter(ch.n);
       else this.clearTransient();
       this.bossId = 0;
       this.beginWave(n);
+    } else if (c === 'phase') {
+      const boss = this.enemies.get(this.bossId);
+      if (boss?.def.tier === 'boss' && boss.state !== 'dead') boss.hp = Math.min(boss.hp, Math.round(boss.maxHp * 0.28));
     } else if (c === 'ult') {
       for (const p of this.players.values()) {
         p.ult = PLAYER_RULES.ultMax;
@@ -586,6 +666,16 @@ export class World {
   step(): void {
     if (this.paused) return;
     this.tick++;
+    if (this.intro) {
+      // Congelamento autoritativo: inputs recebidos durante a apresentação não
+      // ficam enfileirados para disparar todos de uma vez na retomada.
+      for (const p of this.players.values()) p.queue.length = 0;
+      const arriving = this.enemies.get(this.intro.id);
+      if (arriving?.state === 'spawn' && this.intro.t > this.intro.d - this.intro.reveal)
+        arriving.stateT = Math.min(20, arriving.stateT + 1);
+      if (--this.intro.t <= 0) this.intro = null;
+      return;
+    }
     if (this.phase === 'lobby' || this.phase === 'victory' || this.phase === 'defeat') return;
     if (this.phase === 'travel') {
       // cinemática: ninguém se move; ao fim começa a primeira onda do novo capítulo
@@ -612,6 +702,10 @@ export class World {
     }
     // fase de onda
     if (this.tick % 6 === 0) this.updateFields();
+    if (this.tick % 15 === 0 && this.escortField) {
+      const survivor = [...this.minions.values()].find((m) => m.kind === 'survivor' && m.state !== 'dead');
+      if (survivor) this.escortField.compute(survivor.x, survivor.y);
+    }
     // campo até a fogueira acompanha caixas quebradas (carrinho e sobrevivente)
     if (this.tick % 30 === 0 && this.fireField) this.fireField.compute(this.map.campfire.x, this.map.campfire.y + 48);
     this.rebuildHash();
@@ -619,6 +713,7 @@ export class World {
     this.stepPlayers(false);
     if (this.phaseTimer > 0) this.phaseTimer--;
     else this.director.tick();
+    if (this.intro) return;
     this.stepEnemies();
     stepMinions(this);
     this.stepProjectiles();
@@ -695,7 +790,7 @@ export class World {
     const thirstSpeed = p.cls === 'vampire' ? p.thirst * VAMPIRE.thirst.speedPerStack : 0;
     let moveMul = 1;
     if (p.action) moveMul = p.action.moveMul;
-    if (p.blocking) moveMul = Math.min(moveMul, 0.45);
+    if (p.blocking) moveMul = Math.min(moveMul, TANK.guard.moveMul);
     if (p.buffs.guardBroken > 0 || p.status !== 0) moveMul = 0;
     if (p.revivingId) moveMul = Math.min(moveMul, 0.25);
     let speed = b.speed * (1 + this.mod(p, 'g_agility') + thirstSpeed);
@@ -739,6 +834,10 @@ export class World {
       else if (!this.canAct(p)) p.buffered = { slot: 'dodge', t: PLAYER_RULES.inputBufferTicks };
     }
     if (pressedSlot && !peaceful) {
+      if (pressedSlot === 'r' && p.cls === 'tank' && p.action?.name === 'r' && p.action.t >= 8) {
+        detonateGuardian(this, p);
+        return;
+      }
       if (this.canAct(p)) this.tryStart(p, pressedSlot);
       else p.buffered = { slot: pressedSlot, t: PLAYER_RULES.inputBufferTicks };
     }
@@ -882,8 +981,9 @@ export class World {
     if (p.iframes > 0) p.iframes--;
     const madnessBefore = p.buffs.madness;
     for (const k of Object.keys(p.buffs) as (keyof Player['buffs'])[]) if (p.buffs[k] > 0) p.buffs[k]--;
-    if (madnessBefore === 1 && p.buffs.madness === 0 && p.cls === 'berserker' && !(p.mods['b_iron'] ?? 0)) {
-      p.buffs.exhausted = sec(BERSERKER.madness.exhaustion);
+    if (madnessBefore === 1 && p.buffs.madness === 0 && p.cls === 'berserker') {
+      const exhaustion = (p.mods['b_iron'] ?? 0) > 0 ? this.mod(p, 'b_iron') : BERSERKER.madness.exhaustion;
+      p.buffs.exhausted = sec(exhaustion);
       this.emit({ k: 'fx', n: 'exhausted', x: p.x, y: p.y - 20, a: 0, o: p.id, r: 0 });
     }
     if (p.comboT > 0 && --p.comboT === 0) p.comboStep = 0;
@@ -1005,12 +1105,13 @@ export class World {
   /** Multiplicador de dano recebido pelo jogador (classes, zonas, melhorias). */
   private damageTakenMul(p: Player): number {
     let m = 1;
+    m *= this.guardianReductionAt(p.x, p.y);
     if (p.inBastion) m *= 0.6;
     if (p.buffs.tauntDr > 0) m *= 0.7;
     m *= 1 - this.mod(p, 'g_skin');
     if (p.surrounded) m *= 1.25;
     if (p.cls === 'berserker') {
-      if (p.buffs.madness > 0) m *= p.mods['b_iron'] ? 1 - this.mod(p, 'b_iron') : 1 + BERSERKER.madness.damageTaken;
+      if (p.buffs.madness > 0) m *= p.mods['b_iron'] ? 1 : 1 + BERSERKER.madness.damageTaken;
       else m *= 1 + BERSERKER.fury.maxDamageTaken * (p.rage / BERSERKER.fury.max);
     }
     return m;
@@ -1027,7 +1128,9 @@ export class World {
       if (r !== null) return r;
     }
     const dmg = h.dmg * this.damageTakenMul(p);
+    const hpBefore = p.hp;
     this.damagePlayerRaw(p, dmg, h.heavy);
+    this.recordGuardianDamage(p.x, p.y, hpBefore - p.hp);
     // clima: a horda adaptada aplica frio ou queimadura
     const onHit = this.chapter.enemies.onHit;
     if (onHit === 'chill') p.buffs.chill = sec(CLIMATE_EFFECTS.chill.duration);
@@ -1079,13 +1182,14 @@ export class World {
 
   // ------------------------------------------------------------------ dano a inimigos
 
-  damageMul(p: Player, e: Enemy): number {
+  damageMul(p: Player, e: Enemy, kind?: HitOpts['kind']): number {
     let m = 1 + this.mod(p, 'g_fury');
     if (p.cls === 'vampire') {
       m += p.thirst * VAMPIRE.thirst.damagePerStack;
       if (p.buffs.feast > 0) m += VAMPIRE.feast.damageBonus;
     }
-    if (p.cls === 'hunter' && e.markBy === p.id && e.markT > 0) m += e.marks * (0.08 + this.mod(p, 'h_mark'));
+    // A marca recompensa a pontaria do Caçador, sem multiplicar armadilhas e áreas.
+    if (p.cls === 'hunter' && kind === 'proj' && e.markBy === p.id && e.markT > 0) m += e.marks * (HUNTER.mark.bonusPerStack + this.mod(p, 'h_mark'));
     if (p.cls === 'berserker') {
       m += BERSERKER.fury.maxDamageBonus * (p.rage / BERSERKER.fury.max);
       if (p.buffs.madness > 0) m += BERSERKER.madness.damageBonus;
@@ -1098,14 +1202,14 @@ export class World {
     if (e.state === 'dead' || e.state === 'spawn') return 0;
     if (e.state === 'roar' && e.def.tier === 'boss') base *= 0.35;
     base *= bossObjectiveDamageMul(this, e);
-    const mul = p && !o.raw ? this.damageMul(p, e) : 1;
+    const mul = p && !o.raw ? this.damageMul(p, e, o.kind) : 1;
     const dmg = Math.max(1, Math.round(base * mul));
     e.hp -= dmg;
     e.lastHitTick = this.tick;
     this.emit({ k: 'dmg', tg: 'e', ti: e.id, v: dmg, x: e.x, y: e.y - e.r - 6, c: mul >= 1.3 ? 'crit' : 'n', s: p?.id ?? 0 });
     if (p) {
       p.stats.damage += dmg;
-      if (!e.def.objective || e.type === 'funeralCart' || e.type === 'ritualist') this.addUlt(p, dmg * p.base.ultPerDamage);
+      if (!o.noUlt && (!e.def.objective || e.type === 'funeralCart' || e.type === 'ritualist')) this.addUlt(p, dmg * p.base.ultPerDamage);
       if (!o.fromMinion) {
         kitFor(p.cls).onDealt?.(this, p, e, dmg, o);
         if (p.cls === 'berserker') this.addRage(p, dmg * BERSERKER.fury.perDamageDealt);
@@ -1293,6 +1397,7 @@ export class World {
       dmg: 10,
       range: 300,
       pierce: 0,
+      pierceFalloff: 1,
       poise: 5,
       kb: 20,
       hit: new Set(),
@@ -1319,8 +1424,9 @@ export class World {
   /** Alvo de ricochete: inimigo mais próximo ainda não atingido. */
   private ricochetFrom(pr: Projectile, from: Enemy): void {
     let best: Enemy | null = null;
-    let bd = 110 * 110;
-    for (const e of this.enemiesInCircle(from.x, from.y, 110)) {
+    const ricochetRange = HUNTER.upgrades.ricochetRange;
+    let bd = ricochetRange * ricochetRange;
+    for (const e of this.enemiesInCircle(from.x, from.y, ricochetRange)) {
       if (e === from || pr.hit.has(e.id)) continue;
       const d = dist2(e.x, e.y, from.x, from.y);
       if (d < bd) {
@@ -1333,7 +1439,7 @@ export class World {
     const sp = Math.hypot(pr.vx, pr.vy);
     const np = this.spawnProjectile({
       kind: 'bolt', team: 'p', owner: pr.owner, x: from.x + Math.cos(a) * (from.r + 4), y: from.y - 6 + Math.sin(a) * (from.r + 4),
-      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: pr.r, dmg: pr.dmg * 0.6, range: 130, pierce: 0, poise: pr.poise, kb: pr.kb, ricochet: 0,
+      vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: pr.r, dmg: pr.dmg * HUNTER.upgrades.ricochetDamage, range: 130, pierce: 0, poise: pr.poise, kb: pr.kb, ricochet: 0,
     });
     for (const id of pr.hit) np.hit.add(id);
     this.emit({ k: 'fx', n: 'ricochet', x: from.x, y: from.y - 6, a, o: 0, r: 0 });
@@ -1395,7 +1501,10 @@ export class World {
               pr.ricochet--;
               this.ricochetFrom(pr, e);
             }
-            if (pr.pierce > 0) pr.pierce--;
+            if (pr.pierce > 0) {
+              pr.pierce--;
+              pr.dmg *= pr.pierceFalloff;
+            }
             else this.projectileEnd(pr, false);
           });
         } else {
@@ -1542,6 +1651,15 @@ export class World {
 
   // ------------------------------------------------------------------ inimigos
 
+  /** Inicia a apresentação só para spawns oficiais do diretor (não spawns de debug/teste). */
+  startBossIntro(e: Enemy): void {
+    if (this.phase !== 'wave' || this.intro || (!e.def.miniboss && e.def.tier !== 'boss')) return;
+    const reveal = sec(1.2);
+    const d = reveal + sec(e.def.miniboss ? 2.7 : 3.5);
+    this.intro = { id: e.id, et: e.typeIdx, x: Math.round(e.x), y: Math.round(e.y), t: d, d, reveal };
+    for (const p of this.players.values()) p.queue.length = 0;
+  }
+
   spawnEnemy(type: EnemyType, x: number, y: number, players: number): Enemy {
     const def = ENEMIES[type];
     const boss = def.tier === 'boss';
@@ -1674,7 +1792,9 @@ export class World {
     if ((d < 110 || t.isMinion) && lineOfSight(this.map, e.x, e.y, t.x, t.y) && circleFree(this.map, e.x + (dx / d) * 10, e.y + (dy / d) * 10, e.r)) {
       return [dx / d, dy / d];
     }
-    const f = t.isMinion ? this.fields.get((t as Minion).owner) : this.fields.get(t.id);
+    const f = t.isMinion
+      ? (t as Minion).kind === 'survivor' ? this.escortField : this.fields.get((t as Minion).owner)
+      : this.fields.get(t.id);
     const dir = f?.direction(e.x, e.y);
     if (dir && (dir[0] !== 0 || dir[1] !== 0)) return dir;
     return [dx / d, dy / d];
@@ -1917,6 +2037,7 @@ export class World {
           : p.cls === 'mage' ? p.convergence
           : p.cls === 'berserker' ? Math.round(p.rage)
           : p.cls === 'necromancer' ? p.essence
+          : p.cls === 'tank' ? Math.round(Math.min(100, p.guardianCharge * TANK.bastion.damageRatio / TANK.bastion.bonusCap * 100))
           : p.comboStep,
         cn: p.connected ? 1 : 0,
         dg: p.lastDodgeTick,
@@ -2005,6 +2126,7 @@ export class World {
       tm: this.phaseTimer,
       title: this.waveTitle,
       boss,
+      intro: this.intro ? { ...this.intro } : null,
       ch: this.chapter.n,
       mp: mapIndex(this.map.id),
       st: this.storm.active ? 1 : 0,
@@ -2012,6 +2134,7 @@ export class World {
       ev: info.ev,
       cg: info.cg,
       bo,
+      bd: this.bard ? [Math.round(this.bard.x), Math.round(this.bard.y)] : null,
     };
   }
 

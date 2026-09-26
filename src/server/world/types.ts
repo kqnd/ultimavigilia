@@ -66,6 +66,11 @@ export interface Player {
   };
   blocking: boolean;
   blockDir: number;
+  guardianCharge: number;
+  guardianCounter: boolean;
+  guardianCounterUntil: number;
+  guardianGuardStart: number;
+  guardianLastUltBlock: number;
   // passivas
   thirst: number;
   thirstT: number;
@@ -236,6 +241,8 @@ export interface Projectile {
   dmg: number;
   range: number;
   pierce: number;
+  /** Multiplicador aplicado ao dano depois de cada alvo atravessado. */
+  pierceFalloff: number;
   poise: number;
   kb: number;
   hit: Set<number>;

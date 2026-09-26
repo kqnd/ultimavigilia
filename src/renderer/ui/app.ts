@@ -6,15 +6,17 @@ import { ABILITY_ICONS } from '../../art/icons.js';
 import { DEFAULT_KEYS, type HostStartResult, type Keybinds, type NetInterfaceInfo, type Settings, WINDOW_SIZES } from '../../shared/bridge.js';
 import { CHAPTERS, type Climate, ROUTE, TRAVEL_SECONDS } from '../../shared/config/chapters.js';
 import { CLASS_IDS, CLASSES, type ClassId } from '../../shared/config/classes.js';
+import { ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
 import { FORKS, UPGRADE_BY_ID } from '../../shared/config/upgrades.js';
 import { TOTAL_WAVES, WAVES } from '../../shared/config/waves.js';
 import { DEFAULT_PORT, GAME_VERSION, MAX_PLAYERS, VIEW_H, VIEW_W } from '../../shared/constants.js';
-import type { GameEvent, LobbyPlayer } from '../../shared/protocol.js';
+import type { GameEvent, LobbyPlayer, WaveInfo } from '../../shared/protocol.js';
 import { audio } from '../audio.js';
 import type { TravelScene } from '../game/cinematic.js';
 import type { HudScene } from '../game/hud.js';
 import { type InputCapture, keyLabel } from '../game/input.js';
 import type { GameScene } from '../game/scene.js';
+import { tf } from '../game/textures.js';
 import type { Session } from '../session.js';
 import { classSprite, h, iconEl, stars } from './dom.js';
 
@@ -35,6 +37,8 @@ export class App {
   private pauseOpen = false;
   private tabOpen = false;
   private skillsOpen = false;
+  private introId = 0;
+  private introShown = false;
   private interfaces: NetInterfaceInfo[] = [];
   private lastError = '';
   private userLeaving = false;
@@ -99,6 +103,8 @@ export class App {
     const s = this.settings;
     audio.setVolumes(s.volumeMaster, s.volumeSfx, s.volumeAmbience);
     this.game.fx.settings = { shake: s.shake, flashes: s.flashes, damageNumbers: s.damageNumbers };
+    this.game.brightness = s.brightness;
+    this.game.setEnhancedLighting(s.enhancedLighting);
     this.input.binds = s.keys;
   }
 
@@ -119,11 +125,16 @@ export class App {
       audio.play('deny');
     });
     s.onPhase.on((p) => {
+      if (p.phase !== 'wave') {
+        this.hideBossIntro();
+        audio.stopBossTheme();
+      }
       if (p.phase === 'lobby') {
         this.game.toMenu();
         this.input.enabled = false;
         if (s.connected) this.go('lobby');
       } else if (p.phase === 'wave') {
+        audio.stopBossTheme();
         if (this.screen !== 'match') {
           this.game.startMatch();
           this.go('match');
@@ -177,7 +188,10 @@ export class App {
     s.onNotice.on((n) => this.toast(n.text, n.kind === 'warn'));
     s.onPing.on((p) => this.game.ping(p.x, p.y, p.from));
     s.onPaused.on(() => undefined);
-    s.onSnap.on((snap) => this.game.onSnapshot(snap));
+    s.onSnap.on((snap) => {
+      this.game.onSnapshot(snap);
+      this.syncBossIntro(snap.w.intro);
+    });
     s.onEvents.on((evs) => this.onEvents(evs));
     s.onClosing.on((reason) => {
       this.lastError = reason;
@@ -202,6 +216,14 @@ export class App {
     this.input.onKey = (code, down, e) => this.onKey(code, down, e);
     window.addEventListener('mousedown', (e) => {
       audio.unlock();
+      if (this.screen === 'match' && this.input.enabled && e.button === 2 && e.target instanceof HTMLCanvasElement) {
+        const p = this.toLogical(e.clientX, e.clientY);
+        this.input.mouseX = Math.max(0, Math.min(640, p.x));
+        this.input.mouseY = Math.max(0, Math.min(360, p.y));
+        const cam = this.game.cameras.main;
+        this.game.setMoveTarget(Math.round(cam.scrollX + this.input.mouseX), Math.round(cam.scrollY + this.input.mouseY));
+        e.preventDefault();
+      }
       if (this.screen === 'match' && e.button === 0 && e.target instanceof HTMLCanvasElement) {
         const me = this.session.latest()?.p.find((p) => p.id === this.session.myId);
         if (me && me.s !== 0) this.game.cycleSpectate();
@@ -223,6 +245,10 @@ export class App {
 
   private onLocalEvent(ev: GameEvent): void {
     const me = this.session.myId;
+    if (ev.k === 'die') {
+      const type = ENEMY_TYPES[ev.et];
+      if (type && (ENEMIES[type].miniboss || ENEMIES[type].tier === 'boss')) audio.stopBossTheme();
+    }
     if (ev.k === 'deny' && ev.to === me) {
       this.hud.deny(ev.r);
       audio.play('deny');
@@ -231,6 +257,7 @@ export class App {
     } else if (ev.k === 'revived') {
       this.hud.message(`${this.session.nameOf(ev.pi)} foi revivido por ${this.session.nameOf(ev.by)}`, 0x7fc47a, 2000);
     } else if (ev.k === 'boss' && ev.ph === 2) {
+      audio.setBossPhase(2);
       this.hud.showBanner('FASE 2', 'O chefe mudou de padrão!', 0xe07cff, 2200);
     } else if (ev.k === 'msg') {
       const col = ev.c === 'good' ? 0x7fc47a : ev.c === 'bad' ? 0xec6a5e : ev.c === 'boss' ? 0xe07cff : 0xf6c257;
@@ -252,7 +279,7 @@ export class App {
     }
     if (code === 'F1') {
       if (!down) this.hideSkills();
-      else if (!e.repeat && this.screen === 'match' && !this.pauseOpen && !this.settingsOpen) this.showSkills();
+      else if (!e.repeat && this.screen === 'match' && !this.pauseOpen && !this.settingsOpen && !this.introId) this.showSkills();
       return;
     }
     if (this.screen !== 'match' || this.pauseOpen || this.settingsOpen) return;
@@ -291,6 +318,12 @@ export class App {
   }
 
   private go(s: Screen): void {
+    this.hideBossIntro();
+    if (s !== 'match') {
+      audio.stopBossTheme();
+      audio.stopBard();
+    }
+    audio.bardPaused = false;
     this.screen = s;
     this.layer.replaceChildren();
     this.pauseOpen = false;
@@ -828,12 +861,14 @@ export class App {
     if (this.pauseOpen) {
       document.getElementById('pause')?.remove();
       this.pauseOpen = false;
+      audio.bardPaused = false;
       this.input.enabled = true;
       if (this.session.solo) this.session.send({ t: 'pause', p: false });
       return;
     }
     this.hideSkills();
     this.pauseOpen = true;
+    audio.bardPaused = true;
     this.input.enabled = false;
     this.input.clear();
     if (this.session.solo) this.session.send({ t: 'pause', p: true });
@@ -924,6 +959,62 @@ export class App {
     document.getElementById('skill-guide')?.remove();
   }
 
+  private syncBossIntro(intro: WaveInfo['intro']): void {
+    if (!intro || this.screen !== 'match') { this.hideBossIntro(); return; }
+    if (this.introId !== intro.id) {
+      this.hideBossIntro();
+      this.introId = intro.id;
+      this.introShown = false;
+      this.hideSkills();
+      this.hideTab();
+      this.input.clear();
+      this.input.enabled = false;
+      const type = ENEMY_TYPES[intro.et];
+      if (type) audio.startBossTheme(type, intro.t / 30);
+    }
+    // Primeiro o chefe se materializa no cenário; depois entram barras, retrato e título.
+    if (this.introShown || intro.t > intro.d - intro.reveal) return;
+    this.introShown = true;
+    this.showBossIntro(intro);
+  }
+
+  private showBossIntro(intro: NonNullable<WaveInfo['intro']>): void {
+    const type = ENEMY_TYPES[intro.et];
+    if (!type) return;
+    const def = ENEMIES[type];
+    const mini = !!def.miniboss;
+    const [tex, fr] = tf(`${type}_walk_down_0`);
+    const frame = this.game.textures.getFrame(tex, fr);
+    const portrait = h('canvas', { class: 'boss-intro-portrait' });
+    if (frame) {
+      portrait.width = frame.cutWidth;
+      portrait.height = frame.cutHeight;
+      portrait.getContext('2d')?.drawImage(frame.source.image as CanvasImageSource, frame.cutX, frame.cutY, frame.cutWidth, frame.cutHeight, 0, 0, frame.cutWidth, frame.cutHeight);
+    }
+    const panel = h('div', { id: 'boss-intro', class: `boss-intro${mini ? ' mini' : ''}` },
+      h('div', { class: 'boss-intro-shade' }),
+      h('div', { class: 'boss-intro-bar top' }),
+      h('div', { class: 'boss-intro-focus' }, portrait),
+      h('div', { class: 'boss-intro-copy' },
+        h('div', { class: 'boss-intro-kicker', text: mini ? 'AMEAÇA ELITE' : 'CHEFE DO CAPÍTULO' }),
+        h('div', { class: 'boss-intro-name', text: def.name.toUpperCase() }),
+        h('div', { class: 'boss-intro-rule' }),
+        h('div', { class: 'boss-intro-sub', text: mini ? 'A horda para. O perigo desperta.' : 'A noite tem um novo senhor.' }),
+      ),
+      h('div', { class: 'boss-intro-bar bottom' }, h('span', { text: `ONDA ${this.session.phase.wave}` }), h('span', { text: 'PREPARE-SE' })),
+    );
+    this.overlay.append(panel);
+  }
+
+  private hideBossIntro(): void {
+    if (!this.introId) return;
+    this.introId = 0;
+    this.introShown = false;
+    document.getElementById('boss-intro')?.remove();
+    this.input.clear();
+    this.input.enabled = this.screen === 'match' && !this.pauseOpen && !this.settingsOpen && this.session.phase.phase === 'wave';
+  }
+
   // ---------------------------------------------------------------- configurações
 
   private openSettings(): void {
@@ -973,6 +1064,13 @@ export class App {
       dmg.textContent = `Números de dano: ${s.damageNumbers ? 'sim' : 'não'}`;
       void this.saveSettings();
     });
+    const shaderBtn = h('button', { class: 'btn' }, `Shaders ambientais: ${s.enhancedLighting ? 'ligados' : 'desligados'}`);
+    shaderBtn.addEventListener('click', () => {
+      s.enhancedLighting = !s.enhancedLighting;
+      shaderBtn.textContent = `Shaders ambientais: ${s.enhancedLighting ? 'ligados' : 'desligados'}`;
+      this.applySettings();
+      void this.saveSettings();
+    });
     const keys = h('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:2px 8px' });
     const names: [keyof Keybinds, string][] = [
       ['up', 'Mover ↑'], ['down', 'Mover ↓'], ['left', 'Mover ←'], ['right', 'Mover →'], ['dodge', 'Esquiva'], ['q', 'Habilidade Q'],
@@ -1016,6 +1114,9 @@ export class App {
           slider('Volume geral', () => s.volumeMaster, (v) => (s.volumeMaster = v)),
           slider('Efeitos', () => s.volumeSfx, (v) => (s.volumeSfx = v)),
           slider('Ambiente', () => s.volumeAmbience, (v) => (s.volumeAmbience = v)),
+          slider('Brilho do mapa', () => s.brightness, (v) => (s.brightness = v)),
+          h('div', { class: 'hint', style: 'max-width:190px;margin:2px 0 4px', text: 'Luz cinematográfica e reflexos nos pisos. Pode reduzir o desempenho em GPUs antigas.' }),
+          shaderBtn,
           slider('Tremor de câmera', () => s.shake, (v) => (s.shake = v)),
           slider('Intensidade de flashes', () => s.flashes, (v) => (s.flashes = v)),
           h('label', { text: 'Tamanho da janela' }),
@@ -1025,7 +1126,7 @@ export class App {
           scaleBtn,
           dmg,
         ),
-        h('div', {}, h('label', { text: 'Controles (clique para trocar; Esc cancela)' }), keys, h('div', { class: 'hint', style: 'margin-top:3px', text: 'Mira: mouse · Ataque: botão esquerdo · F1: habilidades · Esc: menu' }), h('button', { class: 'btn', style: 'margin-top:4px', onclick: () => { s.keys = { ...DEFAULT_KEYS }; void this.saveSettings(); renderKeys(); } }, 'Restaurar controles padrão')),
+        h('div', {}, h('label', { text: 'Controles (clique para trocar; Esc cancela)' }), keys, h('div', { class: 'hint', style: 'margin-top:3px', text: 'Mira: mouse · Ataque: botão esquerdo · Mover: botão direito (WASD cancela) · F1: habilidades · Esc: menu' }), h('button', { class: 'btn', style: 'margin-top:4px', onclick: () => { s.keys = { ...DEFAULT_KEYS }; void this.saveSettings(); renderKeys(); } }, 'Restaurar controles padrão')),
       ),
       h('div', { style: 'height:6px' }),
       h('button', { class: 'btn primary', onclick: () => this.closeSettings() }, 'Fechar'),

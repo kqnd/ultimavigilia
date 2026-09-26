@@ -145,6 +145,19 @@ const runner: Brain = {
       w.startEnemyAttack(e, 'lunge', t.x, t.y);
       return STILL;
     }
+    // Corredores abrem ângulos diferentes antes do bote, em vez de formar uma fila única.
+    if (d > 65 && d < 190 && lineOfSight(w.map, e.x, e.y, t.x, t.y)) {
+      const side = e.id % 2 === 0 ? 1 : -1;
+      const dx = (t.x - e.x) / d;
+      const dy = (t.y - e.y) / d;
+      const fx = dx - dy * side * 0.42;
+      const fy = dy + dx * side * 0.42;
+      const len = Math.hypot(fx, fy);
+      if (circleFree(w.map, e.x + fx * 12, e.y + fy * 12, e.r)) {
+        e.facing = Math.atan2(dy, dx);
+        return [fx / len * e.def.speed, fy / len * e.def.speed];
+      }
+    }
     return chase(w, e, t, e.def.speed);
   },
 };

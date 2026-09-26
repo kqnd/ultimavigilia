@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { BERSERKER, CLASS_IDS, type ClassId, PLAYER_RULES } from '../src/shared/config/classes.js';
+import { BERSERKER, CLASS_IDS, type ClassId, PLAYER_RULES, TANK } from '../src/shared/config/classes.js';
 import { INTERMISSION_SECONDS, UPGRADE_BY_ID } from '../src/shared/config/upgrades.js';
 import { TOTAL_WAVES } from '../src/shared/config/waves.js';
 import { sec, TILE } from '../src/shared/constants.js';
 import { BTN, type InputFrame } from '../src/shared/movement.js';
 import type { Player } from '../src/server/world/types.js';
 import { addPickup } from '../src/server/world/loot.js';
+import { hitMinion, spawnMinion } from '../src/server/world/minions.js';
+import { detonateGuardian } from '../src/server/world/kits/tank.js';
+import { FlowField } from '../src/server/world/nav.js';
+import { circleFree } from '../src/shared/collision.js';
+import { cloneMap, getMap } from '../src/shared/map.js';
 import { rollUpgrades } from '../src/server/world/upgrades.js';
 import { World } from '../src/server/world/world.js';
 import { Rng } from '../src/shared/math.js';
@@ -106,7 +111,7 @@ describe('combate autoritativo', () => {
     expect(p.hp).toBe(p.maxHp);
   });
 
-  it('tank bloqueia pela frente e sofre quebra de guarda sem stamina', () => {
+  it('Guardião bloqueia em 360° e sofre quebra de guarda sem stamina', () => {
     const w = mkWorld(['tank', 'dog']);
     quiet(w);
     const p = w.players.get(1) as Player;
@@ -116,12 +121,119 @@ describe('combate autoritativo', () => {
     expect(front).toBe('blocked');
     expect(p.hp).toBe(p.maxHp);
     const back = w.hitPlayer(p, { dmg: 10, heavy: false, fromX: p.x - 20, fromY: p.y, enemy: null, proj: null, blockable: true });
-    expect(back).toBe('hit');
+    expect(back).toBe('blocked');
+    expect(p.hp).toBe(p.maxHp);
     p.move.stamina = 2;
     const br = w.hitPlayer(p, { dmg: 40, heavy: false, fromX: p.x + 20, fromY: p.y, enemy: null, proj: null, blockable: true });
     expect(br).toBe('hit');
     expect(p.blocking).toBe(false);
     expect(p.buffs.guardBroken).toBeGreaterThan(0);
+  });
+
+  it('investida interrompe e provoca sem precisar de alvo estático', () => {
+    const w = mkWorld(['tank', 'dog']);
+    quiet(w);
+    const p = w.players.get(1) as Player;
+    const e = w.spawnEnemy('acolyte', p.x + 42, p.y, 1);
+    e.state = 'windup';
+    e.atk = 'orb';
+    e.def = { ...e.def, speed: 0 };
+    run(w, 1, (pl) => pl.id === 1 ? { pressed: BTN.e, ax: e.x, ay: e.y } : null);
+    run(w, TANK.charge.ticks, (pl) => pl.id === 1 ? { ax: e.x, ay: e.y } : null);
+    expect(e.tauntBy).toBe(p.id);
+    expect(e.tauntT).toBeGreaterThan(0);
+    expect(e.state).not.toBe('windup');
+  });
+
+  it('Última Vigília protege aliado e sobrevivente e conta só dano real', () => {
+    const w = mkWorld(['tank', 'dog']);
+    quiet(w);
+    const guard = w.players.get(1) as Player;
+    const ally = w.players.get(2) as Player;
+    ally.move.x = guard.x + 18;
+    ally.move.y = guard.y;
+    const survivor = spawnMinion(w, 0, 'survivor', guard.x + 28, guard.y, { hp: 100, ttl: 1000, speed: 0, damage: 0 });
+    expect(survivor).not.toBeNull();
+    survivor!.state = 'move';
+    guard.ult = PLAYER_RULES.ultMax;
+    expect(w.tryStart(guard, 'r')).toBe(true);
+    expect(w.moveParams(guard).moveMul).toBe(0);
+    const a0 = ally.hp;
+    w.hitPlayer(ally, { dmg: 50, heavy: false, fromX: ally.x + 10, fromY: ally.y, enemy: null, proj: null, blockable: true });
+    expect(a0 - ally.hp).toBe(Math.round(50 * (1 - TANK.bastion.reduction)));
+    expect(guard.guardianCharge).toBe(a0 - ally.hp);
+    hitMinion(w, survivor!, 50);
+    expect(survivor!.hp).toBe(100 - Math.round(50 * (1 - TANK.bastion.reduction)));
+    expect(guard.guardianCharge).toBe((a0 - ally.hp) + (100 - survivor!.hp));
+    const beforeArtificial = guard.guardianCharge;
+    w.damagePlayerRaw(ally, 3, false, true);
+    ally.iframes = 5;
+    w.hitPlayer(ally, { dmg: 10, heavy: false, fromX: ally.x - 12, fromY: ally.y, enemy: null, proj: null, blockable: true });
+    expect(guard.guardianCharge).toBe(beforeArtificial);
+  });
+
+  it('bardo aparece em recanto alcançável em todas as ondas e três mapas', () => {
+    for (const seed of [1, 42, 98765]) for (const mapId of ['village', 'frozen', 'abyss'] as const) {
+      const w = new World({ seed, solo: true });
+      w.map = cloneMap(getMap(mapId));
+      const field = new FlowField(w.map);
+      field.compute(w.map.starts[0]!.x, w.map.starts[0]!.y);
+      let previous = '';
+      for (let wave = 1; wave <= 30; wave++) {
+        w.wave = wave;
+        w['pickBardSpot']();
+        const bard = w.bard;
+        expect(bard, `${mapId} seed ${seed} onda ${wave}`).not.toBeNull();
+        expect(circleFree(w.map, bard!.x, bard!.y, 12)).toBe(true);
+        expect(field.at(bard!.x, bard!.y)).not.toBe(0xffff);
+        expect(Math.hypot(bard!.x - w.map.campfire.x, bard!.y - w.map.campfire.y)).toBeGreaterThan(340);
+        expect(w.map.starts.every((s) => Math.hypot(bard!.x - s.x, bard!.y - s.y) > 420)).toBe(true);
+        expect(`${bard!.x},${bard!.y}`).not.toBe(previous);
+        previous = `${bard!.x},${bard!.y}`;
+        expect(w.waveInfo().bd).toEqual([bard!.x, bard!.y]);
+      }
+    }
+  });
+
+  it('explosão tem base, carga limitada e teto contra chefe, sem recarregar a R', () => {
+    const w = mkWorld(['tank']);
+    quiet(w);
+    const p = w.players.get(1) as Player;
+    const e = w.spawnEnemy('father', p.x + 28, p.y, 1);
+    e.state = 'move';
+    e.hp = e.maxHp = 5000;
+    w.hash.insert(e);
+    p.ult = 100;
+    w.tryStart(p, 'r');
+    detonateGuardian(w, p);
+    expect(5000 - e.hp).toBe(TANK.bastion.baseDamage);
+    expect(p.ult).toBe(0);
+    p.ult = 100;
+    w.tryStart(p, 'r');
+    p.guardianCharge = 999;
+    const hp = e.hp;
+    detonateGuardian(w, p);
+    expect(hp - e.hp).toBe(TANK.bastion.baseDamage + TANK.bastion.bonusCap);
+    const boss = w.spawnEnemy('moonDevourer', p.x + 35, p.y, 1);
+    boss.state = 'move';
+    boss.hp = boss.maxHp = 5000;
+    w.hash.insert(boss);
+    p.ult = 100;
+    w.tryStart(p, 'r');
+    p.guardianCharge = 999;
+    detonateGuardian(w, p);
+    expect(5000 - boss.hp).toBeLessThanOrEqual(TANK.bastion.bossDamageCap);
+  });
+
+  it('bloqueios pequenos têm ganho de suprema limitado por intervalo', () => {
+    const w = mkWorld(['tank']);
+    quiet(w);
+    const p = w.players.get(1) as Player;
+    p.blocking = true;
+    p.move.stamina = 120;
+    for (let i = 0; i < 10; i++) w.hitPlayer(p, { dmg: 1, heavy: false, fromX: p.x - 10, fromY: p.y, enemy: null, proj: null, blockable: true });
+    expect(p.ult).toBe(TANK.wall.ultPerBlock);
+    expect(p.ult).toBeLessThan(PLAYER_RULES.ultMax / 10);
   });
 
   it('berserker: fúria sobe ao bater e apanhar, decai e Loucura cobra exaustão', () => {
@@ -156,6 +268,20 @@ describe('combate autoritativo', () => {
     run(w, sec(BERSERKER.madness.duration) + 5);
     expect(p.buffs.madness).toBe(0);
     expect(p.buffs.exhausted).toBeGreaterThan(0);
+  });
+
+  it('Mente de Ferro neutraliza a vulnerabilidade, mas mantém 1,5s de exaustão', () => {
+    const w = mkWorld(['berserker']);
+    quiet(w);
+    const p = w.players.get(1) as Player;
+    p.mods['b_iron'] = 1;
+    p.buffs.madness = 2;
+    const hpBefore = p.hp;
+    w.hitPlayer(p, { dmg: 10, heavy: false, fromX: p.x + 10, fromY: p.y, enemy: null, proj: null, blockable: false });
+    expect(hpBefore - p.hp).toBe(10);
+    p.buffs.madness = 1;
+    run(w, 1);
+    expect(p.buffs.exhausted).toBe(sec(1.5));
   });
 
   it('chefes resistem a controle e retornos decrescentes evitam travamento', () => {

@@ -7,7 +7,7 @@ import { NECRO } from '../../../shared/config/classes.js';
 import { sec } from '../../../shared/constants.js';
 import { circleFree, sweepFree } from '../../../shared/collision.js';
 import { dist2 } from '../../../shared/math.js';
-import { killMinion, minionsOf, spawnMinion } from '../minions.js';
+import { GLOBAL_MINION_CAP, killMinion, minionsOf, spawnMinion } from '../minions.js';
 import type { Pickup, Player } from '../types.js';
 import type { World } from '../world.js';
 import type { Kit } from './kit.js';
@@ -45,6 +45,8 @@ export const necromancerKit: Kit = {
         if (p.essence < R.cost) return 'essence';
         const c = corpseNear(w, p.aimX, p.aimY) ?? corpseNear(w, p.x, p.y);
         if (!c) return 'corpse';
+        const replacing = minionsOf(w, p.id, 'thrall').length >= R.maxActive ? 1 : 0;
+        if (minionsOf(w, p.id).length - replacing >= NECRO.maxMinions || w.minions.size - replacing >= GLOBAL_MINION_CAP) return 'busy';
         // reserva o cadáver agora (evita dois servos no mesmo corpo)
         w.pickups = w.pickups.filter((it) => it !== c);
         p.essence -= R.cost;
@@ -91,12 +93,19 @@ export const necromancerKit: Kit = {
         kind: 'bone', team: 'p', owner: p.id,
         x: shot.x, y: shot.y,
         vx: Math.cos(shot.dir) * b.speed, vy: Math.sin(shot.dir) * b.speed,
-        r: b.radius, dmg: b.damage + bones * 3, range: b.range, pierce: b.pierce + bones, poise: b.poise, kb: b.knockback,
+        r: b.radius, dmg: b.damage + bones * 2, range: b.range, pierce: b.pierce + bones, poise: b.poise, kb: b.knockback,
+        pierceFalloff: bones > 0 ? 0.75 : 1,
       });
       w.emit({ k: 'sfx', n: 'bone', x: p.x, y: p.y });
     } else if (a.name === 'q') {
       const T = NECRO.thrall;
       const mine = minionsOf(w, p.id, 'thrall');
+      const replacing = mine.length >= NECRO.raise.maxActive ? 1 : 0;
+      // Outro jogador pode ter preenchido o teto durante a animação; não sacrifique um servo à toa.
+      if (minionsOf(w, p.id).length - replacing >= NECRO.maxMinions || w.minions.size - replacing >= GLOBAL_MINION_CAP) {
+        p.essence = Math.min(NECRO.essence.max, p.essence + NECRO.raise.cost);
+        return;
+      }
       // no limite, o servo mais antigo cede lugar (sacrifício)
       while (mine.length >= NECRO.raise.maxActive) {
         const old = mine.shift();

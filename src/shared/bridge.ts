@@ -64,6 +64,10 @@ export interface Settings {
   shake: number;
   flashes: number;
   damageNumbers: boolean;
+  /** Clareia apenas o mapa (0 = atmosfera original, 1 = iluminação máxima). */
+  brightness: number;
+  /** Filtros WebGL de ambientação e reflexos em pisos apropriados. */
+  enhancedLighting: boolean;
   /** 'integer': ampliação inteira com letterbox (pixels perfeitos); 'fit': preenche a janela (fator fracionário). */
   pixelScale: 'integer' | 'fit';
   keys: Keybinds;
@@ -95,6 +99,8 @@ export const DEFAULT_SETTINGS: Settings = {
   shake: 1,
   flashes: 1,
   damageNumbers: true,
+  brightness: 0,
+  enhancedLighting: false,
   pixelScale: 'integer',
   keys: { ...DEFAULT_KEYS },
 };
@@ -118,6 +124,8 @@ export function normalizeSettings(raw: unknown): Settings {
   s.shake = num(r.shake, 0, 1, 1);
   s.flashes = num(r.flashes, 0, 1, 1);
   s.damageNumbers = r.damageNumbers !== false;
+  s.brightness = num(r.brightness, 0, 1, 0);
+  s.enhancedLighting = r.enhancedLighting === true;
   s.pixelScale = r.pixelScale === 'fit' ? 'fit' : 'integer';
   if (typeof r.keys === 'object' && r.keys !== null) {
     const k = r.keys as Record<string, unknown>;

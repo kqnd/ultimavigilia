@@ -1,7 +1,7 @@
 /** Constantes globais compartilhadas entre servidor e cliente. */
 export const GAME_VERSION = '0.2.0';
 /** Incrementar sempre que o formato das mensagens mudar. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export const TICK_RATE = 30;
 export const TICK_MS = 1000 / TICK_RATE;

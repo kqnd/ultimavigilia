@@ -1,5 +1,6 @@
 /** Representação visual de jogadores, inimigos e servos (sem lógica de jogo). */
 import Phaser from 'phaser';
+import { survivorTorchAnchor } from './entity-anchors.js';
 import { CLASS_WEAPON } from '../../art/characters.js';
 import { AFFIX_IDS, AFFIXES, type AffixId } from '../../shared/config/affixes.js';
 import type { Climate } from '../../shared/config/chapters.js';
@@ -105,6 +106,7 @@ export class PlayerView {
   private readonly tag: NameTag;
   readonly bars: Phaser.GameObjects.Graphics;
   private readonly back: Phaser.GameObjects.Graphics;
+  private readonly aura: Phaser.GameObjects.Graphics | null;
   private walkT = 0;
   private flashT = 0;
   private ghostT = 0;
@@ -127,6 +129,7 @@ export class PlayerView {
     this.weapon = w ? scene.add.image(0, 0, ...tf(w)).setOrigin(0.25, 0.5) : null;
     this.shield = cls === 'tank' ? scene.add.image(0, 0, ...tf('shield')).setOrigin(0.5, 0.6) : null;
     this.back = scene.add.graphics().setDepth(94000);
+    this.aura = cls === 'tank' ? scene.add.graphics() : null;
     this.tag = new NameTag(scene, name, local ? 0xf6c257 : CLASSES[cls].color);
     this.bars = scene.add.graphics().setDepth(94003);
   }
@@ -142,6 +145,7 @@ export class PlayerView {
     this.shield?.destroy();
     this.tag.destroy();
     this.back.destroy();
+    this.aura?.destroy();
     this.bars.destroy();
   }
 
@@ -192,6 +196,45 @@ export class PlayerView {
     if (d.cn === 0) alpha *= 0.5;
     this.body.setAlpha(alpha);
     const now = performance.now();
+    if (this.aura) {
+      const aura = this.aura;
+      aura.clear().setDepth(y - 1);
+      if (d.s === 0 && (d.f & PLAYER_FLAGS.blocking)) {
+        const stamina = d.st / Math.max(1, d.mst);
+        const pulse = Math.floor(now / 120) % 2;
+        aura.lineStyle(3, 0x42646a, 0.24).strokeEllipse(x, y - 11, 47, 36);
+        aura.lineStyle(1, pulse ? 0x9fe4d8 : 0xb9f5e7, 0.9).strokeEllipse(x, y - 11, 43, 33);
+        for (let i = 0; i < 5; i++) {
+          const a = now / 700 + i * Math.PI * 2 / 5;
+          const sx = Math.round(x + Math.cos(a) * 22);
+          const sy = Math.round(y - 11 + Math.sin(a) * 16);
+          aura.fillStyle(i % 2 ? 0x72b8b6 : 0xd5fff2, 0.9).fillRect(sx, sy, 3, 3);
+        }
+        if (stamina < 0.6) for (let i = 0; i < (stamina < 0.25 ? 4 : 2); i++) {
+          const a = i * 1.7 + 0.5;
+          const sx = x + Math.cos(a) * 21;
+          const sy = y - 11 + Math.sin(a) * 16;
+          aura.lineStyle(1, 0x25343d, 1).lineBetween(sx - 3, sy - 3, sx + 2, sy + 4);
+        }
+      }
+      if (d.s === 0 && act === 'r') {
+        const charge = d.k / 100;
+        const grow = Math.min(1, r.at / 16);
+        const radius = TANK.bastion.radius * grow;
+        aura.lineStyle(2, 0x83c9c2, 0.55).strokeEllipse(x, y, radius * 2, radius * 0.9);
+        aura.lineStyle(1, 0xd5fff2, 0.3 + charge * 0.35).strokeEllipse(x, y, radius * 1.8, radius * 0.8);
+        for (let i = 0; i < 12; i++) {
+          const a = i * Math.PI / 6 + Math.floor(now / 280) * 0.05;
+          const sx = Math.round(x + Math.cos(a) * radius);
+          const sy = Math.round(y + Math.sin(a) * radius * 0.45);
+          aura.fillStyle(i % 3 ? 0x79b7aa : 0xd5fff2, 0.5 + charge * 0.4).fillRect(sx, sy, 3 + Math.round(charge * 2), 2);
+        }
+        for (let i = 0; i < 2 + Math.floor(charge * 5); i++) {
+          const a = now / 900 + i * 2.4;
+          aura.fillStyle(0xb8f3de, 0.45 + charge * 0.35).fillRect(Math.round(x + Math.cos(a) * (12 + i * 4)), Math.round(y - 15 + Math.sin(a) * 9), 2, 3);
+        }
+      }
+    }
     if (this.flashT > 0) {
       this.flashT -= s;
       this.body.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
@@ -215,7 +258,7 @@ export class PlayerView {
 
     // rastro fantasma durante esquiva/deslocamentos
     this.ghostT -= s;
-    if ((dodging || airborne || (act === 'e' && (cls === 'vampire' || cls === 'hunter') && r.at < 9)) && this.ghostT <= 0 && d.s === 0) {
+    if ((dodging || airborne || (act === 'e' && (cls === 'vampire' || cls === 'hunter' || cls === 'tank') && r.at < 12)) && this.ghostT <= 0 && d.s === 0) {
       this.ghostT = 0.035;
       fx.ghost(this.body.frame.name, x, y - lift, this.body.flipX);
     }
@@ -260,6 +303,11 @@ export class PlayerView {
         sh.setDepth(y + (Math.sin(aim) < -0.3 ? -1 : 2));
         sh.setScale(Math.abs(Math.cos(aim)) > 0.7 ? 0.5 : 1, 1);
         sh.setAlpha(1);
+      } else if (act === 'e' && r.at < TANK.charge.ticks) {
+        sh.setPosition(Math.round(x + Math.cos(aim) * 13), Math.round(y - 11 + Math.sin(aim) * 7));
+        sh.setDepth(y + 2).setScale(1.1).setAlpha(1);
+      } else if (act === 'r') {
+        sh.setPosition(x + 1, y - 1).setDepth(y + 2).setScale(1.1).setAlpha(1);
       } else {
         const side = dir === 'side' ? (flip ? 1 : -1) : -1;
         sh.setPosition(x + side * 8, y - 11);
@@ -456,7 +504,9 @@ export class EnemyView {
       this.flashT -= s;
       this.body.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
     } else if (r.state === 'spawn' && (isBoss || def.miniboss || this.type === 'werewolf' || this.type === 'father')) {
-      this.body.setTint(0x5a1470).setTintMode(Phaser.TintModes.FILL);
+      // A silhueta dá lugar ao sprite real antes do cartão cinematográfico.
+      if ((isBoss || def.miniboss) && r.stateT >= 12) this.body.clearTint();
+      else this.body.setTint(0x5a1470).setTintMode(Phaser.TintModes.FILL);
       this.body.setAlpha(Math.min(1, r.stateT / 20));
     } else if (r.flags & ENEMY_FLAGS.exposed) this.body.setTint(Math.floor(now / 120) % 2 ? 0xffe0a0 : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
     else if (r.flags & ENEMY_FLAGS.rooted) this.body.setTint(0xc0c8d8).setTintMode(Phaser.TintModes.MULTIPLY);
@@ -577,9 +627,20 @@ export class MinionView {
     const top = ry - (this.kind === 'survivor' ? 30 : 20);
     g.fillStyle(0x0b0a12, 1).fillRect(rx - w / 2 - 1, top - 1, w + 2, 3);
     g.fillStyle(this.kind === 'survivor' ? 0x7fc47a : 0xa8d05a, 1).fillRect(rx - w / 2, top, Math.max(1, Math.round((w * m[4]) / Math.max(1, m[5]))), 1);
-    if (this.kind === 'survivor') {
+    if (this.kind === 'thrall') {
+      // Barra violeta: duração restante; evita que a expiração pareça uma perda aleatória.
+      g.fillStyle(0x0b0a12, 1).fillRect(rx - w / 2 - 1, top + 3, w + 2, 3);
+      g.fillStyle(life < 20 ? 0xe09a73 : 0x9474d3, 1).fillRect(rx - w / 2, top + 4, Math.max(1, Math.round(w * life / 100)), 1);
+    }
+      if (this.kind === 'survivor') {
       // anel de "fique perto": verde quando escoltado
-      g.lineStyle(1, life > 0 ? 0x7fc47a : 0xf6c257, 0.5 + Math.sin(now / 200) * 0.2).strokeCircle(rx, ry, 90);
+        g.lineStyle(1, life > 0 ? 0x7fc47a : 0xf6c257, 0.5 + Math.sin(now / 200) * 0.2).strokeCircle(rx, ry, 90);
+        // Tocha erguida: cabo, brasa e chama pixelada em dois tempos.
+        const flame = survivorTorchAnchor(rx, ry, Math.floor(now / 160) % 2);
+        g.fillStyle(0x5d392a, 1).fillRect(rx + 9, ry - 29, 2, 13);
+        g.fillStyle(0xf6c257, 1).fillRect(flame.x - 2, flame.y - 1, 4, 5);
+        g.fillStyle(0xfff0aa, 1).fillRect(flame.x - 1, flame.y - 4, 2, 4);
+        g.fillStyle(0xe78239, 0.35).fillCircle(flame.x, flame.y, 8);
     }
   }
 }

@@ -9,6 +9,7 @@ import {
 } from '../../shared/config/objectives.js';
 import { WAVES, waveInChapter } from '../../shared/config/waves.js';
 import { DT, sec } from '../../shared/constants.js';
+import { circleFree, resolveCircle } from '../../shared/collision.js';
 import { dist, dist2 } from '../../shared/math.js';
 import type { ObjectiveInfo } from '../../shared/protocol.js';
 import { addPickup } from './loot.js';
@@ -70,7 +71,7 @@ export class Objectives {
     // evento fixo da onda
     if (def.event && !bossWave) {
       const kind = def.event;
-      const st: EventState = { kind, state: 0, hp: 0, maxHp: 0, t: -1, maxT: -1, entity: 0, delay: sec(3) };
+      const st: EventState = { kind, state: 0, hp: 0, maxHp: 0, t: -1, maxT: -1, entity: 0, delay: kind === 'escort' ? 0 : sec(3) };
       if (kind === 'bonfire') {
         st.hp = st.maxHp = EVENT_RULES.bonfire.hp;
       } else if (kind === 'ritual') {
@@ -81,6 +82,8 @@ export class Objectives {
         st.hp = st.maxHp = 1;
       }
       this.event = st;
+      // Na escolta, a equipe começa junto ao sobrevivente durante a preparação da onda.
+      if (kind === 'escort') this.spawnEventEntity(st);
       w.emit({ k: 'msg', txt: `EVENTO: ${WAVE_EVENTS[kind].name}`, c: 'info' });
     }
     // desafio opcional
@@ -217,10 +220,26 @@ export class Objectives {
       ev.hp = e.hp;
       ev.maxHp = e.maxHp;
     } else if (ev.kind === 'escort') {
-      const gate = this.farthestFromPlayers(w.map.spawns);
+      const gate = w.map.spawns.reduce((best, pt) =>
+        dist2(pt.x, pt.y, w.map.campfire.x, w.map.campfire.y) > dist2(best.x, best.y, w.map.campfire.x, w.map.campfire.y) ? pt : best,
+      w.map.spawns[0] ?? w.map.campfire);
       const E = EVENT_RULES.escort;
       const m = spawnMinion(w, 0, 'survivor', gate.x, gate.y, { hp: E.hp, ttl: sec(999), speed: E.speed, damage: 0, r: E.radius });
       ev.entity = m?.id ?? 0;
+      if (m) {
+        w.escortField?.compute(m.x, m.y);
+        let i = 0;
+        for (const p of w.players.values()) {
+          if (p.status !== 0) continue;
+          const a = (i++ / Math.max(1, w.players.size)) * Math.PI * 2;
+          const pos = { x: m.x + Math.cos(a) * 28, y: m.y + Math.sin(a) * 28 };
+          if (!circleFree(w.map, pos.x, pos.y, p.r)) resolveCircle(w.map, pos, p.r);
+          p.move.x = pos.x;
+          p.move.y = pos.y;
+          p.move.ft = 0;
+        }
+        w.emit({ k: 'msg', txt: 'Fique perto do sobrevivente e proteja-o até a fogueira!', c: 'info' });
+      }
     }
   }
 
@@ -439,4 +458,3 @@ export function objectiveEntities(w: World): { survivor: Minion | null } {
   for (const m of w.minions.values()) if (m.kind === 'survivor') survivor = m;
   return { survivor };
 }
-

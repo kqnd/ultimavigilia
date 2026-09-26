@@ -6,7 +6,7 @@ import { BERSERKER, CLASSES, DOG, NECRO, PLAYER_RULES } from '../../shared/confi
 import { ATK, ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
 import { CHALLENGES, WAVE_EVENTS, type ChallengeKind, type WaveEventKind } from '../../shared/config/objectives.js';
 import { TOTAL_WAVES, WAVES } from '../../shared/config/waves.js';
-import { PLAYER_FLAGS, ENEMY_FLAGS, MINION_KINDS, type ObjectiveInfo } from '../../shared/protocol.js';
+import { ACTIONS, PLAYER_FLAGS, ENEMY_FLAGS, MINION_KINDS, type ObjectiveInfo } from '../../shared/protocol.js';
 import type { Keybinds } from '../../shared/bridge.js';
 import type { Session } from '../session.js';
 import { keyLabel } from './input.js';
@@ -179,7 +179,8 @@ export class HudScene extends Phaser.Scene {
       this.bar(x0 + 32, y0 + 10, 94, 3, me.st / me.mst, 0x8fbf5a, 0x1f3129);
       const ult = me.u / PLAYER_RULES.ultMax;
       this.bar(x0 + 32, y0 + 17, 94, 4, ult, ult >= 1 ? (Math.floor(now / 200) % 2 ? 0xf6c257 : 0xfff0ae) : 0xa8591a, 0x3e1e08);
-      this.text('ultlbl', x0 + 32, y0 + 22, ult >= 1 ? `SUPREMA PRONTA [${keyLabel(this.keys().r)}]` : `Suprema ${Math.floor(ult * 100)}%`, ult >= 1 ? 0xf6c257 : 0x7a8096);
+      const guardianCasting = me.c === 'tank' && ACTIONS[me.act] === 'r';
+      this.text('ultlbl', x0 + 32, y0 + 22, guardianCasting ? `R DETONAR: ${60 + Math.round(me.k * 1.2)} DANO` : ult >= 1 ? `SUPREMA PRONTA [${keyLabel(this.keys().r)}]` : `Suprema ${Math.floor(ult * 100)}%`, guardianCasting || ult >= 1 ? 0xf6c257 : 0x7a8096);
       // passiva
       let passive = '';
       if (me.c === 'vampire' && me.k > 0) passive = `Sede ×${me.k}`;
@@ -206,7 +207,7 @@ export class HudScene extends Phaser.Scene {
         this.text('thralls', x0 + 46 + max * 7, y0 - 16, `Servos ${n}/${NECRO.raise.maxActive}`, 0x7a8096);
       }
       if (me.c === 'hunter' && me.f & PLAYER_FLAGS.surrounded) passive = 'CERCADO! +25% dano recebido';
-      if (me.c === 'tank' && me.f & PLAYER_FLAGS.blocking) passive = 'Guarda erguida';
+      if (me.c === 'tank') passive = guardianCasting ? 'ÁREA: -12% DANO' : me.f & PLAYER_FLAGS.blocking ? 'Égide 360° erguida' : '';
       if (passive) this.text('passive', x0, y0 - 16, passive, cls.color);
 
       // barra de habilidades
@@ -215,7 +216,7 @@ export class HudScene extends Phaser.Scene {
         ['LMB', ABILITY_ICONS[me.c]?.[0] ?? 'star', 0, 1],
         [keyLabel(k.q), ABILITY_ICONS[me.c]?.[1] ?? 'star', me.cd[0], me.cm[0]],
         [keyLabel(k.e), ABILITY_ICONS[me.c]?.[2] ?? 'star', me.cd[1], me.cm[1]],
-        [keyLabel(k.r), ABILITY_ICONS[me.c]?.[3] ?? 'star', ult >= 1 ? 0 : 1, 1],
+        [keyLabel(k.r), ABILITY_ICONS[me.c]?.[3] ?? 'star', ult >= 1 || guardianCasting ? 0 : 1, 1],
       ];
       const bx = 320 - (slots.length * 22) / 2;
       const by = 327; // ícone (16 px) + rótulo cabem inteiros acima da borda inferior (360)
@@ -295,6 +296,17 @@ export class HudScene extends Phaser.Scene {
       if (label) this.text(`edgel${key}`, ex - Math.cos(a) * 14, ey - Math.sin(a) * 12, label, color, [0.5, 0.5]);
     };
     for (const p of gs.rendered) if (p.id !== sess.myId) edge(p.x, p.y - 10, p.data.s === 1 ? 0xec6a5e : CLASSES[p.cls].color, `p${p.id}`, `${Math.round(Math.hypot(p.x - cam.scrollX - 320, p.y - cam.scrollY - 180) / 32)}m`);
+    const survivor = gs.survivorPosition();
+    if (survivor && w.ph === 'wave') {
+      const sx = survivor.x - cam.scrollX;
+      const sy = survivor.y - cam.scrollY;
+      edge(survivor.x, survivor.y - 12, 0x7fc47a, 'survivor', 'SOBREV.');
+      if (sx >= 12 && sx <= 628 && sy >= 48 && sy <= 345) {
+        const below = sy < 185 && sx < 390;
+        this.icon('survivorPin', 'ping', sx - 6, sy + (below ? 23 : -55)).setTint(0x7fc47a);
+        this.text('survivorLabel', sx, sy + (below ? 38 : -65), 'SOBREVIVENTE', 0x7fc47a, [0.5, 0]);
+      }
+    }
     gs.pings.forEach((p, i) => edge(p.x, p.y, 0xf6c257, `ping${i}`));
     for (const e of gs.renderedEnemies) if (e.flags & ENEMY_FLAGS.enraged) edge(e.x, e.y, 0xc83838, `en${e.id}`);
     for (const p of gs.pings) {

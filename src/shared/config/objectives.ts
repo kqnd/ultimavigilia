@@ -94,7 +94,7 @@ export const CHALLENGE_RULES = {
 /** Incompatibilidades evento × desafio (não sorteados juntos). */
 export const INCOMPATIBLE: Partial<Record<WaveEventKind, readonly ChallengeKind[]>> = {
   bonfire: ['fireUntouched', 'altar'],
-  escort: ['altar', 'speed'],
+  escort: ['altar', 'speed', 'fireUntouched'],
   cart: ['fireUntouched'],
   ritual: ['elite'],
 };
