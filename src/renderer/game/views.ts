@@ -401,13 +401,14 @@ export class PlayerView {
       const h = this.local ? 3 : 2;
       const low = this.local && frac < 0.3 && Math.floor(now / 250) % 2 === 0;
       const fill = this.local ? (frac < 0.3 ? 0xec6a5e : frac < 0.6 ? 0xe0902a : 0xc83838) : 0xc83838;
-      g.fillStyle(0x0b0a12, 1).fillRect(x - w / 2 - 1, headTop + 1, w + 2, h + 2);
-      g.fillStyle(0x6e1424, 1).fillRect(x - w / 2, headTop + 2, w, h);
-      g.fillStyle(low ? 0xffffff : fill, 1).fillRect(x - w / 2, headTop + 2, Math.round(w * frac), h);
+      const barY = headTop + (this.local ? -2 : 1);
+      g.fillStyle(0x0b0a12, 1).fillRect(x - w / 2 - 1, barY, w + 2, h + 2);
+      g.fillStyle(0x6e1424, 1).fillRect(x - w / 2, barY + 1, w, h);
+      g.fillStyle(low ? 0xffffff : fill, 1).fillRect(x - w / 2, barY + 1, Math.round(w * frac), h);
       if (this.local) {
         // escudo temporário emendado na ponta da barra, para não confundir com vida
-        if (d.sh > 0) g.fillStyle(0xbfe3ff, 1).fillRect(x - w / 2, headTop + 1, Math.min(w, Math.round((w * d.sh) / Math.max(1, d.mhp))), 1);
-        g.fillStyle(0xffffff, 0.22).fillRect(x - w / 2, headTop + 2, Math.round(w * frac), 1);
+        if (d.sh > 0) g.fillStyle(0xbfe3ff, 1).fillRect(x - w / 2, barY, Math.min(w, Math.round((w * d.sh) / Math.max(1, d.mhp))), 1);
+        g.fillStyle(0xffffff, 0.22).fillRect(x - w / 2, barY + 1, Math.round(w * frac), 1);
       }
     }
     // Essência do Necromante: pequenas almas orbitando
