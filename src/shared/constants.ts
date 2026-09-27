@@ -1,5 +1,5 @@
 /** Constantes globais compartilhadas entre servidor e cliente. */
-export const GAME_VERSION = '1.3.0';
+export const GAME_VERSION = '1.4.0';
 /** Incrementar sempre que o formato das mensagens mudar. */
 export const PROTOCOL_VERSION = 5;
 
