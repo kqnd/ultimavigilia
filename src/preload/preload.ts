@@ -3,6 +3,7 @@
  */
 import { contextBridge, ipcRenderer } from 'electron';
 import type { NetStatus, VigiliaBridge } from '../shared/bridge.js';
+import type { UpdateStatus } from '../shared/update.js';
 import type { ServerMessage } from '../shared/protocol.js';
 
 const api: VigiliaBridge = {
@@ -36,6 +37,18 @@ const api: VigiliaBridge = {
     setWindowSize: (s) => ipcRenderer.invoke('sys:windowSize', s),
     quit: () => ipcRenderer.invoke('sys:quit'),
     info: () => ipcRenderer.invoke('sys:info'),
+  },
+  update: {
+    check: () => ipcRenderer.invoke('update:check'),
+    status: () => ipcRenderer.invoke('update:status'),
+    download: () => ipcRenderer.invoke('update:download'),
+    install: () => ipcRenderer.invoke('update:install'),
+    openPage: () => ipcRenderer.invoke('update:openPage'),
+    onStatus: (cb) => {
+      const fn = (_e: unknown, s: UpdateStatus): void => cb(s);
+      ipcRenderer.on('update:status', fn);
+      return () => ipcRenderer.removeListener('update:status', fn);
+    },
   },
 };
 

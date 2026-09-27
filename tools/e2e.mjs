@@ -111,6 +111,40 @@ async function soloStart(page, cls) {
 }
 const dbg = (page, c, n = 0, s = '') => page.evaluate(([c, n, s]) => window.__app.session.send({ t: 'dbg', c, n, s }), [c, n, s]);
 
+// Painel de atualização: injeta cada estado no menu e fotografa (sem depender da rede).
+scenarios.update = async () => {
+  const { app, page, logs } = await launch('update', []);
+  await sleep(600);
+  // os estados são injetados direto no controlador (o mesmo objeto que o IPC alimentaria)
+  const show = async (name, st) => {
+    await page.evaluate((st) => {
+      const a = window.__app.app;
+      a.updateDismissed = false;
+      a.update = st;
+      a.renderUpdate();
+    }, st);
+    await sleep(250);
+    await shot(page, `update-${name}`);
+  };
+  const release = {
+    kind: 'release', version: '1.4.0', title: 'Redemoinho de Fúria e falas de todo o elenco',
+    notes: 'Berserker: Q girante e Fúria como vantagem.\nLapanha: acerto das melancias corrigido.\nFalas para as oito classes.',
+    publishedAt: '2026-09-27T00:00:00Z', asset: { name: 'UltimaVigilia-1.4.0-Instalador.exe', size: 116 * 1024 * 1024 },
+    url: 'https://github.com/kqnd/ultimavigilia/releases/tag/v1.4.0',
+  };
+  await show('1-release', { state: 'found', update: release });
+  await show('2-commits', {
+    state: 'found',
+    update: { kind: 'commits', ahead: 7, sha: 'cca65a3', message: 'ajustes de balanceamento do Berserker', date: '2026-09-27T00:00:00Z', url: 'https://github.com/kqnd/ultimavigilia/commits/master' },
+  });
+  await show('3-downloading', { state: 'downloading', update: release, received: 44 * 1024 * 1024, total: 116 * 1024 * 1024 });
+  await show('4-ready', { state: 'ready', update: release });
+  await show('5-error', { state: 'error', message: 'GitHub respondeu 403' });
+  await show('6-sem-instalador', { state: 'found', update: { ...release, asset: null } });
+  fs.writeFileSync(path.join(out, 'logs-update.txt'), logs.filter((l) => !l.includes('Security')).join('\n'));
+  await app.close();
+};
+
 scenarios.clickmove = async () => {
   const { app, page, logs } = await launch('clickmove');
   try {

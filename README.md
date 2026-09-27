@@ -100,6 +100,35 @@ público/internet sem uma VPN como a Radmin (isso exigiria redirecionamento de p
 
 ---
 
+## Atualizações automáticas
+
+Ao abrir, o jogo consulta o repositório `kqnd/ultimavigilia` no GitHub e avisa no menu quando há
+novidade. São dois casos, com comportamentos diferentes de propósito:
+
+- **Release nova** — é a única que o jogo consegue instalar sozinho. Se a release tiver o
+  instalador (`.exe`) anexado, o menu mostra "Baixar", baixa com barra de progresso e, ao terminar,
+  "Instalar e reiniciar" fecha o jogo e abre o instalador.
+- **Commits novos sem release** — o menu apenas avisa e abre o repositório. O que há lá é
+  código-fonte, e um jogo já instalado não consegue aplicá-lo sozinho (precisaria de `npm install`
+  e compilar). Prometer "baixar" aqui seria mentira.
+
+Ou seja: **para os jogadores receberem uma atualização, é preciso publicar uma release com o
+instalador anexado.** `npm run release` confere o que falta e imprime os comandos exatos:
+
+```bash
+npm run release 1.4.0   # ajusta package.json e GAME_VERSION juntos
+npm run dist:win        # gera release/UltimaVigilia-1.4.0-Instalador.exe
+npm run release         # imprime os comandos de tag, push e gh release create
+```
+
+O jogador pode desligar a procura em Configurações → "Procurar atualizações ao abrir".
+
+Detalhes de implementação: a verificação, o download e a execução acontecem só no processo
+principal (`src/main/updater.ts`). O renderer não escolhe endereço, não baixa e não executa nada —
+ele pede a ação pela ponte (`update.check/download/install`) e recebe o estado. Só HTTPS, só os
+domínios do GitHub, redirecionamentos revalidados, teto de tamanho e conferência do tamanho
+baixado contra o que a release anunciou.
+
 ## Para desenvolvedores
 
 Requisitos: **Node.js 22 LTS** (≥ 20) e npm. Windows, Linux ou macOS para desenvolver; o pacote

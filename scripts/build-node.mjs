@@ -1,7 +1,21 @@
 // Compila main, preload e servidor (Node) com esbuild. Uso: node scripts/build-node.mjs [--watch]
+import { execSync } from 'node:child_process';
 import * as esbuild from 'esbuild';
 
 const watch = process.argv.includes('--watch');
+
+// Commit de origem da build: o verificador de atualizações usa isso para saber se o repositório
+// andou desde que este pacote foi gerado. Fora de um clone git (ou com a árvore suja) fica 'dev',
+// e o verificador trata 'dev' como "rodando do código" — sem avisos de commit.
+let buildCommit = 'dev';
+try {
+  const sha = execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  const dirty = execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  if (/^[0-9a-f]{40}$/.test(sha) && !dirty) buildCommit = sha;
+} catch {
+  // sem git: segue como 'dev'
+}
+console.log(`[build-node] commit da build: ${buildCommit}`);
 const common = {
   bundle: true,
   platform: 'node',
@@ -10,6 +24,7 @@ const common = {
   sourcemap: true,
   logLevel: 'info',
   legalComments: 'none',
+  define: { __BUILD_COMMIT__: JSON.stringify(buildCommit) },
 };
 
 const configs = [

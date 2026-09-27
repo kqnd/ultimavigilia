@@ -41,7 +41,8 @@
     "simulate": "node --import tsx tools/simulate.ts",
     "icon": "node --import tsx tools/build-icon.ts",
     "e2e": "node tools/e2e.mjs",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "release": "node scripts/release.mjs"
   },
   "engines": {
     "node": ">=20"

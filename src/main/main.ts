@@ -10,6 +10,7 @@ import { startHost, stopHost } from './hostManager.js';
 import { isValidHost, listIPv4 } from './interfaces.js';
 import { NetClient } from './netClient.js';
 import { loadSettings, saveSettings } from './settings.js';
+import { buildCommit, checkForUpdate, currentStatus, downloadUpdate, installUpdate, onUpdateStatus, openUpdatePage } from './updater.js';
 
 // Perfis separados (duas instâncias no mesmo PC): --profile=nome
 const profileArg = process.argv.find((a) => a.startsWith('--profile='));
@@ -105,10 +106,16 @@ function createWindow(): void {
     },
   });
 
+  // progresso da atualização: empurrado para a janela enquanto o download anda
+  onUpdateStatus((st) => {
+    if (!wc.isDestroyed()) wc.send('update:status', st);
+  });
+
   if (DEV_URL) void win.loadURL(DEV_URL);
   else void win.loadFile(RENDERER_FILE);
 
   win.on('closed', () => {
+    onUpdateStatus(null);
     win = null;
   });
 }
@@ -166,7 +173,14 @@ function registerIpc(): void {
     if (typeof size === 'string' && (WINDOW_SIZES as readonly string[]).includes(size)) applyWindowSize(size as Settings['windowSize']);
   });
   handle('sys:quit', () => app.quit());
-  handle('sys:info', () => ({ version: GAME_VERSION, profile, platform: process.platform, electron: process.versions.electron }));
+  handle('sys:info', () => ({ version: GAME_VERSION, profile, platform: process.platform, electron: process.versions.electron, commit: buildCommit() }));
+
+  // atualizações: a interface só dispara as ações; endereços e arquivos ficam no updater
+  handle('update:check', () => checkForUpdate());
+  handle('update:status', () => currentStatus());
+  handle('update:download', () => downloadUpdate());
+  handle('update:install', () => installUpdate());
+  handle('update:openPage', () => openUpdatePage());
 }
 
 app.whenReady().then(() => {

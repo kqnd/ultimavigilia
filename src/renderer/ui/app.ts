@@ -11,6 +11,7 @@ import { CAP_TEXT, FORKS, KIND_INFO, RARITY_INFO, UPGRADE_BY_ID, UPGRADE_CAPS, t
 import { TOTAL_WAVES, WAVES } from '../../shared/config/waves.js';
 import { DEFAULT_PORT, GAME_VERSION, MAX_PLAYERS, VIEW_H, VIEW_W } from '../../shared/constants.js';
 import type { GameEvent, LobbyPlayer, WaveInfo } from '../../shared/protocol.js';
+import { formatBytes, type UpdateStatus } from '../../shared/update.js';
 import { audio } from '../audio.js';
 import type { TravelScene } from '../game/cinematic.js';
 import type { HudScene } from '../game/hud.js';
@@ -63,6 +64,10 @@ export class App {
   private interfaces: NetInterfaceInfo[] = [];
   private lastError = '';
   private userLeaving = false;
+  /** Atualizações: estado atual, se já se procurou nesta sessão e se o jogador dispensou o aviso. */
+  private update: UpdateStatus = { state: 'idle' };
+  private updateChecked = false;
+  private updateDismissed = false;
 
   constructor(
     private readonly session: Session,
@@ -78,6 +83,7 @@ export class App {
     this.toasts = h('div', { class: 'layer passthrough' });
     this.root.append(this.layer, this.overlay, this.toasts);
     this.wire();
+    this.initUpdates();
     this.fit();
     window.addEventListener('resize', () => this.fit());
     this.go('menu');
@@ -408,6 +414,126 @@ export class App {
     el.replaceChildren(h('div', { class: 'red blink', text: 'Conexão perdida' }), h('div', { text: `Tentando reconectar… ${left}s` }), h('button', { class: 'btn', onclick: () => void this.leave(true) }, 'Desistir'));
   }
 
+  // ---------------------------------------------------------------- atualizações
+
+  /**
+   * Liga o aviso de atualização. O processo principal empurra o estado (inclusive o progresso do
+   * download), e a primeira ida ao menu dispara a procura — uma vez por sessão, e só se o jogador
+   * não tiver desligado isso nas configurações.
+   */
+  private initUpdates(): void {
+    this.session.bridge.update.onStatus((st) => {
+      this.update = st;
+      if (this.screen === 'menu') this.renderUpdate();
+    });
+  }
+
+  private maybeCheckUpdate(): void {
+    if (this.updateChecked || !this.settings.autoUpdate) return;
+    this.updateChecked = true;
+    void this.session.bridge.update.check().then((st) => {
+      // falha de rede na procura automática não vira aviso nem fica guardada: quem não pediu para
+      // verificar não quer ver o erro agora nem ao voltar ao menu depois
+      if (st.state === 'error') return;
+      this.update = st;
+      if (this.screen === 'menu') this.renderUpdate();
+    });
+  }
+
+  /** Procura pedida pelo jogador (botão nas configurações): aí sim o resultado sempre aparece. */
+  private async checkUpdateNow(): Promise<void> {
+    this.updateChecked = true;
+    this.updateDismissed = false;
+    this.toast('Procurando atualizações…');
+    const st = await this.session.bridge.update.check();
+    this.update = st;
+    if (st.state === 'current') this.toast('O jogo já está atualizado.');
+    else if (st.state === 'error') this.toast(`Não deu para verificar: ${st.message}`, true);
+    if (this.screen === 'menu') this.renderUpdate();
+  }
+
+  /** Desenha (ou remove) o painel de atualização do menu. */
+  private renderUpdate(): void {
+    document.getElementById('update')?.remove();
+    if (this.screen !== 'menu' || this.updateDismissed) return;
+    const st = this.update;
+    if (st.state === 'idle' || st.state === 'checking' || st.state === 'current') return;
+
+    const panel = h('div', { id: 'update', class: 'panel gold fade-in', style: 'left:8px;top:150px;width:206px;z-index:20' });
+    const dismiss = (label = 'Agora não'): HTMLElement =>
+      h('button', { class: 'btn', onclick: () => { this.updateDismissed = true; this.renderUpdate(); } }, label);
+    const openPage = (label = 'Ver no GitHub'): HTMLElement =>
+      h('button', { class: 'btn', onclick: () => void this.session.bridge.update.openPage() }, label);
+
+    if (st.state === 'error') {
+      panel.append(
+        h('h2', { class: 'red', text: 'Falha na atualização' }),
+        h('div', { class: 'small', style: 'white-space:pre-wrap', text: st.message }),
+        h('div', { style: 'height:4px' }),
+        h('button', { class: 'btn', onclick: () => void this.checkUpdateNow() }, 'Tentar de novo'),
+        dismiss('Fechar'),
+      );
+      this.layer.append(panel);
+      return;
+    }
+
+    if (st.state === 'downloading') {
+      const frac = st.total > 0 ? Math.min(1, st.received / st.total) : 0;
+      panel.append(
+        h('h2', { text: `Baixando v${st.update.version}` }),
+        h('div', { style: 'height:6px;background:#0b0a12;box-shadow:inset 0 0 0 1px #37507e;margin:2px 0' },
+          h('div', { style: `height:100%;width:${Math.round(frac * 100)}%;background:#a8591a` })),
+        h('div', { class: 'small hint', text: `${formatBytes(st.received)} de ${formatBytes(st.total)} · ${Math.round(frac * 100)}%` }),
+      );
+      this.layer.append(panel);
+      return;
+    }
+
+    if (st.state === 'ready') {
+      panel.append(
+        h('h2', { class: 'ok', text: 'Atualização pronta' }),
+        h('div', { class: 'small', text: `A versão ${st.update.version} foi baixada. Instalar fecha o jogo e abre o instalador.` }),
+        h('div', { style: 'height:4px' }),
+        h('button', { class: 'btn primary', onclick: () => void this.session.bridge.update.install().then((ok) => { if (!ok) this.toast('O instalador não pôde ser aberto.', true); }) }, 'Instalar e reiniciar'),
+        dismiss('Instalar depois'),
+      );
+      this.layer.append(panel);
+      return;
+    }
+
+    const u = st.update;
+    if (u.kind === 'release') {
+      panel.append(h('h2', { text: `Nova versão ${u.version}` }));
+      if (u.title) panel.append(h('div', { class: 'small amber', text: u.title }));
+      if (u.notes) panel.append(h('div', { class: 'small scroll', style: 'max-height:56px;white-space:pre-wrap;margin-top:2px', text: u.notes }));
+      panel.append(h('div', { style: 'height:4px' }));
+      if (u.asset) {
+        panel.append(
+          h('button', { class: 'btn primary', onclick: () => void this.session.bridge.update.download() }, `Baixar (${formatBytes(u.asset.size)})`),
+          openPage(),
+        );
+      } else {
+        // release sem instalador anexado: não há o que baixar, então não prometemos download
+        panel.append(
+          h('div', { class: 'small hint', text: 'Esta versão não trouxe instalador anexado.' }),
+          openPage('Abrir página da versão'),
+        );
+      }
+      panel.append(dismiss());
+    } else {
+      // commits novos: código-fonte, que um jogo já empacotado não consegue aplicar sozinho
+      panel.append(
+        h('h2', { text: u.ahead > 0 ? `${u.ahead} ${u.ahead === 1 ? 'novidade' : 'novidades'} no repositório` : 'Novidades no repositório' }),
+        h('div', { class: 'small', style: 'white-space:pre-wrap', text: u.message }),
+        h('div', { class: 'small hint', style: 'margin-top:2px', text: `commit ${u.sha} · ainda sem versão publicada para instalar` }),
+        h('div', { style: 'height:4px' }),
+        openPage(),
+        dismiss(),
+      );
+    }
+    this.layer.append(panel);
+  }
+
   // ---------------------------------------------------------------- menu principal
 
   private renderMenu(): void {
@@ -443,6 +569,8 @@ export class App {
       ),
       h('div', { class: 'hint', style: 'position:absolute;left:6px;bottom:4px', text: `v${GAME_VERSION} · cooperativo 1–6 jogadores · LAN / Radmin VPN` }),
     );
+    this.maybeCheckUpdate();
+    this.renderUpdate();
   }
 
   private async startSolo(): Promise<void> {
@@ -1109,6 +1237,12 @@ export class App {
       dmg.textContent = `Números de dano: ${s.damageNumbers ? 'sim' : 'não'}`;
       void this.saveSettings();
     });
+    const autoUp = h('button', { class: 'btn' }, `Procurar atualizações ao abrir: ${s.autoUpdate ? 'sim' : 'não'}`);
+    autoUp.addEventListener('click', () => {
+      s.autoUpdate = !s.autoUpdate;
+      autoUp.textContent = `Procurar atualizações ao abrir: ${s.autoUpdate ? 'sim' : 'não'}`;
+      void this.saveSettings();
+    });
     const shaderBtn = h('button', { class: 'btn' }, `Shaders ambientais: ${s.enhancedLighting ? 'ligados' : 'desligados'}`);
     shaderBtn.addEventListener('click', () => {
       s.enhancedLighting = !s.enhancedLighting;
@@ -1170,6 +1304,10 @@ export class App {
           full,
           scaleBtn,
           dmg,
+          h('div', { style: 'height:6px' }),
+          h('label', { text: 'Atualizações' }),
+          autoUp,
+          h('button', { class: 'btn', onclick: () => { this.closeSettings(); void this.checkUpdateNow(); } }, 'Procurar agora'),
         ),
         h('div', {}, h('label', { text: 'Controles (clique para trocar; Esc cancela)' }), keys, h('div', { class: 'hint', style: 'margin-top:3px', text: 'Mira: mouse · Ataque: botão esquerdo · Mover: botão direito (WASD cancela) · F1: habilidades · Esc: menu' }), h('button', { class: 'btn', style: 'margin-top:4px', onclick: () => { s.keys = { ...DEFAULT_KEYS }; void this.saveSettings(); renderKeys(); } }, 'Restaurar controles padrão')),
       ),

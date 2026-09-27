@@ -1,5 +1,6 @@
 /** Contrato da ponte IPC exposta pelo preload (window.vigilia). */
 import type { ServerMessage } from './protocol.js';
+import type { UpdateStatus } from './update.js';
 
 export interface NetInterfaceInfo {
   name: string;
@@ -70,6 +71,8 @@ export interface Settings {
   enhancedLighting: boolean;
   /** 'integer': ampliação inteira com letterbox (pixels perfeitos); 'fit': preenche a janela (fator fracionário). */
   pixelScale: 'integer' | 'fit';
+  /** Procurar atualizações no GitHub ao abrir o jogo. */
+  autoUpdate: boolean;
   keys: Keybinds;
 }
 
@@ -102,6 +105,7 @@ export const DEFAULT_SETTINGS: Settings = {
   brightness: 0,
   enhancedLighting: false,
   pixelScale: 'integer',
+  autoUpdate: true,
   keys: { ...DEFAULT_KEYS },
 };
 
@@ -127,6 +131,7 @@ export function normalizeSettings(raw: unknown): Settings {
   s.brightness = num(r.brightness, 0, 1, 0);
   s.enhancedLighting = r.enhancedLighting === true;
   s.pixelScale = r.pixelScale === 'fit' ? 'fit' : 'integer';
+  s.autoUpdate = r.autoUpdate !== false;
   if (typeof r.keys === 'object' && r.keys !== null) {
     const k = r.keys as Record<string, unknown>;
     for (const key of Object.keys(DEFAULT_KEYS) as (keyof Keybinds)[]) {
@@ -142,6 +147,8 @@ export interface AppInfo {
   profile: string;
   platform: string;
   electron: string;
+  /** Commit de onde esta build saiu ('dev' quando rodando do código). */
+  commit: string;
 }
 
 export interface VigiliaBridge {
@@ -167,5 +174,22 @@ export interface VigiliaBridge {
     setWindowSize(size: Settings['windowSize']): Promise<void>;
     quit(): Promise<void>;
     info(): Promise<AppInfo>;
+  };
+  /**
+   * Atualizações. A interface não escolhe endereço nem toca em arquivo: pede a ação e recebe o
+   * estado. O que baixar e o que executar é decidido no processo principal (ver main/updater.ts).
+   */
+  update: {
+    /** Procura no GitHub. Devolve o estado final da procura. */
+    check(): Promise<UpdateStatus>;
+    /** Estado atual, sem consultar a rede. */
+    status(): Promise<UpdateStatus>;
+    /** Baixa o instalador da release encontrada. */
+    download(): Promise<UpdateStatus>;
+    /** Executa o instalador baixado e fecha o jogo. false = não havia nada pronto. */
+    install(): Promise<boolean>;
+    /** Abre a página da atualização no navegador. */
+    openPage(): Promise<void>;
+    onStatus(cb: (s: UpdateStatus) => void): () => void;
   };
 }
