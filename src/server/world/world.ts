@@ -5,10 +5,11 @@
 import { AFFIX_IDS, AFFIX_RULES, affixChance, affixesFor, type AffixId } from '../../shared/config/affixes.js';
 import { CHAPTERS, type ChapterDef, chapterOfWave, CLIMATE_EFFECTS, type Route, ROUTE, TRAVEL_SECONDS } from '../../shared/config/chapters.js';
 import { BERSERKER, CLASS_RANGE, CLASSES, type ClassId, HEAL_RULES, type HealSource, HUNTER, LAPANHA, MELEE_RULES, NECRO, PLAYER_RULES, TANK, VAMPIRE } from '../../shared/config/classes.js';
+import { COMBOS } from '../../shared/config/combos.js';
 import { ATK, BOSS_AI, BOSS_STAGGER_IMMUNITY, CC_DR, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
 import { BASE_OFFER_COUNT, INTERMISSION_SECONDS, LEGENDARY_MAX_PER_BUILD, MAX_OFFER_COUNT, UPGRADE_BY_ID, UPGRADE_CAPS } from '../../shared/config/upgrades.js';
 import { SCALING, TOTAL_WAVES, WAVES, waveInChapter } from '../../shared/config/waves.js';
-import { DT, sec, TICK_RATE, TILE } from '../../shared/constants.js';
+import { DT, sec, SHOT_HEIGHT, TICK_RATE, TILE } from '../../shared/constants.js';
 import { circleFree, lineOfSight, moveCircle, resolveCircle } from '../../shared/collision.js';
 import { type ArenaMap, Obst, blocksShot, breakableAt, cloneMap, getMap, mapIndex, WORLD_H, WORLD_W } from '../../shared/map.js';
 import { angleDiff, clamp, dist, dist2, Rng } from '../../shared/math.js';
@@ -981,6 +982,7 @@ export class World {
     if (slot === 'r') {
       p.ult = 0;
       this.emit({ k: 'ult', pi: p.id });
+      playerSay(this, p, 'ult', true);
     }
     p.buffered = null;
     return true;
@@ -1024,10 +1026,12 @@ export class World {
   spendStamina(p: Player, amt: number): boolean {
     if (amt <= 0) return true;
     let cost = amt;
-    if (p.cls === 'berserker' && p.rage >= BERSERKER.fury.high) cost *= BERSERKER.fury.staminaCostMul;
+    // Berserker: com Fúria alta os golpes saem mais baratos e a stamina volta a subir mais cedo
+    const furious = p.cls === 'berserker' && p.rage >= BERSERKER.fury.high;
+    if (furious) cost *= BERSERKER.fury.staminaCostMulHigh;
     if (p.move.stamina < cost) return false;
     p.move.stamina -= cost;
-    p.staminaDelay = sec(p.base.staminaDelay);
+    p.staminaDelay = sec(p.base.staminaDelay * (furious ? BERSERKER.fury.staminaDelayMulHigh : 1));
     return true;
   }
 
@@ -1218,7 +1222,7 @@ export class World {
     if (p.cls === 'vampire' && p.action?.name === 'e') m *= VAMPIRE.vortex.damageTaken;
     if (p.cls === 'berserker') {
       if (p.buffs.madness > 0) m *= 1 + (p.mods['b_iron'] ? BERSERKER.madness.ironDamageTaken : BERSERKER.madness.damageTaken);
-      else m *= 1 + BERSERKER.fury.maxDamageTaken * (p.rage / BERSERKER.fury.max);
+      else if (p.rage >= BERSERKER.fury.high) m *= BERSERKER.fury.damageTakenMulHigh;
     }
     return m;
   }
@@ -1349,6 +1353,13 @@ export class World {
     }
     // Caçador de Névoa exposto na recuperação do salto
     if (e.type === 'mistStalker' && e.atk === 'mistLeap' && e.state === 'recover') poiseMul *= ATK.mistStalker.leap.recoverPoiseMul;
+    // Combo Caçador exposto: um acerto em área nele velado suprime o velamento por um instante
+    // (ver mistStalkerMove) e dá um pequeno bônus de dano aos golpes seguintes nessa janela
+    // (bossObjectiveDamageMul) — não ao golpe que expõe.
+    if (e.type === 'mistStalker' && e.veiled && o.kind === 'aoe' && e.exposedT <= 0) {
+      e.exposedT = sec(COMBOS.exposeVeiled.seconds);
+      this.emit({ k: 'fx', n: 'comboExpose', x: e.x, y: e.y - e.r - 4, a: 0, o: e.id, r: 0 });
+    }
     const mul = p && !o.raw ? this.damageMul(p, e, o.kind) : 1;
     const dmg = Math.max(1, Math.round(base * mul));
     const hpBefore = e.hp;
@@ -1386,7 +1397,15 @@ export class World {
         }
       }
     }
-    if (poise > 0 && e.staggerImmune <= 0 && !e.def.stationary) {
+    // Combo Casca Traiçoeira: golpe pesado enquanto o alvo ainda está tonto do escorregão
+    // (vulnT) atordoa na hora, sem precisar estourar a barra de postura — um único
+    // aproveitamento por escorregão (consome vulnT já aqui).
+    if (e.vulnT > 0 && poise >= COMBOS.slipFollowUp.poiseThreshold && e.staggerImmune <= 0 && !e.def.stationary) {
+      e.vulnT = 0;
+      this.stagger(e, COMBOS.slipFollowUp.stunSeconds);
+      this.emit({ k: 'fx', n: 'comboFollowUp', x: e.x, y: e.y - e.r - 4, a: 0, o: e.id, r: 0 });
+      this.emit({ k: 'sfx', n: 'comboFollowUp', x: e.x, y: e.y });
+    } else if (poise > 0 && e.staggerImmune <= 0 && !e.def.stationary) {
       e.poise += poise * poiseMul * (e.affix === 'armored' ? AFFIX_RULES.armoredPoiseMul : 1);
       if (e.poise >= e.def.poise) this.stagger(e, e.def.staggerTime);
     }
@@ -1410,6 +1429,16 @@ export class World {
       this.emit({ k: 'fx', n: 'shieldBreak', x: e.x + Math.cos(e.shieldDir) * 10, y: e.y + Math.sin(e.shieldDir) * 6, a: e.shieldDir, o: e.id, r: ATK.ossuaryBearer.debrisSeconds });
       this.emit({ k: 'sfx', n: 'shieldBreak', x: e.x, y: e.y });
       if (by) this.addUlt(by, 4);
+      // Combo Escudo quebrado: um pulso sem dano atordoa comuns próximos por um instante —
+      // recompensa focar o escudo em equipe. Nunca afeta elites/minichefes/chefes.
+      if (by) {
+        const B = COMBOS.shieldBreakPulse;
+        for (const o of this.enemiesInCircle(e.x, e.y, B.radius)) {
+          if (o === e || o.def.tier !== 'common') continue;
+          this.stagger(o, B.stunSeconds);
+        }
+        this.emit({ k: 'fx', n: 'comboChain', x: e.x, y: e.y, a: 0, o: e.id, r: B.radius });
+      }
     }
   }
 
@@ -1423,6 +1452,17 @@ export class World {
       this.emit({ k: 'fx', n: 'woundBreak', x: e.x, y: e.y - 10, a: 0, o: e.id, r: 0 });
     }
     if (e.atk === 'siege' && e.state === 'windup') this.objectives.breakSiege(e);
+    // Combo Marca de Ossos: atordoar/quebrar a postura de um alvo marcado dá um pouco de
+    // Essência na hora para quem marcou, além da recompensa normal ao matá-lo (cooldown por
+    // inimigo evita farm repetido no mesmo alvo).
+    if (e.boneBy > 0 && e.boneT > 0 && e.markStaggerCd <= 0) {
+      const nec = this.players.get(e.boneBy);
+      if (nec && nec.cls === 'necromancer' && nec.status === 0) {
+        this.addEssence(nec, COMBOS.markStagger.essence);
+        e.markStaggerCd = sec(COMBOS.markStagger.cooldown);
+        this.emit({ k: 'fx', n: 'comboMark', x: e.x, y: e.y - e.r - 6, a: 0, o: e.id, r: 0 });
+      }
+    }
     e.aimPid = 0;
     e.state = 'stagger';
     e.stateT = sec(seconds);
@@ -1455,8 +1495,12 @@ export class World {
     e.kvy += dy * k;
   }
 
-  /** Controle com resistência (chefes/elites) e retornos decrescentes. Retorna duração aplicada (s). */
-  applyCC(e: Enemy, kind: 'root' | 'slow' | 'stun', seconds: number, slowMul = 0.5, source: Player | null = null): number {
+  /**
+   * Controle com resistência (chefes/elites) e retornos decrescentes. Retorna duração aplicada (s).
+   * `tag` identifica a fonte da lentidão (por padrão a classe de quem aplicou, ou 'field' para
+   * zonas/cartas sem dono direto) — usado só pelo Combo Gélido, abaixo.
+   */
+  applyCC(e: Enemy, kind: 'root' | 'slow' | 'stun', seconds: number, slowMul = 0.5, source: Player | null = null, tag?: string): number {
     if (e.state === 'dead' || e.def.stationary) return 0;
     const cc = e.cc;
     if (this.tick > cc.drUntil) cc.drCount = 0;
@@ -1467,8 +1511,21 @@ export class World {
     if (kind === 'root') cc.root = Math.max(cc.root, t);
     else if (kind === 'stun') cc.stun = Math.max(cc.stun, t);
     else {
+      // Combo Gélido: uma segunda lentidão de fonte diferente sobre um alvo já lento vira um
+      // atordoamento breve. Passa pela mesma resistência/DR do atordoamento comum (chamada
+      // recursiva abaixo), então chefes/elites já resistem tanto quanto resistiriam a um
+      // atordoamento normal; `freezeCd` impede reativar repetidamente no mesmo alvo.
+      const srcTag = tag ?? (source ? `c:${source.cls}` : 'field');
+      if (cc.slow > 0 && cc.freezeCd <= 0 && cc.slowSrc && cc.slowSrc !== srcTag) {
+        cc.freezeCd = sec(COMBOS.freeze.cooldown);
+        if (this.applyCC(e, 'stun', COMBOS.freeze.seconds, 1, source) > 0) {
+          this.emit({ k: 'fx', n: 'comboFreeze', x: e.x, y: e.y - e.r - 4, a: 0, o: e.id, r: 0 });
+          this.emit({ k: 'sfx', n: 'comboFreeze', x: e.x, y: e.y });
+        }
+      }
       cc.slow = Math.max(cc.slow, t);
       cc.slowMul = Math.min(cc.slowMul === 0 ? 1 : cc.slowMul, slowMul);
+      cc.slowSrc = srcTag;
     }
     if (kind !== 'slow') {
       cc.drCount++;
@@ -1659,6 +1716,30 @@ export class World {
     this.emit({ k: 'fx', n: 'ricochet', x: from.x, y: from.y - 6, a, o: 0, r: 0 });
   }
 
+  /**
+   * Altura (px) em que uma fruta em arco é DESENHADA acima do próprio ponto de colisão.
+   * Mesma fórmula do cliente (ver scene.ts): SHOT_HEIGHT + parábola pela fração do voo.
+   */
+  private lobLift(pr: Projectile): number {
+    const peak = pr.kind === 'bigMelon' ? LAPANHA.ripe.arcHeight : LAPANHA.melon.arcHeight;
+    const k = clamp(1 - pr.range / pr.lob, 0, 1);
+    return SHOT_HEIGHT + 4 * peak * k * (1 - k);
+  }
+
+  /**
+   * A fruta encosta no inimigo na TELA? As melancias vivem no plano do chão mas são desenhadas
+   * `lobLift` px acima, então o ponto de colisão fica atrás dos pés enquanto o sprite já cobre o
+   * corpo do inimigo. Sem esta leitura, a melancia atravessa visualmente o inimigo sem contar
+   * acerto (o jogador vê o acerto e o servidor não). A janela vertical é generosa de propósito:
+   * corrige o acerto perdido sem tirar nenhum acerto que já valia.
+   */
+  private lobTouches(pr: Projectile, lift: number, e: Enemy): boolean {
+    if (Math.abs(pr.x - e.x) > e.r + pr.r) return false;
+    const drawnY = pr.y - lift;
+    const bodyTop = e.y - (e.r * 2.2 + 14);
+    return drawnY >= bodyTop - pr.r && drawnY <= e.y + pr.r;
+  }
+
   private stepProjectiles(): void {
     for (const pr of this.projectiles) {
       if (pr.dead) continue;
@@ -1690,7 +1771,9 @@ export class World {
         pr.range -= (Math.hypot(pr.vx, pr.vy) * DT) / steps;
         const tx = Math.floor(pr.x / TILE);
         const ty = Math.floor(pr.y / TILE);
-        if (pr.kind !== 'slipper' && (pr.range <= 0 || blocksShot(this.map, tx, ty))) {
+        // a Melancia Madura sobe num arco alto: passa por cima de paredes (e de caixas, abaixo)
+        const overWall = pr.kind === 'bigMelon';
+        if (pr.kind !== 'slipper' && (pr.range <= 0 || (!overWall && blocksShot(this.map, tx, ty)))) {
           this.projectileEnd(pr, true);
           break;
         }
@@ -1708,9 +1791,14 @@ export class World {
             this.projectileEnd(pr, true);
             break;
           }
-          this.hash.query(pr.x, pr.y, pr.r, (e) => {
+          // frutas em arco: o acerto vale onde a fruta APARECE (ver lobTouches); a consulta larga
+          // é só broad-phase, o teste fino é o do sprite
+          const lob = LOB_KINDS.has(pr.kind) && pr.lob > 0;
+          const lift = lob ? this.lobLift(pr) : 0;
+          this.hash.query(pr.x, pr.y, pr.r + lift, (e) => {
             if (pr.dead || pr.hit.has(e.id) || e.state === 'dead' || e.state === 'spawn') return;
             if (pr.kind === 'bigMelon') return;
+            if (lob && !this.lobTouches(pr, lift, e)) return;
             pr.hit.add(e.id);
             if (kit?.projectileHit?.(this, pr, e)) return;
             // escudo frontal do Portador: o projétil para (não atravessa nem ricocheteia)
@@ -1944,7 +2032,7 @@ export class World {
       cds: {},
       poise: 0,
       staggerImmune: 0,
-      cc: { root: 0, slow: 0, slowMul: 0, stun: 0, pullX: 0, pullY: 0, pullStr: 0, pullT: 0, drCount: 0, drUntil: 0 },
+      cc: { root: 0, slow: 0, slowMul: 0, stun: 0, pullX: 0, pullY: 0, pullStr: 0, pullT: 0, drCount: 0, drUntil: 0, slowSrc: '', freezeCd: 0 },
       tauntBy: 0,
       tauntT: 0,
       markBy: 0,
@@ -1992,6 +2080,7 @@ export class World {
       vulnT: 0,
       aimPid: 0,
       lastCastTick: -9999,
+      markStaggerCd: 0,
     };
     // afixos: minichefes têm o afixo do tipo garantido; elites comuns sorteiam
     const options = affixesFor(type);
@@ -2174,17 +2263,25 @@ export class World {
       const cc = e.cc;
       if (cc.root > 0) cc.root--;
       if (cc.stun > 0) cc.stun--;
-      if (cc.slow > 0 && --cc.slow === 0) cc.slowMul = 0;
+      if (cc.slow > 0 && --cc.slow === 0) {
+        cc.slowMul = 0;
+        cc.slowSrc = '';
+      }
+      if (cc.freezeCd > 0) cc.freezeCd--;
       if (cc.pullT > 0) cc.pullT--;
       if (e.staggerImmune > 0) e.staggerImmune--;
       if (e.tauntT > 0) e.tauntT--;
       if (e.markT > 0 && --e.markT === 0) e.marks = 0;
       if (e.boneT > 0 && --e.boneT === 0) e.boneBy = 0;
+      if (e.markStaggerCd > 0) e.markStaggerCd--;
       if (e.cursedT > 0) e.cursedT--;
       if (e.targetT > 0) e.targetT--;
       if (e.shoutCd > 0) e.shoutCd--;
       if (e.hasteT > 0 && --e.hasteT === 0) e.hasteMul = 0;
       if (e.vulnT > 0) e.vulnT--;
+      // exposedT do Devorador (luas) é decrementado em tickBossObjectives; para outros tipos
+      // (combo Caçador de Névoa velado exposto por área) o decaimento é genérico aqui.
+      if (e.exposedT > 0 && e.type !== 'moonDevourer') e.exposedT--;
       if (this.tick % 15 === 0 && e.poise > 0) e.poise = Math.max(0, e.poise - e.def.poise * 0.15);
       if (e.def.tier === 'boss') tickBossObjectives(this, e);
       if ((e.def.tier === 'boss' || e.def.miniboss) && e.threat.size) {

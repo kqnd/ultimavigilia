@@ -320,7 +320,8 @@ export class HudScene extends Phaser.Scene {
       g.fillStyle(0x0b0a12, 0.7).fillRect(x - 2, ay - 1, 94, 22);
       this.icon(`ally${p.id}`, `icon_${ABILITY_ICONS[p.c]?.[0] ?? 'star'}`, x, ay + 2, p.s === 0 ? 1 : 0.4);
       const status = p.cn === 0 ? 'desconectado' : p.s === 1 ? 'CAÍDO' : p.s === 2 ? 'morto' : '';
-      this.text(`an${p.id}`, x + 19, ay, sess.nameOf(p.id), status ? 0x7a8096 : cls.color);
+      const nameColor = status ? 0x7a8096 : cls.color;
+      this.text(`an${p.id}`, x + 19, ay, sess.nameOf(p.id), nameColor);
       if (status) this.text(`as${p.id}`, x + 19, ay + 10, status, p.s === 1 ? 0xec6a5e : 0x7a8096);
       else {
         this.bar(x + 19, ay + 11, 70, 3, p.hp / p.mhp, 0xc83838, 0x440d1a);

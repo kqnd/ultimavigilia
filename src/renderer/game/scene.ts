@@ -688,6 +688,34 @@ export class GameScene extends Phaser.Scene {
       case 'stunResist':
         f.number(ev.x, ev.y, 'RESISTIU', 0xd8d0b8);
         break;
+      // ---- combos entre classes
+      case 'comboFreeze':
+        f.ring(ev.x, ev.y, 3, 20, 0xd8f6ff, 0.4, 2);
+        f.burst('p_frost', ev.x, ev.y, 10, 60, 0.5, { up: 15 });
+        f.number(ev.x, ev.y - 16, 'CONGELADO!', 0xd8f6ff);
+        audio.play('comboFreeze', ev.x, ev.y, 0.7);
+        break;
+      case 'comboFollowUp':
+        f.burst('p_star', ev.x, ev.y, 8, 55, 0.45, { up: 18 });
+        f.ring(ev.x, ev.y + 6, 2, 14, 0xff9a8a, 0.3, 2);
+        audio.play('comboFollowUp', ev.x, ev.y, 0.65);
+        break;
+      case 'comboChain':
+        f.ring(ev.x, ev.y, 4, ev.r, 0xcfd4df, 0.2, 2);
+        f.burst('p_dust', ev.x, ev.y, 10, 70, 0.4);
+        audio.play('comboChain', ev.x, ev.y, 0.6);
+        break;
+      case 'comboMark':
+        f.burst('p_abyss', ev.x, ev.y, 8, 45, 0.5, { up: 20 });
+        f.number(ev.x, ev.y - 4, '+ESSÊNCIA', 0xa8d05a);
+        audio.play('comboMark', ev.x, ev.y, 0.6);
+        break;
+      case 'comboExpose':
+        f.ring(ev.x, ev.y, 3, 18, 0xffe0a0, 0.4, 2);
+        f.burst('p_mist', ev.x, ev.y, 8, 40, 0.4, { up: 12 });
+        f.number(ev.x, ev.y - 16, 'EXPOSTO', 0xffe0a0);
+        audio.play('comboExpose', ev.x, ev.y, 0.6);
+        break;
       case 'siegeStart':
         f.burst('p_rune', ev.x, ev.y - 12, 6, 40, 0.4, { up: 20 });
         break;
@@ -815,8 +843,10 @@ export class GameScene extends Phaser.Scene {
         if (heavy) f.burst('p_ember', ev.x + Math.cos(ev.a) * ev.r * 0.7, ev.y - 6 + Math.sin(ev.a) * ev.r * 0.7, 8, 90, 0.35, { dir: ev.a, spread: 1.4 });
         break;
       }
-      case 'frenzySlash':
-        f.arc(ev.x, ev.y - 10, ev.a + (Math.random() - 0.5) * 0.8, BERSERKER.frenzy.arc, ev.r, 0xffb08a, 0xa8281e, 0.1, 2, follow(ev.o));
+      case 'frenzySpin':
+        // giro: o arco já vem rodado pelo servidor (um quarto de volta por pulso)
+        f.arc(ev.x, ev.y - 10, ev.a, BERSERKER.frenzy.arc, ev.r, 0xffd0a8, 0xa8281e, 0.12, 3, follow(ev.o));
+        f.burst('p_ember', ev.x + Math.cos(ev.a) * ev.r * 0.7, ev.y - 8 + Math.sin(ev.a) * ev.r * 0.7, 4, 70, 0.28, { dir: ev.a, spread: 1.8 });
         audio.play('frenzy', ev.x, ev.y, 0.6);
         break;
       case 'leapLand':
@@ -828,10 +858,16 @@ export class GameScene extends Phaser.Scene {
         audio.play('land', ev.x, ev.y);
         break;
       case 'madness':
-        f.ring(ev.x, ev.y - 10, 4, ev.r + 20, 0xc83838, 0.45, 3);
-        f.burst('p_blood', ev.x, ev.y - 10, 24, 110, 0.6, { up: 30 });
-        f.flash(0x7a1010, 0.18, 160);
-        f.shake(3, 200);
+        // três anéis saindo em tempos diferentes = onda de choque, não um círculo só.
+        // Finos de propósito: a conjuração não pode esconder o próprio boneco no meio da briga.
+        f.ring(ev.x, ev.y, 6, ev.r + 40, 0x7a1008, 0.34, 2);
+        f.ring(ev.x, ev.y, 4, ev.r + 26, 0xc83838, 0.38, 2);
+        f.ring(ev.x, ev.y - 8, 2, ev.r + 12, 0xffd08a, 0.3, 1);
+        f.burst('p_blood', ev.x, ev.y - 10, 30, 130, 0.7, { up: 34 });
+        f.burst('p_ember', ev.x, ev.y - 6, 22, 100, 0.8, { up: 46 });
+        f.number(ev.x, ev.y - 30, 'LOUCURA', 0xff6a4a);
+        f.flash(0x8a1408, 0.22, 240);
+        f.shake(6, 340);
         break;
       case 'exhausted':
         f.number(ev.x, ev.y - 8, 'EXAUSTO', 0x9aa0b4);

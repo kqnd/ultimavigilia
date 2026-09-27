@@ -50,17 +50,20 @@ votação termina antes se todos os conectados votarem.
 ## 2. Classes
 
 ### Berserker (novo — substitui o Guerreiro em todo o jogo)
-Vida 135 · Stamina 110 (regen 34/s) · Velocidade 108 · Dificuldade ★★☆
+Vida 135 · Stamina 130 (regen 40/s, atraso 0,4 s) · Velocidade 108 · Dificuldade ★★☆
 
 | Ação | Valores |
 |---|---|
 | Básico — Machado Brutal (combo 3) | 18 / 20 / 40 de dano; alcance 38/38/44; arco 120°/120°/**190°**; 3º golpe: preparação 11, recuperação 17 ticks, empurrão 150; janela de combo 9 ticks |
-| Q — Rasgo Frenético | 4 cortes de 11 (44 total) em cone 120° / 40 px, um a cada 4 ticks; anda a 60%; recarga 6 s; 16 de stamina |
+| Q — Redemoinho de Fúria | 4 pulsos de 13 (52 total) em 46 px **em volta** (arco 170° girando 90° por pulso, um a cada 5 ticks): alcança quem está atrás; anda a 55%; **+15 de Fúria na hora** no primeiro pulso que acerta (uma vez por uso); recarga 6 s; **12** de stamina |
 | E — Salto Brutal | até 150 px em 12 ticks com 8 ticks de invulnerabilidade; pouso: 28 de dano em 46 px, poise 42, empurrão 160; recarga 7 s; 18 de stamina; telegrafado no chão |
 | R — Loucura (suprema) | 8 s: Fúria travada em 100, **+35% de dano**, **+30% de velocidade de ataque**, **+20% de dano recebido**; ao fim, **3 s de Exaustão** (velocidade ×0,6) |
-| Passiva — Fúria (0–100) | +0,35 por dano causado e +0,9 por dano recebido; começa a cair 2,5 s sem combate (−8/s). Escala linear até: +35% de dano, +20% de velocidade de ataque, **+25% de dano recebido**. Acima de 60: stamina custa ×1,25 |
+| Passiva — Fúria (0–100) | +0,35 por dano causado e +0,9 por dano recebido; começa a cair 2 s sem combate (**−11/s**). Escala linear até +35% de dano e +20% de velocidade de ataque. **Acima de 60 a Fúria é vantagem**: stamina custa ×0,85, o atraso de regeneração cai a ×0,6 e o dano recebido cai a ×0,88 |
 
-Riscos claros: mais dano recebido com Fúria alta, custo de stamina maior e exaustão após a suprema.
+O risco mudou de lugar (v1.4). Antes a Fúria alta punia com dano recebido e stamina caras — na prática
+o Berserker vivia sem stamina e era castigado justamente por jogar bem. Agora a Fúria alta é prêmio, e
+o preço é **ter de continuar dentro da horda**: parado, 100 de Fúria escorre em ~9 s, e nada além de
+bater a enche de volta. O momento de risco de verdade é a Loucura (+20% de dano recebido e exaustão).
 Não reutiliza aparo/contra-ataque do Guerreiro.
 
 ### Necromante (novo)
@@ -217,7 +220,8 @@ em 35% da vida.
 
 | Composição | Resultado |
 |---|---|
-| Berserker solo (bot) | vitória na onda 30 em ~41 min simulados |
+| Berserker solo (bot) | vitória na onda 30 em ~38,5 min simulados (v1.4; era ~41 min antes do Redemoinho e da economia de stamina) |
+| Lapanha + Berserker (bots) | vitória na onda 30 em ~44,8 min simulados |
 | Necromante solo (bot) | vitória na onda 30 em ~31,5 min simulados (ondas de 30–98 s; chefe final 287 s) |
 | 7 classes a partir da onda 18 | vitória; onda da Noiva a mais longa |
 
@@ -310,3 +314,53 @@ Ondas comuns 9–29 sem nenhum especial: 160/340 → 0/340. Limites solo 2/2/3, 
 Raridades comum 60% · incomum 27% · rara 11% · lendária 2%; no máximo 1 lendária por build; nenhuma oferta repete família.
 Tetos globais: recarga 25%, velocidade 15%, velocidade de ataque 12%, dano de cartas 30%, redução de dano 16%,
 bônus de cura 20%, alcance 15%, área 30%.
+
+---
+
+## v1.4 — Berserker repensado, correções do Lapanha, falas de todo o elenco e vida na cabeça
+
+### Berserker: o Q girante e a Fúria como prêmio
+Dois problemas medidos em jogo: o Q era um cone frontal fraco (4×11 = 44 de dano só à frente, 16 de
+stamina) e a classe vivia sem stamina — a Fúria alta *encarecia* os golpes, então quem jogava bem
+era punido duas vezes (mais dano recebido e menos stamina).
+
+- **Q — Redemoinho de Fúria** substitui o Rasgo Frenético: 4 pulsos de 13 (52) girando 90° por pulso
+  em 46 px, então cobre o círculo inteiro e alcança quem está atrás. Custa 12 de stamina (era 16) e
+  dá **+15 de Fúria na hora** no primeiro pulso que acerta — uma vez por uso, não por inimigo, para
+  girar no meio da horda não virar Fúria infinita. O machado dá uma volta completa na animação.
+- **Fúria acima de 60 virou vantagem**: stamina ×0,85, atraso de regeneração ×0,6, dano recebido
+  ×0,88. Saiu o +25% de dano recebido.
+- **Preço novo**: a Fúria decai mais rápido (começa em 2 s, −11/s), então mantê-la exige continuar
+  dentro da horda. A Loucura (R) segue com +20% de dano recebido e exaustão — é o risco de verdade.
+- **Economia base**: stamina 110 → 130, regeneração 34 → 40/s, atraso 0,5 → 0,4 s.
+- **Loucura visualmente significativa**: anel de fogo circular respirando em volta dos pés com
+  labaredas girando, corpo aceso em vermelho (tinta ADD, não MULTIPLY) e brasas subindo durante os
+  8 s do buff; conjuração com três anéis de choque; som refeito (sub-grave sustentado + serra com
+  vibrato + ruído descendo, 1,8 s).
+
+Simulação: vitória solo na onda 30 em ~38,5 min (era ~41 min). Ganho modesto, como pretendido.
+
+### Lapanha: dois defeitos reais
+- **Acerto das frutas em arco (corrigido)**: melancias vivem no plano do chão mas são *desenhadas*
+  `SHOT_HEIGHT + arco` px acima. O acerto era testado só no chão, então a fruta atravessava
+  visualmente o inimigo (sprite sobre sprite) sem contar acerto — o jogador via o acerto e o
+  servidor não. Agora o teste usa a posição desenhada (`lobLift`/`lobTouches` em `world.ts`), com
+  janela vertical generosa de propósito: recupera o acerto perdido sem inventar acerto novo.
+  Coberto por teste que falha sem a correção.
+- **Q por cima de paredes**: a Melancia Madura sobe num arco alto, então deixou de ser interrompida
+  por paredes (já passava por caixas e barris) e o destino não é mais cortado no último ponto livre
+  antes do obstáculo — cai onde foi mirada. A melancia comum (arco baixo) continua parando na parede.
+
+### Falas: as oito classes
+`lines.ts` tinha voz só para o Lapanha. Agora cada classe tem uma voz reconhecível em uma linha —
+Caçador seco e técnico, Mago erudito e vaidoso, Guardião em comando no plural, Vampiro cortês até a
+crueldade, Berserker em grito curto, Dog criança empolgada, Necromante solene, Lapanha alegre — em
+todos os momentos genéricos (início, onda, suprema, vida baixa, chefe, reviver, vitória, derrota).
+A fala da suprema passou para o ponto central onde a R é paga, valendo para todas as classes.
+Nenhuma fala se repete entre classes (verificado por teste).
+
+### Vida e nome do próprio boneco
+No meio da horda, olhar para o canto da tela custa caro: o jogador local agora tem **barra de vida
+sobre a cabeça** (mais larga e alta que a dos aliados, cor mudando em 60% e 30%, piscando no
+crítico, com o escudo temporário emendado acima) e o **apelido em laranja**, para achar seu boneco
+de relance.

@@ -1,7 +1,9 @@
 /**
- * Berserker: corpo a corpo de alto risco. A Fúria (0–100) sobe ao causar e receber dano e
- * aumenta dano/velocidade de ataque, mas também o dano recebido e o custo de stamina.
- * A Loucura (R) trava a Fúria no máximo por alguns segundos e cobra exaustão ao terminar.
+ * Berserker: corpo a corpo agressivo. A Fúria (0–100) sobe ao causar e receber dano e aumenta
+ * dano e velocidade de ataque; acima do limiar ela também deixa os golpes mais baratos e o
+ * Berserker um pouco mais resistente (ver BERSERKER.fury). O preço é ter de ficar no meio da
+ * horda, porque parado a Fúria escorre. A Loucura (R) trava a Fúria no máximo por alguns
+ * segundos e cobra exaustão ao terminar.
  */
 import { BERSERKER } from '../../../shared/config/classes.js';
 import { sec } from '../../../shared/constants.js';
@@ -38,7 +40,7 @@ export const berserkerKit: Kit = {
       case 'q': {
         const f = BERSERKER.frenzy;
         if (!w.spendStamina(p, f.stamina)) return 'st';
-        const active = (f.hits - 1) * f.gap + 1;
+        const active = (f.pulses - 1) * f.pulseEvery + 1;
         w.startAction(p, 'q', { windup: f.windup, active, recovery: f.recovery }, { moveMul: f.moveMul, speedMul: attackSpeed(p) });
         w.setCooldown(p, 'q', f.cooldown);
         w.emit({ k: 'sfx', n: 'frenzy', x: p.x, y: p.y });
@@ -79,17 +81,26 @@ export const berserkerKit: Kit = {
       const hits = w.meleeArc(p, a, spec, 1, reach(w, p));
       if (hits.length) w.emit({ k: 'sfx', n: idx === 2 ? 'axeHeavy' : 'axeHit', x: p.x, y: p.y });
     } else if (a.name === 'q') {
+      // Redemoinho: cada pulso gira `spinStep` a partir da mira, então os pulsos juntos varrem
+      // o círculo inteiro. A Fúria do giro é creditada uma vez por uso (no primeiro pulso que
+      // acerta), não por inimigo: girar no meio da horda não vira Fúria infinita.
       const f = BERSERKER.frenzy;
       const k = a.t - (a.wu + 1);
-      if (k >= 0 && k % Math.max(1, Math.round(f.gap / attackSpeed(p))) === 0 && a.n < f.hits) {
+      if (k >= 0 && k % Math.max(1, Math.round(f.pulseEvery / attackSpeed(p))) === 0 && a.n < f.pulses) {
+        const spin = a.n;
         a.n++;
         a.hit.clear();
-        // alterna o lado do corte a cada golpe
-        const dir = p.aim + (a.n % 2 ? -1 : 1) * BERSERKER.frenzy.swingOffset;
+        const dir = p.aim + spin * f.spinStep;
         a.dir = dir;
-        w.emit({ k: 'fx', n: 'frenzySlash', x: p.x, y: p.y, a: dir, o: p.id, r: f.range * reach(w, p) });
+        w.emit({ k: 'fx', n: 'frenzySpin', x: p.x, y: p.y, a: dir, o: p.id, r: f.range * reach(w, p) });
         const hits = w.meleeArc(p, a, f, 1, reach(w, p));
-        if (hits.length) w.emit({ k: 'sfx', n: 'axeHit', x: p.x, y: p.y });
+        if (hits.length) {
+          w.emit({ k: 'sfx', n: 'axeHit', x: p.x, y: p.y });
+          if (!a.spun) {
+            a.spun = true;
+            w.addRage(p, f.furyGain);
+          }
+        }
       }
     } else if (a.name === 'e') {
       const L = BERSERKER.leap;

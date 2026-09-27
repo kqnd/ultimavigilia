@@ -24,6 +24,8 @@ export interface Action {
   moveMul: number;
   /** Dados específicos da ação. */
   n: number;
+  /** Redemoinho do Berserker: a Fúria do giro já foi creditada neste uso. */
+  spun?: boolean;
 }
 
 export interface Player {
@@ -175,6 +177,9 @@ export interface EnemyCC {
   pullT: number;
   drCount: number;
   drUntil: number;
+  /** Combo Gélido: rótulo da fonte da lentidão atual ('' = nenhuma) e cooldown do combo (ticks). */
+  slowSrc: string;
+  freezeCd: number;
 }
 
 export interface Enemy {
@@ -268,6 +273,8 @@ export interface Enemy {
   aimPid: number;
   /** Tick da última Marcha/Ferida (espaçamento entre as duas). */
   lastCastTick: number;
+  /** Combo Marca de Ossos: cooldown (ticks) antes de gerar Essência de novo por atordoar este alvo. */
+  markStaggerCd: number;
 }
 
 /** Servos do Necromante e aliados não jogadores (sobrevivente). */

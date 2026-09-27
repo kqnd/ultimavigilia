@@ -420,7 +420,7 @@ export class Audio {
   }
 }
 
-const DUR: Record<string, number> = { madness: 0.9, army: 1.1, chapter: 3, raise: 0.6, howl: 1.3, ruptureCharge: 1.2, waveStart: 2, victory: 2.5, defeat: 2.5, feast: 1, endScream: 0.7, transform: 2, bossWarn: 1.2 };
+const DUR: Record<string, number> = { madness: 1.8, army: 1.1, chapter: 3, raise: 0.6, howl: 1.3, ruptureCharge: 1.2, waveStart: 2, victory: 2.5, defeat: 2.5, feast: 1, endScream: 0.7, transform: 2, bossWarn: 1.2 };
 const ALERTS = new Set(['bossWarn', 'waveStart', 'howl', 'transform', 'telegraph', 'down', 'deny', 'victory', 'defeat', 'lowHp']);
 const UI_SOUNDS = new Set(['uiClick', 'uiHover', 'uiBack', 'upgrade']);
 
@@ -527,6 +527,21 @@ const RECIPES: Record<string, Recipe> = {
     a.tone(t + 0.3, 0.25, o, { type: 'triangle', f0: 660, f1: 520, gain: 0.08 });
   },
   survivorAlarm: (a, t, o) => a.tone(t, 0.3, o, { type: 'square', f0: 880, f1: 700, gain: 0.05, lp: 2200 }),
+  // --- combos entre classes
+  comboFreeze: (a, t, o) => {
+    a.tone(t, 0.3, o, { type: 'sine', f0: 1600, f1: 2200, gain: 0.1, vib: 22 });
+    a.noise(t, 0.22, o, { type: 'highpass', f0: 3200, gain: 0.18 });
+  },
+  comboFollowUp: (a, t, o) => {
+    a.tone(t, 0.16, o, { type: 'square', f0: 260, f1: 140, gain: 0.13, lp: 1000 });
+    a.noise(t, 0.1, o, { type: 'lowpass', f0: 700, gain: 0.25 });
+  },
+  comboChain: (a, t, o) => a.noise(t, 0.18, o, { type: 'lowpass', f0: 800, f1: 180, gain: 0.3 }),
+  comboMark: (a, t, o) => {
+    a.tone(t, 0.16, o, { type: 'triangle', f0: 440, f1: 440, gain: 0.08 });
+    a.tone(t + 0.1, 0.22, o, { type: 'triangle', f0: 660, f1: 660, gain: 0.08 });
+  },
+  comboExpose: (a, t, o) => a.noise(t, 0.2, o, { type: 'bandpass', f0: 1500, f1: 2600, q: 2, gain: 0.22 }),
   cardRare: (a, t, o) => {
     a.tone(t, 0.18, o, { type: 'triangle', f0: 523, f1: 523, gain: 0.07 });
     a.tone(t + 0.12, 0.3, o, { type: 'triangle', f0: 784, f1: 784, gain: 0.07 });
@@ -586,8 +601,12 @@ const RECIPES: Record<string, Recipe> = {
   frenzy: (a, t, o) => a.noise(t, 0.09, o, { f0: 1200, f1: 3200, q: 1.5, gain: 0.3 }),
   leap: (a, t, o) => a.noise(t, 0.35, o, { f0: 300, f1: 1400, q: 0.8, gain: 0.3, attack: 0.05 }),
   madness: (a, t, o) => {
-    a.tone(t, 0.9, o, { type: 'sawtooth', f0: 70, f1: 140, gain: 0.25, lp: 700, vib: 8 });
-    a.noise(t, 0.6, o, { type: 'lowpass', f0: 600, f1: 200, gain: 0.4, attack: 0.1 });
+    // rugido: sub-grave sustentado + serra subindo com vibrato + ruído grave descendo
+    a.tone(t, 1.8, o, { type: 'sine', f0: 38, f1: 30, gain: 0.5, attack: 0.04 });
+    a.tone(t, 1.6, o, { type: 'sawtooth', f0: 62, f1: 128, gain: 0.3, lp: 620, vib: 6, attack: 0.06 });
+    a.tone(t + 0.08, 1.3, o, { type: 'square', f0: 96, f1: 74, gain: 0.14, lp: 900, vib: 11 });
+    a.noise(t, 1.2, o, { type: 'lowpass', f0: 900, f1: 180, gain: 0.42, attack: 0.12 });
+    a.noise(t + 0.5, 0.9, o, { type: 'bandpass', f0: 240, f1: 90, q: 2.5, gain: 0.26, attack: 0.2 });
   },
   // --- Necromante
   bone: (a, t, o) => {

@@ -1251,7 +1251,8 @@ const mistStalkerMove = (w: World, e: Enemy): [number, number] => {
       w.emit({ k: 'sfx', n: 'mistCue', x: e.x, y: e.y });
       return STILL;
     }
-    e.veiled = d > S.veilDistance;
+    // Combo Caçador exposto: um acerto em área o revela por um instante, mesmo perto do limite do velamento.
+    e.veiled = e.exposedT <= 0 && d > S.veilDistance;
     const sp = e.def.speed;
     // desvia da linha de tiro de quem está mirando nele
     const angToMe = Math.atan2(e.y - t.y, e.x - t.x);

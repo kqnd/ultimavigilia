@@ -3,6 +3,7 @@
  * Todo o estado vive aqui, no servidor; os clientes só recebem o resumo em `WaveInfo`.
  */
 import { AFFIX_RULES } from '../../shared/config/affixes.js';
+import { COMBOS } from '../../shared/config/combos.js';
 import { ATK, ENEMIES, type EnemyType, SPECIAL_RULES, SPECIAL_TYPES, type SpecialType } from '../../shared/config/enemies.js';
 import {
   CHALLENGE_KINDS, CHALLENGE_RULES, CHALLENGES, type ChallengeKind, EVENT_RULES, INCOMPATIBLE, SIEGE_RULES, WAVE_EVENT_KINDS, WAVE_EVENTS, type WaveEventKind,
@@ -856,13 +857,15 @@ export function countObjectives(w: World, type: EnemyType): number {
   return n;
 }
 
-/** Multiplicador de dano recebido por chefes com objetivos (luas/totens). */
+/** Multiplicador de dano recebido: chefes com objetivos (luas/totens) e combo do Caçador exposto. */
 export function bossObjectiveDamageMul(w: World, e: Enemy): number {
   if (e.type === 'moonDevourer') {
     if (e.exposedT > 0) return ATK.falseMoon.exposedDamageMul;
     return Math.max(ATK.falseMoon.minDamageMul, 1 - ATK.falseMoon.damageReductionPerMoon * countObjectives(w, 'falseMoon'));
   }
   if (e.type === 'patriarch' && e.phase === 1 && countObjectives(w, 'abyssTotem') > 0) return ATK.patriarch.shieldedDamageMul;
+  // Combo Caçador exposto: reusa o mesmo campo/flag do Devorador (nunca no mesmo tipo de inimigo).
+  if (e.type === 'mistStalker' && e.exposedT > 0) return COMBOS.exposeVeiled.mul;
   return 1;
 }
 

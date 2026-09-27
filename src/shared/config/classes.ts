@@ -180,14 +180,29 @@ export const BERSERKER = {
     { windup: 11, active: 3, recovery: 17, damage: 40, range: 44, arc: 190, poise: 46, knockback: 150, stamina: 16, moveMul: 0.25 },
   ],
   comboWindow: 9,
-  /** Q — Rasgo Frenético: 4 cortes seguidos em cone curto. */
-  frenzy: { cooldown: 6, stamina: 16, windup: 3, hits: 4, gap: 4, recovery: 10, damage: 11, range: 40, arc: 120, swingOffset: 0.25, poise: 8, knockback: 25, moveMul: 0.6 },
+  /**
+   * Q — Redemoinho de Fúria: gira o machado em volta de si. Cada pulso gira `spinStep` rad, então
+   * os `pulses` cobrem o círculo inteiro (atinge quem está atrás, não só à frente) e o Berserker
+   * anda enquanto gira. Acertar qualquer inimigo rende `furyGain` de Fúria na hora: é o Q que
+   * acende a passiva, e por isso custa pouca stamina.
+   */
+  frenzy: { cooldown: 6, stamina: 12, windup: 4, pulses: 4, pulseEvery: 5, recovery: 10, damage: 13, range: 46, arc: 170, spinStep: Math.PI / 2, poise: 12, knockback: 35, moveMul: 0.55, furyGain: 15 },
   /** E — Salto Brutal: salta até o ponto mirado e esmaga ao pousar. */
   leap: { cooldown: 7, stamina: 18, maxRange: 150, ticks: 12, iframes: 8, radius: 46, damage: 28, poise: 42, knockback: 160, recovery: 10 },
   /** R — Loucura: força máxima com custo claro (dano recebido e exaustão ao final). */
   madness: { windup: 8, recovery: 6, castMoveMul: 0.2, duration: 8, damageBonus: 0.35, attackSpeed: 0.3, damageTaken: 0.2, ironDamageTaken: 0.1, exhaustion: 3, exhaustSpeedMul: 0.6 },
-  /** Passiva — Fúria (0–100): sobe ao causar e ao receber dano; alta Fúria = mais dano e velocidade, mas mais dano recebido. */
-  fury: { max: 100, perDamageDealt: 0.35, perDamageTaken: 0.9, decayDelay: 2.5, decayPerSecond: 8, high: 60, maxDamageBonus: 0.35, maxAttackSpeed: 0.2, maxDamageTaken: 0.25, staminaCostMul: 1.25 },
+  /**
+   * Passiva — Fúria (0–100): sobe ao causar e ao receber dano. Acima de `high` a Fúria é VANTAGEM
+   * (mais dano, mais velocidade, golpes mais baratos, stamina volta mais rápido e um pouco mais
+   * resistente). O preço não é mais o dano recebido: é ter de continuar no meio da horda, porque
+   * fora de combate a Fúria escorre rápido (`decayDelay`/`decayPerSecond`). A Loucura (R) segue
+   * sendo o momento de risco de verdade.
+   */
+  fury: {
+    max: 100, perDamageDealt: 0.35, perDamageTaken: 0.9, decayDelay: 2, decayPerSecond: 11, high: 60,
+    maxDamageBonus: 0.35, maxAttackSpeed: 0.2,
+    staminaCostMulHigh: 0.85, staminaDelayMulHigh: 0.6, damageTakenMulHigh: 0.88,
+  },
 } as const;
 
 // ---------------------------------------------------------------- DOG
@@ -402,11 +417,11 @@ export const CLASSES: Record<ClassId, ClassBase> = {
     role: 'Corpo a corpo agressivo, alto risco e alto dano',
     difficulty: 2,
     blurb: 'Machado, peles e cicatrizes. Quanto mais sangra e faz sangrar, mais forte e mais imprudente fica.',
-    weakness: `Pouca defesa: com Fúria alta recebe até +${BERSERKER.fury.maxDamageTaken * 100}% de dano; a Loucura cobra exaustão ao terminar.`,
+    weakness: 'Pouca defesa e nenhum alcance: só existe dentro da horda. Sem bater, a Fúria escorre em segundos; a Loucura cobra exaustão ao terminar.',
     hp: 135,
-    stamina: 110,
-    staminaRegen: 34,
-    staminaDelay: 0.5,
+    stamina: 130,
+    staminaRegen: 40,
+    staminaDelay: 0.4,
     speed: 108,
     radius: 7,
     dodge: DODGE_STD,
@@ -414,10 +429,10 @@ export const CLASSES: Record<ClassId, ClassBase> = {
     color: 0xd9512c,
     texts: {
       basic: { name: 'Machado Brutal', desc: `Três golpes: ${BERSERKER.combo[0].damage} / ${BERSERKER.combo[1].damage} / ${BERSERKER.combo[2].damage}. O terceiro varre ${BERSERKER.combo[2].arc}° e recupera devagar.` },
-      q: { name: 'Rasgo Frenético', desc: `${BERSERKER.frenzy.hits} cortes rápidos à frente (${BERSERKER.frenzy.damage} cada), andando enquanto corta. Recarga ${BERSERKER.frenzy.cooldown}s.` },
+      q: { name: 'Redemoinho de Fúria', desc: `Gira o machado em volta de si: ${BERSERKER.frenzy.pulses} pulsos de ${BERSERKER.frenzy.damage} de dano (${BERSERKER.frenzy.pulses * BERSERKER.frenzy.damage} no total) em ${BERSERKER.frenzy.range}px ao redor, andando enquanto gira. Acertar rende +${BERSERKER.frenzy.furyGain} de Fúria na hora. Custa só ${BERSERKER.frenzy.stamina} de stamina. Recarga ${BERSERKER.frenzy.cooldown}s.` },
       e: { name: 'Salto Brutal', desc: `Salta até ${BERSERKER.leap.maxRange}px e esmaga ao pousar: ${BERSERKER.leap.damage} de dano em ${BERSERKER.leap.radius}px e grande stagger. Recarga ${BERSERKER.leap.cooldown}s.` },
       r: { name: 'Loucura', desc: `Por ${BERSERKER.madness.duration}s: Fúria no máximo, +${BERSERKER.madness.damageBonus * 100}% de dano, +${BERSERKER.madness.attackSpeed * 100}% de velocidade de ataque e imune a stagger, mas recebe +${BERSERKER.madness.damageTaken * 100}% de dano. Depois: ${BERSERKER.madness.exhaustion}s de exaustão.` },
-      passive: { name: 'Fúria', desc: `Causar e receber dano enche a Fúria. Acima de ${BERSERKER.fury.high}: até +${BERSERKER.fury.maxDamageBonus * 100}% de dano e +${BERSERKER.fury.maxAttackSpeed * 100}% de velocidade, mas até +${BERSERKER.fury.maxDamageTaken * 100}% de dano recebido e golpes mais caros.` },
+      passive: { name: 'Fúria', desc: `Causar e receber dano enche a Fúria: até +${BERSERKER.fury.maxDamageBonus * 100}% de dano e +${BERSERKER.fury.maxAttackSpeed * 100}% de velocidade de ataque. Acima de ${BERSERKER.fury.high} ela vira vantagem: golpes custam ${Math.round((1 - BERSERKER.fury.staminaCostMulHigh) * 100)}% menos stamina, a stamina volta mais rápido e você recebe ${Math.round((1 - BERSERKER.fury.damageTakenMulHigh) * 100)}% menos dano. Parado, a Fúria escorre ${BERSERKER.fury.decayPerSecond} por segundo.` },
     },
   },
   dog: {

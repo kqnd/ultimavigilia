@@ -4,6 +4,7 @@
  * Tudo decidido no servidor; o cliente só desenha o arco (altura visual) e os indicadores.
  */
 import { LAPANHA, ripeCostFrac, ripePower } from '../../../shared/config/classes.js';
+import { COMBOS } from '../../../shared/config/combos.js';
 import { UPGRADE_CAPS } from '../../../shared/config/upgrades.js';
 import { sec, TILE } from '../../../shared/constants.js';
 import { circleFree, resolveCircle, sweepFree } from '../../../shared/collision.js';
@@ -153,6 +154,16 @@ function slip(w: World, z: Zone, e: Enemy, owner: Player | null): void {
     slideOwner.set(e, { pid: owner?.id ?? 0, hit: new Set() });
     w.stagger(e, ticks / 30 + 0.1);
     if (elite) w.applyCC(e, 'slow', P.eliteSlowSeconds, P.eliteSlow, owner);
+    // Combo Provocação + Casca: um inimigo provocado (atenção travada no Guardião) que escorrega
+    // empurra e machuca levemente quem estiver perto (só comuns, fração do próprio esbarrão).
+    if (e.tauntBy > 0 && e.tauntT > 0) {
+      const T = COMBOS.tauntSlipChain;
+      for (const o of w.enemiesInCircle(e.x, e.y, T.radius)) {
+        if (o === e || o.def.stationary || o.def.objective || o.def.tier !== 'common') continue;
+        w.hitEnemy(owner, o, P.bumpDamage * T.damageMul, { poise: P.bumpPoise * T.damageMul, kb: 55, fromX: e.x, fromY: e.y, kind: 'aoe', noUlt: true });
+      }
+      w.emit({ k: 'fx', n: 'comboChain', x: e.x, y: e.y, a: 0, o: e.id, r: T.radius });
+    }
     if (owner && (owner.mods['l_wet'] ?? 0) > 0) {
       const C = L.cards.wetFloor;
       const puddles = w.zones.filter((q) => q.kind === 'wetFloor' && q.owner === owner.id && !q.dead);
@@ -276,7 +287,6 @@ export const lapanhaKit: Kit = {
       p.harvestFreeQ = (p.mods['l_endless'] ?? 0) > 0;
       p.lastPieceOn = false;
       w.emit({ k: 'fx', n: 'harvest', x: p.x, y: p.y, a: p.harvestRate, o: p.id, r: 0 });
-      playerSay(w, p, 'ult', true);
     }
   },
 
@@ -413,8 +423,11 @@ function throwRipe(w: World, p: Player, frac: number): void {
   const bonus = econ ? 1 - 0.08 : 1;
   const dmg = (R.minDamage + (R.maxDamage - R.minDamage) * pw * bonus) * scale;
   const radius = R.minRadius + (R.maxRadius - R.minRadius) * pw;
+  // a Melancia Madura sobe num arco alto e cai onde foi mirada: paredes no caminho não a param
+  // (só o ponto de queda em si é resolvido, para não estourar dentro de um tile sólido)
   const t = clampTarget(p, R.maxRange * rangeMul(w, p));
-  const land = sweepFree(w.map, p.x, p.y, t.x, t.y, 3);
+  const land = { x: t.x, y: t.y };
+  if (!circleFree(w.map, land.x, land.y, 3)) resolveCircle(w.map, land, 3);
   const d = Math.max(8, dist(p.x, p.y, land.x, land.y));
   const dir = Math.atan2(land.y - p.y, land.x - p.x);
   w.spawnProjectile({

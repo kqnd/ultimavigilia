@@ -33,7 +33,7 @@ function actionTiming(cls: ClassId, act: string): { wu: number; ac: number; arc:
         const c = BERSERKER.combo[Number(act.slice(-1)) - 1] ?? BERSERKER.combo[0];
         return { wu: c.windup, ac: c.active, arc: c.arc };
       }
-      if (act === 'q') return { wu: BERSERKER.frenzy.windup, ac: BERSERKER.frenzy.gap, arc: BERSERKER.frenzy.arc };
+      if (act === 'q') return { wu: BERSERKER.frenzy.windup, ac: BERSERKER.frenzy.pulseEvery, arc: BERSERKER.frenzy.arc };
       return null;
     case 'tank':
       if (act === 'basic1') return { wu: TANK.mace.windup, ac: TANK.mace.active, arc: TANK.mace.arc };
@@ -74,6 +74,12 @@ export interface RenderPlayer {
 }
 
 /** Apelido legível: texto com contorno escuro e fundo translúcido. */
+/** Cor do apelido do próprio jogador: laranja, para achar seu boneco de relance na horda. */
+const LOCAL_NAME_COLOR = 0xff8c2a;
+
+/** Loucura: luz somada ao corpo, em ciclo (brasa fraca -> brasa forte -> brasa fraca). */
+const MADNESS_GLOW = [0x5a1808, 0x8a2408, 0xb83410, 0x8a2408] as const;
+
 class NameTag {
   readonly text: Phaser.GameObjects.BitmapText;
   readonly shadows: Phaser.GameObjects.BitmapText[];
@@ -133,8 +139,8 @@ export class PlayerView {
     this.weapon = w ? scene.add.image(0, 0, ...tf(w)).setOrigin(0.25, 0.5) : null;
     this.shield = cls === 'tank' ? scene.add.image(0, 0, ...tf('shield')).setOrigin(0.5, 0.6) : null;
     this.back = scene.add.graphics().setDepth(94000);
-    this.aura = cls === 'tank' ? scene.add.graphics() : null;
-    this.tag = new NameTag(scene, name, local ? 0xf6c257 : CLASSES[cls].color);
+    this.aura = cls === 'tank' || cls === 'berserker' ? scene.add.graphics() : null;
+    this.tag = new NameTag(scene, name, local ? LOCAL_NAME_COLOR : CLASSES[cls].color);
     this.bars = scene.add.graphics().setDepth(94003);
   }
 
@@ -249,6 +255,25 @@ export class PlayerView {
           aura.fillStyle(0xb8f3de, 0.45 + charge * 0.35).fillRect(Math.round(x + Math.cos(a) * (12 + i * 4)), Math.round(y - 15 + Math.sin(a) * 9), 2, 3);
         }
       }
+      // Loucura do Berserker: anel de fogo em volta dos pés, respirando, com labaredas girando
+      // e brasas subindo. Fica aceso durante todo o buff (não é um estouro de um quadro só).
+      if (cls === 'berserker' && d.s === 0 && (d.f & PLAYER_FLAGS.madness)) {
+        const breathe = 0.5 + 0.5 * Math.sin(now / 200);
+        const rx = 30 + breathe * 5;
+        const ry = rx * 0.42;
+        aura.lineStyle(3, 0x4a0c08, 0.5).strokeEllipse(x, y + 1, rx * 2 + 4, ry * 2 + 4);
+        aura.lineStyle(2, 0xc83838, 0.55 + breathe * 0.35).strokeEllipse(x, y + 1, rx * 2, ry * 2);
+        aura.lineStyle(1, 0xffd08a, 0.35 + breathe * 0.45).strokeEllipse(x, y + 1, rx * 1.7, ry * 1.7);
+        // labaredas: dentes de fogo girando no anel, alturas alternadas
+        for (let i = 0; i < 14; i++) {
+          const a = (i / 14) * Math.PI * 2 + now / 620;
+          const fx0 = Math.round(x + Math.cos(a) * rx);
+          const fy0 = Math.round(y + 1 + Math.sin(a) * ry);
+          const h = 3 + Math.round((1 + Math.sin(now / 90 + i * 1.7)) * 2.5);
+          aura.fillStyle(i % 3 ? 0xd9512c : 0xff9a3c, 0.75).fillRect(fx0, fy0 - h, 2, h);
+          if (i % 4 === 0) aura.fillStyle(0xffe6a8, 0.9).fillRect(fx0, fy0 - h - 1, 1, 1);
+        }
+      }
     }
     if (this.flashT > 0) {
       this.flashT -= s;
@@ -256,7 +281,8 @@ export class PlayerView {
     } else if (d.f & PLAYER_FLAGS.stunned) {
       this.body.setTint(0xd8d0a0).setTintMode(Phaser.TintModes.MULTIPLY);
     } else if (d.f & PLAYER_FLAGS.madness) {
-      this.body.setTint(Math.floor(now / 90) % 2 ? 0xff7a6a : 0xffc0b0).setTintMode(Phaser.TintModes.MULTIPLY);
+      // acende o corpo em vermelho (ADD soma luz: vira brasa, em vez de escurecer como MULTIPLY)
+      this.body.setTint(MADNESS_GLOW[Math.floor(now / 110) % MADNESS_GLOW.length] as number).setTintMode(Phaser.TintModes.ADD);
     } else if (d.f & PLAYER_FLAGS.feast) {
       this.body.setTint(Math.floor(now / 150) % 2 ? 0xff9a9a : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
     } else if (d.f & PLAYER_FLAGS.exhausted) {
@@ -270,7 +296,10 @@ export class PlayerView {
     } else this.body.clearTint();
     // partículas de estado
     if (d.s === 0 && Math.random() < s * 8) {
-      if (d.f & PLAYER_FLAGS.madness || d.f & PLAYER_FLAGS.rage) fx.particle('p_blood', x + (Math.random() - 0.5) * 12, y - 12 - Math.random() * 10);
+      if (d.f & PLAYER_FLAGS.madness) {
+        fx.particle('p_blood', x + (Math.random() - 0.5) * 12, y - 12 - Math.random() * 10);
+        fx.particle('p_ember', x + (Math.random() - 0.5) * 22, y - 2 - Math.random() * 20);
+      } else if (d.f & PLAYER_FLAGS.rage) fx.particle('p_blood', x + (Math.random() - 0.5) * 12, y - 12 - Math.random() * 10);
       else if (d.f & PLAYER_FLAGS.burn) fx.particle('p_cinder', x + (Math.random() - 0.5) * 10, y - 8);
       else if (d.f & PLAYER_FLAGS.chill) fx.particle('p_frost', x + (Math.random() - 0.5) * 12, y - 10 - Math.random() * 10);
       if (d.f & PLAYER_FLAGS.harvest) fx.particle(Math.random() < 0.3 ? 'p_seed' : 'p_heal', x + (Math.random() - 0.5) * 14, y - 6 - Math.random() * 14);
@@ -297,11 +326,19 @@ export class PlayerView {
       let ang = aim;
       let dist = 5;
       const t = actionTiming(cls, act);
-      if (t && t.arc > 0) {
-        const swingSide = act === 'basic2' || (act === 'q' && Math.floor(r.at / 4) % 2 === 1) ? -1 : 1;
+      const spinning = cls === 'berserker' && act === 'q';
+      if (spinning) {
+        // Redemoinho de Fúria: o machado dá uma volta inteira em torno do corpo durante o giro
+        const F = BERSERKER.frenzy;
+        const total = F.windup + (F.pulses - 1) * F.pulseEvery + 1;
+        const k = Math.max(0, r.at - F.windup) / Math.max(1, total - F.windup);
+        ang = d.ad / 1000 + k * Math.PI * 2;
+        dist = 7;
+      } else if (t && t.arc > 0) {
+        const swingSide = act === 'basic2' ? -1 : 1;
         const half = ((t.arc * Math.PI) / 180) * 0.5;
         const base = d.ad / 1000;
-        const at = act === 'q' && cls === 'berserker' ? r.at % 8 : r.at;
+        const at = r.at;
         if (at < t.wu) ang = base - swingSide * (half + 0.4) * Math.min(1, at / Math.max(1, t.wu));
         else if (at < t.wu + t.ac + 1) {
           const k = (at - t.wu) / (t.ac + 1);
@@ -343,9 +380,11 @@ export class PlayerView {
       }
     }
 
-    // apelido e barras (sempre visíveis, inclusive o do jogador local, com contorno e fundo)
+    // apelido e barras (sempre visíveis, inclusive o do jogador local, com contorno e fundo).
+    // O jogador local também tem barra de vida sobre a cabeça: no meio da horda, olhar para o
+    // canto da tela custa caro — a vida tem de estar onde os olhos já estão.
     const headTop = d.s !== 0 ? y - 16 : (cls === 'dog' ? y - 22 : y - 30) - lift;
-    const showBar = !this.local && d.s === 0;
+    const showBar = d.s === 0;
     const nameY = showBar ? headTop - 1 : headTop + 3;
     const g = this.bars;
     const bk = this.back;
@@ -356,10 +395,20 @@ export class PlayerView {
     if (this.local) bk.fillStyle(0xf6c257, 1).fillTriangle(x - 2, box.top - 3, x + 2, box.top - 3, x, box.top - 1);
     if (r.watched) bk.lineStyle(1, 0xf6c257, 1).strokeRect(box.left - 3, box.top, box.w + 6, box.h);
     if (showBar) {
-      const w = 18;
-      g.fillStyle(0x0b0a12, 1).fillRect(x - w / 2 - 1, headTop + 1, w + 2, 4);
-      g.fillStyle(0x6e1424, 1).fillRect(x - w / 2, headTop + 2, w, 2);
-      g.fillStyle(0xc83838, 1).fillRect(x - w / 2, headTop + 2, Math.round((w * d.hp) / Math.max(1, d.mhp)), 2);
+      const frac = Math.max(0, Math.min(1, d.hp / Math.max(1, d.mhp)));
+      // a sua barra é mais larga e mais alta (leitura imediata) e avisa pela cor quando aperta
+      const w = this.local ? 28 : 18;
+      const h = this.local ? 3 : 2;
+      const low = this.local && frac < 0.3 && Math.floor(now / 250) % 2 === 0;
+      const fill = this.local ? (frac < 0.3 ? 0xec6a5e : frac < 0.6 ? 0xe0902a : 0xc83838) : 0xc83838;
+      g.fillStyle(0x0b0a12, 1).fillRect(x - w / 2 - 1, headTop + 1, w + 2, h + 2);
+      g.fillStyle(0x6e1424, 1).fillRect(x - w / 2, headTop + 2, w, h);
+      g.fillStyle(low ? 0xffffff : fill, 1).fillRect(x - w / 2, headTop + 2, Math.round(w * frac), h);
+      if (this.local) {
+        // escudo temporário emendado na ponta da barra, para não confundir com vida
+        if (d.sh > 0) g.fillStyle(0xbfe3ff, 1).fillRect(x - w / 2, headTop + 1, Math.min(w, Math.round((w * d.sh) / Math.max(1, d.mhp))), 1);
+        g.fillStyle(0xffffff, 0.22).fillRect(x - w / 2, headTop + 2, Math.round(w * frac), 1);
+      }
     }
     // Essência do Necromante: pequenas almas orbitando
     if (cls === 'necromancer' && d.s === 0 && d.k > 0) {
