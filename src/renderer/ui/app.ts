@@ -7,6 +7,8 @@ import { DEFAULT_KEYS, type HostStartResult, type Keybinds, type NetInterfaceInf
 import { CHAPTERS, type Climate, ROUTE, TRAVEL_SECONDS } from '../../shared/config/chapters.js';
 import { CLASS_IDS, CLASSES, type ClassId } from '../../shared/config/classes.js';
 import { ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
+import { PERKS } from '../../shared/config/meta.js';
+import { activeSynergies, BUILD_TAGS, cardTags, completesSynergy, SET_TIERS, setTier, TAG_INFO, tagPoints } from '../../shared/config/synergies.js';
 import { CAP_TEXT, FORKS, KIND_INFO, RARITY_INFO, UPGRADE_BY_ID, UPGRADE_CAPS, type UpgradeDef } from '../../shared/config/upgrades.js';
 import { TOTAL_WAVES, WAVES } from '../../shared/config/waves.js';
 import { DEFAULT_PORT, GAME_VERSION, MAX_PLAYERS, VIEW_H, VIEW_W } from '../../shared/constants.js';
@@ -86,6 +88,7 @@ export class App {
     this.initUpdates();
     this.fit();
     window.addEventListener('resize', () => this.fit());
+    void this.session.loadProfile();
     this.go('menu');
   }
 
@@ -564,6 +567,7 @@ export class App {
         h('button', { class: 'btn primary', onclick: () => need() && void this.startSolo() }, 'Jogar sozinho'),
         h('button', { class: 'btn', onclick: () => need() && this.go('host') }, 'Criar partida'),
         h('button', { class: 'btn', onclick: () => need() && this.go('join') }, 'Entrar por IP'),
+        h('button', { class: 'btn', onclick: () => this.openMemories() }, 'Lembranças'),
         h('button', { class: 'btn', onclick: () => this.openSettings() }, 'Configurações'),
         h('button', { class: 'btn', onclick: () => void this.session.bridge.sys.quit() }, 'Sair'),
       ),
@@ -912,7 +916,10 @@ export class App {
         h('div', { style: 'margin-top:4px;min-height:36px', text: u.desc.replace(/^BIFURCAÇÃO:\s*/, '') }),
         compareLine(u, have) ? h('div', { class: 'ok', text: compareLine(u, have) }) : null,
         u.cap ? h('div', { class: 'hint', text: `Teto global de ${CAP_TEXT[u.cap]}: ${Math.round(UPGRADE_CAPS[u.cap] * 100)}%` }) : null,
+        cardTags(id).length ? h('div', { class: 'hint', text: `Build: ${cardTags(id).map((t) => TAG_INFO[t].name).join(', ')}` }) : null,
+        ...completesSynergy(off.mine, id).map((sy) => h('div', { class: 'mag', text: `Sinergia: ${sy.name} — ${sy.desc}` })),
         h('div', { class: 'hint', text: `Acúmulos: ${have} → ${have + 1} (máx. ${u.maxStacks})` }),
+        !locked && off.bn > 0 ? h('button', { class: 'btn', style: 'margin-top:3px', onclick: (ev: Event) => { ev.stopPropagation(); audio.play('uiClick'); this.upSel = null; this.session.send({ t: 'banish', id }); } }, `Banir (${off.bn})`) : null,
         chosen ? h('div', { class: locked ? 'ok' : 'amber', style: 'margin-top:2px', text: locked ? '✓ confirmada' : '› selecionada' }) : null,
       );
       if (!locked && !blocked)
@@ -939,7 +946,14 @@ export class App {
     };
     tick();
     this.upTimer = window.setInterval(tick, 250);
-    panel.append(row, confirm, timer);
+    const reroll = h('button', { class: 'btn', style: 'margin-top:6px', disabled: locked || off.rr <= 0 || !!this.upSent }, `Rerolar oferta (${off.rr})`);
+    reroll.addEventListener('click', () => {
+      if (locked || off.rr <= 0 || this.upSent) return;
+      audio.play('uiClick');
+      this.upSel = null;
+      this.session.send({ t: 'reroll' });
+    });
+    panel.append(row, confirm, reroll, this.buildSummary(off.mine), timer);
     this.overlay.append(panel);
     // cartas fortes chamam atenção uma vez por oferta (sem pausar além do normal)
     const best = off.options.map((id) => UPGRADE_BY_ID.get(id)?.rarity).find((r) => r === 'legendary') ?? off.options.map((id) => UPGRADE_BY_ID.get(id)?.rarity).find((r) => r === 'rare');
@@ -948,6 +962,23 @@ export class App {
       this.rareSoundFor = offerKey;
       audio.play(best === 'legendary' ? 'cardLegendary' : 'cardRare');
     }
+  }
+
+  /** Resumo do build: pontos por tag (com bônus de conjunto) e sinergias ativas. */
+  private buildSummary(mods: Record<string, number>): HTMLElement {
+    const pts = tagPoints(mods);
+    const parts = BUILD_TAGS.filter((t) => pts[t] > 0).map((t) => {
+      const tier = setTier(pts[t]);
+      const next = tier >= 2 ? '' : `/${SET_TIERS[tier as 0 | 1]}`;
+      return `${TAG_INFO[t].name} ${pts[t]}${next}${tier > 0 ? ` ✓${tier}` : ''}`;
+    });
+    const syn = activeSynergies(mods).map((s) => s.name);
+    return h(
+      'div',
+      { class: 'hint', style: 'margin-top:4px' },
+      parts.length ? `Build: ${parts.join(' · ')}` : 'Build: ainda sem tags (3 pontos da mesma tag liberam bônus de conjunto).',
+      syn.length ? h('div', { class: 'mag', text: `Sinergias ativas: ${syn.join(', ')}` }) : null,
+    );
   }
 
   // ---------------------------------------------------------------- rota entre capítulos
@@ -1014,11 +1045,68 @@ export class App {
         h('div', { class: 'center hint', text: win ? `A fogueira resistiu às ${TOTAL_WAVES} ondas dos três capítulos.` : `A vigília caiu na onda ${p.wave}/${TOTAL_WAVES} (capítulo ${p.ch}).` }),
         h('div', { class: 'center', style: 'margin:4px 0', text: `Tempo de partida: ${mm}:${ss}` }),
         tbl,
+        this.runSummary(),
         h('div', { style: 'height:8px' }),
         s.isHost() ? h('button', { class: 'btn primary', onclick: () => s.send({ t: 'again' }) }, s.solo ? 'Jogar novamente' : 'Jogar novamente (voltar ao lobby)') : h('div', { class: 'hint', text: 'Aguardando o anfitrião decidir jogar novamente…' }),
         h('button', { class: 'btn', onclick: () => void this.leave(true) }, 'Voltar ao menu'),
       ),
     );
+  }
+
+  /** Estatísticas da partida do jogador local, build final e Lembranças ganhas (v1.6). */
+  private runSummary(): HTMLElement {
+    const s = this.session;
+    const st = s.phase.stats?.[s.myId];
+    void s.awardMatch();
+    const mods = s.mods;
+    const cards = Object.values(mods).reduce((a, n) => a + n, 0);
+    const syn = activeSynergies(mods).map((x) => x.name);
+    const pts = tagPoints(mods);
+    const top = BUILD_TAGS.filter((t) => pts[t] > 0).sort((a, b) => pts[b] - pts[a]).slice(0, 2).map((t) => `${TAG_INFO[t].name} ${pts[t]}`);
+    const line = (txt: string): HTMLElement => h('div', { class: 'hint', text: txt });
+    return h(
+      'div',
+      { style: 'margin-top:6px' },
+      line(`Dano recebido: ${st?.taken ?? 0} · Chefes abatidos: ${st?.bosses ?? 0} · Ondas: ${s.phase.wave}/${TOTAL_WAVES}`),
+      line(`Cartas: ${cards} · Rerolls usados: ${st?.rr ?? 0} · Banimentos: ${st?.bn ?? 0}`),
+      line(`Build: ${top.length ? top.join(' · ') : 'sem tags'}${syn.length ? ` · Sinergias: ${syn.join(', ')}` : ''}`),
+      h('div', { class: 'ok', text: `Lembranças ganhas: +${st?.mem ?? 0}` }),
+    );
+  }
+
+  /** Tela simples de meta-progressão: saldo, estatísticas e compra de perks. */
+  private openMemories(): void {
+    const s = this.session;
+    const render = (): void => {
+      document.getElementById('memories')?.remove();
+      const pr = s.profile;
+      const list = h('div', {});
+      for (const perk of PERKS) {
+        const has = pr.perks.includes(perk.id);
+        const btn = h('button', { class: 'btn', disabled: has || pr.memories < perk.cost }, has ? 'Desbloqueado' : `Comprar (${perk.cost})`);
+        btn.addEventListener('click', () => {
+          void s.bridge.profile.buy(perk.id).then((r) => {
+            s.profile = r.profile;
+            audio.play(r.ok ? 'upgrade' : 'deny');
+            render();
+          });
+        });
+        list.append(h('div', { style: 'margin:4px 0' }, h('div', { class: 'amber', text: perk.name }), h('div', { class: 'hint', text: perk.desc }), btn));
+      }
+      this.layer.append(
+        h(
+          'div',
+          { class: 'panel gold fade-in', id: 'memories', style: 'left:150px;top:40px;width:340px' },
+          h('div', { class: 'title center', text: 'LEMBRANÇAS' }),
+          h('div', { class: 'center ok', text: `Saldo: ${pr.memories} · total ganho: ${pr.totalEarned}` }),
+          h('div', { class: 'center hint', text: `Partidas: ${pr.runs} · vitórias: ${pr.wins} · melhor onda: ${pr.bestWave}` }),
+          h('div', { class: 'hint', text: 'Ganhas por onda vencida e por chefe. Os desbloqueios dão controle e variedade, não poder bruto.' }),
+          list,
+          h('button', { class: 'btn', onclick: () => document.getElementById('memories')?.remove() }, 'Fechar'),
+        ),
+      );
+    };
+    void s.loadProfile().then(render);
   }
 
   // ---------------------------------------------------------------- pausa / Tab
@@ -1335,6 +1423,7 @@ export class App {
     await this.session.disconnect();
     this.session.solo = false;
     this.session.shareAddress = '';
+    void this.session.loadProfile();
     this.go('menu');
   }
 }

@@ -336,6 +336,17 @@ export class Room {
         if (w.pickUpgrade(s.id, m.id)) this.log(`${s.name} confirmou ${m.id}`);
         else this.sendOffers();
         break;
+      case 'reroll':
+        if (w.rerollOffer(s.id)) this.log(`${s.name} rerrolou a oferta`);
+        this.sendOffers();
+        break;
+      case 'banish':
+        if (w.banishCard(s.id, m.id)) this.log(`${s.name} baniu ${m.id}`);
+        this.sendOffers();
+        break;
+      case 'perks':
+        w.setPerks(s.id, m.ids);
+        break;
       case 'vote':
         if (w.vote(s.id, m.r)) this.log(`${s.name} votou ${m.r}`);
         break;
@@ -529,6 +540,8 @@ export class Room {
         readyCount,
         total: connected.length,
         bonus: w.offerBonus.get(s.id) ?? '',
+        rr: p?.rerolls ?? 0,
+        bn: p?.banishes ?? 0,
       });
     }
   }

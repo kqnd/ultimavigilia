@@ -8,6 +8,8 @@ import { BERSERKER, CLASS_RANGE, CLASSES, type ClassId, HEAL_RULES, type HealSou
 import { COMBOS } from '../../shared/config/combos.js';
 import { ATK, BOSS_AI, BOSS_STAGGER_IMMUNITY, CC_DR, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
 import { BASE_OFFER_COUNT, INTERMISSION_SECONDS, LEGENDARY_MAX_PER_BUILD, MAX_OFFER_COUNT, UPGRADE_BY_ID, UPGRADE_CAPS } from '../../shared/config/upgrades.js';
+import { BANISH_PER_MATCH, memoryReward, REROLLS_PER_MATCH, sanitizePerks } from '../../shared/config/meta.js';
+import { NO_SYNERGY, synergyTotals } from '../../shared/config/synergies.js';
 import { CHECKPOINT, isCheckpointWave, SCALING, TOTAL_WAVES, WAVES, waveInChapter } from '../../shared/config/waves.js';
 import { DT, sec, SHOT_HEIGHT, TICK_RATE, TILE } from '../../shared/constants.js';
 import { circleFree, lineOfSight, moveCircle, resolveCircle } from '../../shared/collision.js';
@@ -254,7 +256,12 @@ export class World {
       connected: true,
       lastPing: -9999,
       lastDodgeTick: -9999,
-      stats: { kills: 0, damage: 0, downs: 0, revives: 0 },
+      stats: { kills: 0, damage: 0, downs: 0, revives: 0, taken: 0, rr: 0, bn: 0, bosses: 0, mem: 0 },
+      perks: [],
+      rerolls: REROLLS_PER_MATCH,
+      banishes: BANISH_PER_MATCH,
+      banished: [],
+      syn: { ...NO_SYNERGY },
       inBastion: false,
       bastionHeal: 0,
       woundT: 0,
@@ -382,7 +389,15 @@ export class World {
 
   // ------------------------------------------------------------------ partida
 
+  /** v1.6: ondas concluídas e chefes abatidos na partida (para Lembranças e estatísticas). */
+  wavesCleared = 0;
+  minibossKills = 0;
+  bossKills = 0;
+
   startMatch(): void {
+    this.wavesCleared = 0;
+    this.minibossKills = 0;
+    this.bossKills = 0;
     this.wave = 0;
     this.checkpoint = null;
     this.wipes = 0;
@@ -415,7 +430,11 @@ export class World {
     p.cd = { q: 0, e: 0 };
     p.ult = 0;
     p.mods = {};
-    p.stats = { kills: 0, damage: 0, downs: 0, revives: 0 };
+    p.stats = { kills: 0, damage: 0, downs: 0, revives: 0, taken: 0, rr: 0, bn: 0, bosses: 0, mem: 0 };
+    p.rerolls = REROLLS_PER_MATCH + (p.perks.includes('rr1') ? 1 : 0);
+    p.banishes = BANISH_PER_MATCH + (p.perks.includes('bn1') ? 1 : 0);
+    p.banished = [];
+    p.syn = { ...NO_SYNERGY };
     p.buffs = { madness: 0, exhausted: 0, feast: 0, tauntDr: 0, guardBroken: 0, chill: 0, burn: 0, stunRes: 0, slowed: 0, retreat: 0, harvest: 0 };
     p.slowMul = 1;
     clearAfflictions(p);
@@ -440,6 +459,13 @@ export class World {
     p.guardianGuardStart = -9999;
     p.guardianLastUltBlock = -9999;
     p.hpPenalty = 0;
+    // Dote do Veterano: 1 carta comum de classe aleatória (perk de meta-progressão)
+    if (p.perks.includes('start')) {
+      const pool = [...UPGRADE_BY_ID.values()].filter((u) => u.cls === p.cls && u.rarity === 'common' && u.kind === 'numeric' && !u.onlyFor);
+      const pick = pool.length ? this.rng.pick(pool) : null;
+      if (pick) p.mods[pick.id] = 1;
+    }
+    this.refreshSynergies(p);
   }
 
   private setPhase(ph: Phase): void {
@@ -564,7 +590,7 @@ export class World {
       const count = Math.min(MAX_OFFER_COUNT, BASE_OFFER_COUNT + riskBonus + cardBonus);
       const used = Math.max(0, count - BASE_OFFER_COUNT - riskBonus);
       if (used > 0) p.bonusCards -= used;
-      const offer = rollUpgrades(this.rng, p, count, this.lastOffers.get(p.id) ?? []);
+      const offer = rollUpgrades(this.rng, p, count, this.lastOffers.get(p.id) ?? [], p.banished);
       this.offers.set(p.id, offer);
       this.lastOffers.set(p.id, offer);
       const why: string[] = [];
@@ -586,6 +612,48 @@ export class World {
     if (!def) return false;
     if (!this.canTake(p, id)) return false;
     this.picks.set(pid, id);
+    this.onOffersChange?.();
+    return true;
+  }
+
+  /** Recalcula o cache de sinergias (tags de build + combinações) a partir das cartas atuais. */
+  refreshSynergies(p: Player): void {
+    p.syn = synergyTotals(p.mods);
+  }
+
+  /** v1.6: perks de meta-progressão enviados pelo cliente (só ids conhecidos; vale na próxima partida). */
+  setPerks(pid: number, raw: unknown): void {
+    const p = this.players.get(pid);
+    if (p && this.phase === 'lobby') p.perks = sanitizePerks(raw);
+  }
+
+  /** Reroll: sorteia uma oferta nova (limitado por partida). Só antes de confirmar a escolha. */
+  rerollOffer(pid: number): boolean {
+    const p = this.players.get(pid);
+    const cur = this.offers.get(pid);
+    if (this.phase !== 'intermission' || !p || !cur || this.picks.has(pid) || p.rerolls <= 0) return false;
+    p.rerolls--;
+    p.stats.rr = (p.stats.rr ?? 0) + 1;
+    const offer = rollUpgrades(this.rng, p, cur.length, cur, p.banished);
+    this.offers.set(pid, offer);
+    this.lastOffers.set(pid, offer);
+    this.onOffersChange?.();
+    return true;
+  }
+
+  /** Banir: remove uma carta da oferta para o resto da partida e a substitui por outra. */
+  banishCard(pid: number, id: string): boolean {
+    const p = this.players.get(pid);
+    const cur = this.offers.get(pid);
+    if (this.phase !== 'intermission' || !p || !cur || this.picks.has(pid) || p.banishes <= 0 || !cur.includes(id)) return false;
+    p.banishes--;
+    p.stats.bn = (p.stats.bn ?? 0) + 1;
+    p.banished.push(id);
+    const rest = cur.filter((c) => c !== id);
+    const repl = rollUpgrades(this.rng, p, 1, cur, [...p.banished, ...rest]);
+    const offer = cur.map((c) => (c === id ? (repl[0] ?? '') : c)).filter((c) => c !== '');
+    this.offers.set(pid, offer);
+    this.lastOffers.set(pid, offer);
     this.onOffersChange?.();
     return true;
   }
@@ -616,6 +684,7 @@ export class World {
       } else if (id === 'g_breath' || id === 'g_lung') {
         p.maxStamina += def.value;
       }
+      this.refreshSynergies(p);
     }
     this.onModsChange?.();
   }
@@ -881,6 +950,7 @@ export class World {
       for (const k of Object.keys(p.buffs) as (keyof Player['buffs'])[]) p.buffs[k] = 0;
       clearAfflictions(p);
       this.emit({ k: 'respawn', pi: p.id });
+      this.refreshSynergies(p);
     }
     this.onModsChange?.();
     const pct = Math.round(Math.min(CHECKPOINT.maxPenalty, this.wipes * CHECKPOINT.hpPenalty) * 100);
@@ -928,6 +998,7 @@ export class World {
     }
     if (!this.holdWave && this.director.complete() && !this.objectives.blocking()) {
       this.objectives.endWave();
+      this.wavesCleared = Math.max(this.wavesCleared, this.wave);
       if (this.wave >= TOTAL_WAVES) this.endMatch(true);
       else {
         if (isCheckpointWave(this.wave)) this.saveCheckpoint();
@@ -967,7 +1038,7 @@ export class World {
     // bônus de velocidade de cartas somados, com teto global
     const cardSpeed = Math.min(
       UPGRADE_CAPS.moveSpeed,
-      this.mod(p, 'g_agility') + (p.action ? 0 : this.mod(p, 'g_step')) + (p.buffs.retreat > 0 ? this.mod(p, 'g_retreat') : 0),
+      this.mod(p, 'g_agility') + (p.action ? 0 : this.mod(p, 'g_step')) + (p.buffs.retreat > 0 ? this.mod(p, 'g_retreat') : 0) + p.syn.moveSpeed,
     );
     let speed = b.speed * (1 + cardSpeed + thirstSpeed);
     if (p.buffs.chill > 0) speed *= CLIMATE_EFFECTS.chill.speedMul;
@@ -1084,7 +1155,7 @@ export class World {
     opts: { dir?: number; moveMul?: number; tx?: number; ty?: number; n?: number; speedMul?: number } = {},
   ): Action {
     // Mãos Rápidas: velocidade do básico (carta somada, com teto)
-    const sm = (opts.speedMul ?? 1) * (name.startsWith('basic') ? 1 + Math.min(UPGRADE_CAPS.attackSpeed, this.mod(p, 'g_haste')) : 1);
+    const sm = (opts.speedMul ?? 1) * (name.startsWith('basic') ? 1 + Math.min(UPGRADE_CAPS.attackSpeed, this.mod(p, 'g_haste') + p.syn.attackSpeed) : 1);
     const w = Math.max(0, Math.round(timing.windup / sm));
     const act = Math.max(0, Math.round((timing.active ?? 1) / sm));
     const rec = Math.max(1, Math.round(timing.recovery / sm));
@@ -1121,7 +1192,7 @@ export class World {
 
   /** Redução de recarga de cartas (somada, com teto global). */
   cardCdr(p: Player, slot: 'q' | 'e'): number {
-    return Math.min(UPGRADE_CAPS.cooldown, this.mod(p, 'g_focus') + this.mod(p, slot === 'q' ? 'g_qcd' : 'g_ecd'));
+    return Math.min(UPGRADE_CAPS.cooldown, this.mod(p, 'g_focus') + this.mod(p, slot === 'q' ? 'g_qcd' : 'g_ecd') + p.syn.cooldown);
   }
 
   setCooldown(p: Player, slot: 'q' | 'e', seconds: number): void {
@@ -1300,7 +1371,7 @@ export class World {
     m *= this.guardianReductionAt(p.x, p.y);
     if (p.inBastion) m *= 0.6;
     if (p.buffs.tauntDr > 0) m *= 0.7;
-    m *= 1 - Math.min(UPGRADE_CAPS.damageReduction, this.mod(p, 'g_skin') + (this.objectives.playerInArea(p) ? this.mod(p, 'g_objective') : 0));
+    m *= 1 - Math.min(UPGRADE_CAPS.damageReduction, this.mod(p, 'g_skin') + (this.objectives.playerInArea(p) ? this.mod(p, 'g_objective') : 0) + p.syn.damageReduction);
     if (p.surrounded) m *= 1.25;
     if (CLASS_RANGE[p.cls] === 'melee') m *= MELEE_RULES.damageTakenMul;
     if (p.cls === 'vampire' && p.action?.name === 'e') m *= VAMPIRE.vortex.damageTaken;
@@ -1352,6 +1423,7 @@ export class World {
     const dmg = Math.max(1, Math.round(rawDmg));
     p.hp -= dmg;
     p.tele.taken += Math.min(dmg, dmg + Math.min(0, p.hp));
+    p.stats.taken = (p.stats.taken ?? 0) + Math.min(dmg, dmg + Math.min(0, p.hp));
     this.addUlt(p, dmg * PLAYER_RULES.ultPerDamageTaken);
     if (p.cls === 'berserker') this.addRage(p, dmg * BERSERKER.fury.perDamageTaken);
     this.emit({ k: 'dmg', tg: 'p', ti: p.id, v: dmg, x: p.x, y: p.y - 16, c: 'n', s: dot ? 1 : 0 });
@@ -1382,7 +1454,7 @@ export class World {
     }
     // Defesa Improvisada: escudo ao cair abaixo de 25% (recarga longa)
     if ((p.mods['g_guard'] ?? 0) > 0 && p.guardCdT <= 0 && p.hp / p.maxHp < 0.25) {
-      addShield(p, this.mod(p, 'g_guard'), 4);
+      addShield(p, this.mod(p, 'g_guard') + p.syn.guardShield, 4);
       p.guardCdT = sec(40);
       this.emit({ k: 'fx', n: 'shieldUp', x: p.x, y: p.y - 12, a: 0, o: p.id, r: 0 });
     }
@@ -1398,7 +1470,7 @@ export class World {
 
   damageMul(p: Player, e: Enemy, kind?: HitOpts['kind']): number {
     // bônus de cartas SOMADOS com teto global (nunca multiplicam entre si)
-    let card = this.mod(p, 'g_fury');
+    let card = this.mod(p, 'g_fury') + p.syn.damage;
     if (e.hp >= e.maxHp) card += this.mod(p, 'g_first');
     if (e.type === 'acolyte' || e.type === 'shadowAcolyte' || e.type === 'highAcolyte' || e.type === 'ritualist') card += this.mod(p, 'g_support');
     let m = 1 + Math.min(UPGRADE_CAPS.damage, card);
@@ -1646,6 +1718,8 @@ export class World {
       if (by.cls === 'berserker') this.healPlayer(by, e.def.tier === 'common' ? BERSERKER.bloodlust.healPerKill : BERSERKER.bloodlust.healPerEliteKill, 'bloodlust');
     }
     if (!objective && (e.def.miniboss || e.def.tier === 'boss')) {
+      if (e.def.tier === 'boss') this.bossKills++;
+      else this.minibossKills++;
       for (const p of this.players.values()) playerSay(this, p, e.def.tier === 'boss' ? 'bossDown' : 'minibossDown', true);
     }
     this.clearEnemyZones(e.id);
@@ -2753,7 +2827,11 @@ export class World {
 
   matchStats(): Record<number, MatchStats> {
     const out: Record<number, MatchStats> = {};
-    for (const p of this.players.values()) out[p.id] = { ...p.stats };
+    const victory = this.phase === 'victory';
+    for (const p of this.players.values()) {
+      const mem = memoryReward({ waves: this.wavesCleared, minibosses: this.minibossKills, bosses: this.bossKills, victory }, p.perks);
+      out[p.id] = { ...p.stats, bosses: this.bossKills, mem };
+    }
     return out;
   }
 

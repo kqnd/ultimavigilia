@@ -1,4 +1,5 @@
 /** Contrato da ponte IPC exposta pelo preload (window.vigilia). */
+import type { Profile, RunResult } from './config/meta.js';
 import type { ServerMessage } from './protocol.js';
 import type { UpdateStatus } from './update.js';
 
@@ -171,6 +172,12 @@ export interface VigiliaBridge {
   settings: {
     load(): Promise<Settings>;
     save(s: Settings): Promise<Settings>;
+  };
+  /** v1.6: perfil persistente (Lembranças e desbloqueios), validado no processo principal. */
+  profile: {
+    load(): Promise<Profile>;
+    award(run: RunResult): Promise<Profile>;
+    buy(perkId: string): Promise<{ ok: boolean; profile: Profile }>;
   };
   sys: {
     copy(text: string): Promise<boolean>;
