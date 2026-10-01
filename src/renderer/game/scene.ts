@@ -77,6 +77,8 @@ export class GameScene extends Phaser.Scene {
   mapId: MapId = 'village';
   private floorImg: Phaser.GameObjects.Image | null = null;
   private mapImages: Phaser.GameObjects.Image[] = [];
+  /** Decoração estática com retângulo de culling manual (fora da câmera = invisível, sem custo de render). */
+  private mapCull: { img: Phaser.GameObjects.Image; x0: number; y0: number; x1: number; y1: number; hidden: boolean }[] = [];
   private objects: { p: Placed; img: Phaser.GameObjects.Image; bounds: Phaser.Geom.Rectangle }[] = [];
   private animated: { p: Placed; img: Phaser.GameObjects.Image }[] = [];
   private breaks = new Map<number, BreakView>();
@@ -185,6 +187,7 @@ export class GameScene extends Phaser.Scene {
     for (const g of this.glows) g.destroy();
     this.floorImg?.destroy();
     this.mapImages = [];
+    this.mapCull = [];
     this.objects = [];
     this.animated = [];
     this.glows = [];
@@ -195,6 +198,8 @@ export class GameScene extends Phaser.Scene {
       const img = pixelOrigin(this.add.image(Math.round(p.x), Math.round(p.y), ...tf(p.key))).setDepth(p.depth).setFlipX(p.flipX);
       this.mapImages.push(img);
       const bounds = img.getBounds();
+      // caixas/barris quebráveis controlam a própria visibilidade (applyBreaks), então ficam fora do culling
+      if (p.breakIdx === undefined) this.mapCull.push({ img, x0: bounds.x - 4, y0: bounds.y - 4, x1: bounds.right + 4, y1: bounds.bottom + 4, hidden: false });
       if (p.tall) this.objects.push({ p, img, bounds });
       if (p.animated) this.animated.push({ p, img });
       if (p.breakIdx !== undefined) this.breaks.set(p.breakIdx, { i: p.breakIdx, img, key: p.key, st: 0 });
@@ -1190,6 +1195,8 @@ export class GameScene extends Phaser.Scene {
         this.ghosts.splice(i, 1);
       }
     }
+    this.cullMapImages();
+    this.fx.setView(this.cameras.main.scrollX, this.cameras.main.scrollY, 640, 360);
     this.fx.update(dt);
     this.ambientParticles(dt);
     this.updateLighting();
@@ -1201,6 +1208,24 @@ export class GameScene extends Phaser.Scene {
     const fireD = Math.hypot(cam.scrollX + 320 - this.map.campfire.x, cam.scrollY + 180 - this.map.campfire.y);
     audio.crackle(Math.max(0, 1 - fireD / 300));
     audio.setStorm(this.mode === 'match' && this.storm > 0);
+  }
+
+  /** Esconde a decoração estática fora da câmera (o zoom da intro encolhe a janela de visão: usa o pior caso). */
+  private cullMapImages(): void {
+    const cam = this.cameras.main;
+    const vx0 = cam.scrollX - 8;
+    const vy0 = cam.scrollY - 8;
+    const vx1 = cam.scrollX + 648;
+    const vy1 = cam.scrollY + 368;
+    // com zoom < 1 a janela cresce; não corta nada
+    const all = cam.zoom < 1;
+    for (const c of this.mapCull) {
+      const out = !all && (c.x1 < vx0 || c.x0 > vx1 || c.y1 < vy0 || c.y0 > vy1);
+      if (out !== c.hidden) {
+        c.hidden = out;
+        c.img.setVisible(!out);
+      }
+    }
   }
 
   private updateMenu(dt: number): void {

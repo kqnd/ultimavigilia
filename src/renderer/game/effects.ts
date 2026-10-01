@@ -199,6 +199,8 @@ export class Effects {
   private auraPool: Phaser.GameObjects.Image[] = [];
   private auraUsed = 0;
   private lights: FxLight[] = [];
+  /** Janela da câmera (mundo) para culling manual de partículas e luzes fora da tela. */
+  private view = { x0: -1e9, y0: -1e9, x1: 1e9, y1: 1e9 };
   readonly g: Phaser.GameObjects.Graphics;
   /** Camada aditiva acima da escuridão: bloom dos traços. */
   readonly lg: Phaser.GameObjects.Graphics;
@@ -241,6 +243,15 @@ export class Effects {
     this.beginFrame();
     this.g.clear();
     this.lg.clear();
+  }
+
+  /** Define a janela visível (scroll + tamanho). Partículas e halos fora dela deixam de ser desenhados. */
+  setView(x: number, y: number, w: number, h: number): void {
+    const v = this.view;
+    v.x0 = x - 12;
+    v.y0 = y - 12;
+    v.x1 = x + w + 12;
+    v.y1 = y + h + 12;
   }
 
   // ---------------------------------------------------------------- partículas
@@ -481,6 +492,7 @@ export class Effects {
 
   update(dt: number): void {
     const s = dt / 1000;
+    const v = this.view;
     for (let i = this.live.length - 1; i >= 0; i--) {
       const p = this.live[i] as Particle;
       p.life -= s;
@@ -491,10 +503,15 @@ export class Effects {
         continue;
       }
       p.vy += p.g * s;
-      p.vx *= Math.pow(p.drag, s * 30);
-      p.vy *= Math.pow(p.drag, s * 30);
+      if (p.drag !== 1) {
+        const dk = Math.pow(p.drag, s * 30);
+        p.vx *= dk;
+        p.vy *= dk;
+      }
       p.img.x += p.vx * s;
       p.img.y += p.vy * s;
+      const inView = p.img.x >= v.x0 && p.img.x <= v.x1 && p.img.y >= v.y0 && p.img.y <= v.y1;
+      if (inView !== p.img.visible) p.img.setVisible(inView);
       if (p.fade) p.img.setAlpha(Math.ceil((p.life / p.max) * 4) / 4);
     }
     // luz: curvas suaves (não em degraus, ao contrário das partículas de pixel)
@@ -517,8 +534,9 @@ export class Effects {
       } else {
         gl.vy += gl.g * s;
         if (gl.drag !== 1) {
-          gl.vx *= Math.pow(gl.drag, s * 30);
-          gl.vy *= Math.pow(gl.drag, s * 30);
+          const dk = Math.pow(gl.drag, s * 30);
+          gl.vx *= dk;
+          gl.vy *= dk;
         }
         if (gl.follow) {
           const p = gl.follow();
@@ -530,6 +548,11 @@ export class Effects {
       }
       const ease = 1 - Math.pow(1 - k, 3);
       const sc = gl.s0 + (gl.s1 - gl.s0) * ease;
+      // culling: halo totalmente fora da tela não precisa de escala/alfa nem de desenho (raio conservador, cobre rotação)
+      const half = img.width * 0.5 * sc * (gl.stretch ? 1 + Math.hypot(gl.vx, gl.vy) / 90 : Math.max(1, gl.sy)) + 4;
+      const gvis = img.x + half >= v.x0 && img.x - half <= v.x1 && img.y + half >= v.y0 && img.y - half <= v.y1;
+      if (gvis !== img.visible) img.setVisible(gvis);
+      if (!gvis) continue;
       if (gl.stretch) {
         const sp = Math.hypot(gl.vx, gl.vy);
         img.setRotation(Math.atan2(gl.vy, gl.vx)).setScale(sc * (1 + sp / 90), sc * 0.55);
