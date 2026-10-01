@@ -253,6 +253,25 @@ export function drawZone(g: Phaser.GameObjects.Graphics, z: ZoneTuple, now: numb
       g.lineStyle(1, hell ? 0xff7a2a : 0xa3a9bb, 0.5 * fade).strokeCircle(x, y, r);
       break;
     }
+    case 'fear': {
+      // Bomba de Medo: névoa violeta com olhos de morcego piscando dentro
+      const fade = Math.min(1, ttl / 15);
+      g.fillStyle(0x1c1530, 0.45 * fade).fillCircle(x, y, r);
+      for (let i = 0; i < 14; i++) {
+        const a = i * 2.39 + now / (1700 + (i % 3) * 400);
+        const d = r * (0.2 + ((i * 37) % 70) / 100);
+        const pr = 6 + (i % 4) * 3 + Math.sin(now / 300 + i) * 2;
+        g.fillStyle(i % 3 ? 0x3b2c5e : 0x5a4486, 0.5 * fade).fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, pr);
+      }
+      for (let i = 0; i < 3; i++) {
+        const a = i * 2.1 + now / 1400;
+        const ex = Math.round(x + Math.cos(a) * r * 0.45);
+        const ey = Math.round(y + Math.sin(a) * r * 0.35);
+        if (Math.floor(now / 380 + i * 3) % 4 !== 0) g.fillStyle(0xe4eaff, 0.8 * fade).fillRect(ex - 3, ey, 2, 1).fillRect(ex + 2, ey, 2, 1);
+      }
+      g.lineStyle(1, 0x9a6aff, 0.55 * fade).strokeCircle(x, y, r);
+      break;
+    }
     case 'brew': {
       // Rodada da Casa: poça de cachaça com anel de fogo e línguas de chama girando
       const fade = Math.min(1, ttl / 15);

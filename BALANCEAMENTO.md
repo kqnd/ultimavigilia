@@ -494,3 +494,29 @@ Histerese: reavalia a cada ~14 ticks (0,5 s); alvo atual +0,3 (chefe +0,4); marg
 
 Testes: `tests/v16-ai.test.ts`. Dois testes de v13 ajustados à nova permanência/semente.
 
+
+
+## v1.6 (d) — Jota
+
+Décima classe: vibecoder de capuz, **glass cannon de dano à distância** (paródia de assistentes de IA de
+código, sem marcas reais). 88 de vida (Caçador 85, Mago 74, Maycon 112), 100 de stamina, velocidade 106,
+raio 6, suprema "Deploy" (0,22 de carga por ponto de dano). Alcance `ranged` (os chefes o priorizam como
+ao Caçador). Teto de cura em combate 12/s. Sem controle de grupo fora da suprema.
+
+| Habilidade | Números |
+|---|---|
+| **Prompt** (básico) | 15 de dano, projétil de 430 px/s e 340 px de alcance, **atravessa 1** (o seguinte leva 75%), 5+1+9 ticks, 3 de stamina. Cada acerto: +5 de Contexto |
+| **Patch** (Q) | feixe de 270 px (largura 9) que atravessa tudo: 30 de dano e marca por 4s (**+18% de dano do Jota** nos marcados); +6 de Contexto por alvo (máx. 18); recarga 7s, preparação 9 ticks |
+| **Rewind** (E) | volta à posição e à vida (só se era maior) de 3s atrás, 9 ticks de i-frames, limpa fogo e gelo, estoura o ponto de partida (22 de dano, 44 px); a Ferida Profana bloqueia a cura; recarga 12s, 10 de stamina. Sombra azul mostra o destino |
+| **Modo Batman** (R) | 18 ticks de transformação (invulnerável), depois 9s: **-40% de dano recebido**, +20% de velocidade, esquiva +30% mais longa, escudo de 25 por 5s, imune a atordoamento. Básico: leque de 3 batarangues (13 de dano, 300 px). Q: Bomba de Medo (62 px, 3s, atordoa comuns 0,8s / elites 0,3s, chefes só desaceleram 60%, 3 de dano a cada 0,5s; recarga 5,5s). E: Gancho (190 px, 16 de dano, recarga 3,5s). Q/E começam prontos; ao voltar ao capuz ficam 4s/5s em recarga. Não gera Contexto durante a forma |
+| **Contexto** (passiva) | 0–100: +0,2% de dano por ponto (até +20%). Cheio, "/compact": nova de 38 de dano em 78 px (empurra) e 5s de +20% de dano e +25% de velocidade de ataque. Escorre 5/s depois de 5s sem acertar |
+
+Dano somado (cartas com teto 30% + Contexto até 20% + Compactar 20% + marca 18%) fica abaixo de ×1,9 no
+pico absoluto, que exige Contexto quase cheio, Compactar ativo e alvo marcado ao mesmo tempo.
+
+Cartas (prefixo `j_`): Prompt Detalhado (+10% dano, 3×), Janela de Contexto (+25% Contexto, 2×), Patch
+Estendido (+30 px e -0,5s, 2×), Cache Quente (Rewind -1,5s, 2×), Compactação Agressiva (+20% dano/raio,
+2×); **bifurcação** Caminho do Vibecoder: Prompt Recursivo (ricocheteia 1× a 40%) **ou** Git Revert
+(Rewind explode +30 de dano, +26 px); lendária Push na Main --force (Batman +4s, cura 35% e batarangues
+ricocheteiam). Falas de vibecoder em todas as situações, incluindo checkpoint, `/compact` e `/rewind`;
+a fala da suprema é "Eu sou a branch main.".

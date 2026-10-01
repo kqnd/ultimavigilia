@@ -249,6 +249,39 @@ scenarios.showcase = async () => {
   await app.close();
 };
 
+// v1.6: transformação do Jota em Batman (clarão, forma final e habilidades do Modo Batman).
+scenarios.jotabat = async () => {
+  const { app, page, logs } = await launch('jotabat', []);
+  try {
+    await soloStart(page, 'jota');
+    await dbg(page, 'god');
+    await dbg(page, 'spawn', 8, 'shambler');
+    await sleep(600);
+    await page.mouse.move(820, 420);
+    await dbg(page, 'ult');
+    await sleep(300);
+    await page.keyboard.press('KeyR');
+    for (const [ms, n] of [[250, 'a'], [250, 'b'], [300, 'c'], [700, 'd']]) {
+      await sleep(ms);
+      await shot(page, `jotabat-${n}`);
+    }
+    await page.mouse.down();
+    await sleep(120);
+    await page.mouse.up();
+    await sleep(250);
+    await shot(page, 'jotabat-e-batarangs');
+    await page.keyboard.press('KeyQ');
+    await sleep(700);
+    await shot(page, 'jotabat-f-fear');
+    await page.keyboard.press('KeyE');
+    await sleep(150);
+    await shot(page, 'jotabat-g-grapple');
+    fs.writeFileSync(path.join(out, 'logs-jotabat.txt'), logs.filter((l) => !l.includes('Security')).join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
 // v1.5: posições de jogador e zonas após a Rodada da Casa (Maycon) + capturas da camada de luz.
 scenarios.brewpos = async () => {
   const { app, page, logs } = await launch('brewpos', []);

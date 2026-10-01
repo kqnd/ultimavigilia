@@ -1,8 +1,8 @@
 /** HUD: vida, stamina, recargas, suprema, onda, inimigos, aliados, chefe e indicadores. */
 import Phaser from 'phaser';
-import { ABILITY_ICONS } from '../../art/icons.js';
+import { ABILITY_ICONS, BAT_ABILITY_ICONS } from '../../art/icons.js';
 import { CHAPTERS } from '../../shared/config/chapters.js';
-import { BERSERKER, CLASSES, DOG, LAPANHA, MAYCON, NECRO, PLAYER_RULES, ripeCostFrac, ripePower, TANK } from '../../shared/config/classes.js';
+import { BERSERKER, CLASSES, DOG, JOTA, LAPANHA, MAYCON, NECRO, PLAYER_RULES, ripeCostFrac, ripePower, TANK } from '../../shared/config/classes.js';
 import { ATK, ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
 import { CHALLENGES, WAVE_EVENTS, type ChallengeKind, type WaveEventKind } from '../../shared/config/objectives.js';
 import { TOTAL_WAVES, WAVES } from '../../shared/config/waves.js';
@@ -352,15 +352,24 @@ export class HudScene extends Phaser.Scene {
       if (me.c === 'hunter' && me.f & PLAYER_FLAGS.surrounded) passive = 'CERCADO! +25% dano recebido';
       if (me.c === 'tank') passive = guardianCasting ? `MURALHA: -${TANK.bastion.selfReduction * 100}% / ALIADOS -${TANK.bastion.reduction * 100}%` : me.f & PLAYER_FLAGS.blocking ? 'Égide 360° erguida' : '';
       if (me.c === 'maycon') passive = me.f & PLAYER_FLAGS.brewing ? 'RODADA DA CASA!' : me.k > 0 ? `Visão Sombria: ${me.k} marcado${me.k > 1 ? 's' : ''} (+${Math.round((MAYCON.darkSight.damageMul - 1) * 100)}%)` : 'Visão Sombria';
-      if (passive) this.text('passive', x0, y0 - 16, passive, cls.color);
+      if (me.c === 'jota') {
+        // Contexto (barra verde-água que estoura em /compact) ou, no Modo Batman, o tempo restante
+        const isBat = (me.f & PLAYER_FLAGS.batman) !== 0;
+        const hot = (me.f & PLAYER_FLAGS.compact) !== 0;
+        passive = isBat ? 'MODO BATMAN' : hot ? 'COMPACTADO! +dano +ataque' : `Contexto ${me.k}%`;
+        const frac = isBat ? me.ch / 100 : me.k / JOTA.context.max;
+        this.bar(x0 + 60, y0 - 12, 66, 3, frac, isBat ? 0x8a9cff : hot ? (Math.floor(now / 120) % 2 ? 0xffffff : 0x7dffd0) : me.k >= 80 ? 0x9affe0 : 0x58d6a8, isBat ? 0x151a38 : 0x0f2a22);
+      }
+      if (passive) this.text('passive', x0, y0 - 16, passive, me.c === 'jota' && me.f & PLAYER_FLAGS.batman ? 0xb8c4ff : cls.color);
 
       // barra de habilidades
       const k = this.keys();
+      const icons: readonly string[] | undefined = me.c === 'jota' && me.f & PLAYER_FLAGS.batman ? BAT_ABILITY_ICONS : ABILITY_ICONS[me.c];
       const slots: [string, string, number, number][] = [
-        ['LMB', ABILITY_ICONS[me.c]?.[0] ?? 'star', 0, 1],
-        [keyLabel(k.q), ABILITY_ICONS[me.c]?.[1] ?? 'star', me.cd[0], me.cm[0]],
-        [keyLabel(k.e), ABILITY_ICONS[me.c]?.[2] ?? 'star', me.cd[1], me.cm[1]],
-        [keyLabel(k.r), ABILITY_ICONS[me.c]?.[3] ?? 'star', ult >= 1 || guardianCasting ? 0 : 1, 1],
+        ['LMB', icons?.[0] ?? 'star', 0, 1],
+        [keyLabel(k.q), icons?.[1] ?? 'star', me.cd[0], me.cm[0]],
+        [keyLabel(k.e), icons?.[2] ?? 'star', me.cd[1], me.cm[1]],
+        [keyLabel(k.r), icons?.[3] ?? 'star', ult >= 1 || guardianCasting ? 0 : 1, 1],
       ];
       const bx = 320 - (slots.length * 22) / 2;
       const by = 327; // ícone (16 px) + rótulo cabem inteiros acima da borda inferior (360)
@@ -394,7 +403,7 @@ export class HudScene extends Phaser.Scene {
         this.text(`key${i}`, x + 8, by + 17, lbl, ready && i > 0 ? 0xf6c257 : 0xa3a9bb, [0.5, 0]);
       });
       // passiva (ícone)
-      this.icon('slotp', `icon_${ABILITY_ICONS[me.c]?.[4] ?? 'star'}`, bx + slots.length * 22 + 4, by, 0.9);
+      this.icon('slotp', `icon_${icons?.[4] ?? 'star'}`, bx + slots.length * 22 + 4, by, 0.9);
       this.text('keyp', bx + slots.length * 22 + 12, by + 17, 'pass.', 0x565b70, [0.5, 0]);
       this.text('skillhint', 636, 347, 'F1 HABILIDADES', 0xf6c257, [1, 0]);
 

@@ -4,7 +4,7 @@
  */
 import { AFFIX_IDS, AFFIX_RULES, affixChance, affixesFor, type AffixId } from '../../shared/config/affixes.js';
 import { CHAPTERS, type ChapterDef, chapterOfWave, CLIMATE_EFFECTS, type Route, ROUTE, TRAVEL_SECONDS } from '../../shared/config/chapters.js';
-import { BERSERKER, CLASS_RANGE, CLASSES, type ClassId, HEAL_RULES, type HealSource, HUNTER, LAPANHA, MAYCON, MELEE_RULES, NECRO, PLAYER_RULES, TANK, VAMPIRE } from '../../shared/config/classes.js';
+import { BERSERKER, CLASS_RANGE, CLASSES, type ClassId, HEAL_RULES, type HealSource, HUNTER, JOTA, LAPANHA, MAYCON, MELEE_RULES, NECRO, PLAYER_RULES, TANK, VAMPIRE } from '../../shared/config/classes.js';
 import { COMBOS } from '../../shared/config/combos.js';
 import { ATK, BOSS_AI, BOSS_STAGGER_IMMUNITY, CC_DR, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
 import { BASE_OFFER_COUNT, INTERMISSION_SECONDS, LEGENDARY_MAX_PER_BUILD, MAX_OFFER_COUNT, UPGRADE_BY_ID, UPGRADE_CAPS } from '../../shared/config/upgrades.js';
@@ -36,6 +36,7 @@ import { FlowField } from './nav.js';
 import { absorbWithShield, addShield, applyWound, clearAfflictions, type HealUse, healPlayer, newTelemetry, stunPlayer, tickPlayerHealth } from './healing.js';
 import { affixReward, bossObjectiveDamageMul, countObjectives, Objectives, spawnBossObjectives, tickBossObjectives } from './objectives.js';
 import { playerSay } from './lines.js';
+import { isBat, jotaDamageBonus, jotaDown, newJotaState } from './kits/jota.js';
 import { WorldTelemetry } from './telemetry.js';
 import { SpatialHash } from './spatial.js';
 import type { Action, Enemy, Minion, Pickup, Player, Projectile, Slot, Target, Zone } from './types.js';
@@ -286,6 +287,7 @@ export class World {
       lastSayTick: -9999,
       charge: -1,
       hpPenalty: 0,
+      jota: newJotaState(),
       tele: newTelemetry(),
     };
     this.players.set(id, p);
@@ -950,6 +952,7 @@ export class World {
       p.rage = 0;
       p.essence = 0;
       p.charge = -1;
+      p.jota = newJotaState();
       for (const k of Object.keys(p.buffs) as (keyof Player['buffs'])[]) p.buffs[k] = 0;
       clearAfflictions(p);
       this.emit({ k: 'respawn', pi: p.id });
@@ -1044,6 +1047,7 @@ export class World {
       this.mod(p, 'g_agility') + (p.action ? 0 : this.mod(p, 'g_step')) + (p.buffs.retreat > 0 ? this.mod(p, 'g_retreat') : 0) + p.syn.moveSpeed,
     );
     let speed = b.speed * (1 + cardSpeed + thirstSpeed);
+    if (isBat(p)) speed *= JOTA.bat.speedMul;
     if (p.buffs.chill > 0) speed *= CLIMATE_EFFECTS.chill.speedMul;
     if (p.buffs.exhausted > 0) speed *= BERSERKER.madness.exhaustSpeedMul;
     if (p.buffs.slowed > 0) speed *= p.slowMul;
@@ -1053,7 +1057,7 @@ export class World {
       moveMul,
       canDodge: this.canAct(p) && !p.blocking,
       dodgeCost: b.dodge.cost * (1 - this.mod(p, 'g_dodge')),
-      dodgeSpeed: b.dodge.speed,
+      dodgeSpeed: b.dodge.speed * (isBat(p) ? JOTA.bat.dodgeMul : 1),
       dodgeTicks: b.dodge.ticks,
       dodgeCooldown: b.dodge.cooldown,
       slowFloorMul: CLIMATE_EFFECTS.slowFloorMul,
@@ -1380,6 +1384,8 @@ export class World {
     if (p.cls === 'vampire' && p.action?.name === 'e') m *= VAMPIRE.vortex.damageTaken;
     // Última Vigília: o Guardião vira a muralha
     if (p.cls === 'tank' && p.action?.name === 'r') m *= 1 - TANK.bastion.selfReduction;
+    // Modo Batman: menos frágil
+    if (isBat(p)) m *= JOTA.bat.damageTaken;
     if (p.cls === 'berserker') {
       if (p.buffs.madness > 0) m *= 1 + (p.mods['b_iron'] ? BERSERKER.madness.ironDamageTaken : BERSERKER.madness.damageTaken);
       else if (p.rage >= BERSERKER.fury.high) m *= BERSERKER.fury.damageTakenMulHigh;
@@ -1440,6 +1446,7 @@ export class World {
       p.stats.downs++;
       p.buffs.burn = 0;
       p.buffs.harvest = 0;
+      if (p.cls === 'jota') jotaDown(p);
       p.shieldHp = 0;
       p.shieldT = 0;
       clearAfflictions(p);
@@ -1483,6 +1490,7 @@ export class World {
     }
     // A marca recompensa a pontaria do Caçador, sem multiplicar armadilhas e áreas.
     if (p.cls === 'hunter' && kind === 'proj' && e.markBy === p.id && e.markT > 0) m += e.marks * (HUNTER.mark.bonusPerStack + this.mod(p, 'h_mark'));
+    if (p.cls === 'jota') m += jotaDamageBonus(this, p, e);
     if (p.cls === 'berserker') {
       m += BERSERKER.fury.maxDamageBonus * (p.rage / BERSERKER.fury.max);
       if (p.buffs.madness > 0) m += BERSERKER.madness.damageBonus;
@@ -1880,7 +1888,7 @@ export class World {
     const a = Math.atan2(best.y - from.y, best.x - from.x);
     const sp = Math.hypot(pr.vx, pr.vy);
     const np = this.spawnProjectile({
-      kind: 'bolt', team: 'p', owner: pr.owner, x: from.x + Math.cos(a) * (from.r + 4), y: from.y + Math.sin(a) * (from.r + 4),
+      kind: pr.kind === 'prompt' || pr.kind === 'batarang' ? pr.kind : 'bolt', team: 'p', owner: pr.owner, x: from.x + Math.cos(a) * (from.r + 4), y: from.y + Math.sin(a) * (from.r + 4),
       vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, r: pr.r, dmg: pr.dmg * HUNTER.upgrades.ricochetDamage, range: 130, pierce: 0, poise: pr.poise, kb: pr.kb, ricochet: 0,
     });
     for (const id of pr.hit) np.hit.add(id);
@@ -2624,6 +2632,10 @@ export class World {
       if (p.shieldHp > 0) f |= PLAYER_FLAGS.shielded;
       if (p.cls === 'maycon' && this.zones.some((z) => z.kind === 'brew' && z.owner === p.id && !z.dead)) f |= PLAYER_FLAGS.brewing;
       if (p.cls === 'tank' && p.action?.name === 'r') f |= PLAYER_FLAGS.bulwark;
+      if (p.cls === 'jota') {
+        if (p.jota.batT > 0) f |= PLAYER_FLAGS.batman;
+        if (p.jota.hotT > 0) f |= PLAYER_FLAGS.compact;
+      }
       const a = p.action;
       out.push({
         id: p.id,
@@ -2655,6 +2667,7 @@ export class World {
           : p.cls === 'tank' ? Math.round(Math.min(100, p.guardianCharge * TANK.bastion.damageRatio / TANK.bastion.bonusCap * 100))
           : p.cls === 'lapanha' ? Math.ceil(p.buffs.harvest / 3)
           : p.cls === 'maycon' ? this.darkSightCount(p)
+          : p.cls === 'jota' ? Math.round(p.jota.ctx)
           : p.comboStep,
         cn: p.connected ? 1 : 0,
         dg: p.lastDodgeTick,
@@ -2662,7 +2675,7 @@ export class World {
         wb: Math.ceil(p.woundBlockT / 3),
         wo: p.woundT > 0 ? p.woundBy : 0,
         sh: Math.ceil(p.shieldHp),
-        ch: a && a.name === 'charge' ? Math.round(chargeFrac(a) * 100) : -1,
+        ch: a && a.name === 'charge' ? Math.round(chargeFrac(a) * 100) : p.cls === 'jota' && p.jota.batT > 0 ? Math.max(1, Math.round((p.jota.batT / p.jota.batMax) * 100)) : -1,
       });
     }
     return out;

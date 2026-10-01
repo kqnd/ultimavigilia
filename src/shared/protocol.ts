@@ -56,6 +56,9 @@ export const PLAYER_FLAGS = {
   brewing: 4194304,
   /** Guardião: Última Vigília erguida (muralha). */
   bulwark: 8388608,
+  /** Jota: Modo Batman ativo; Contexto estourado (Compactar: bônus de dano e velocidade). */
+  batman: 16777216,
+  compact: 33554432,
 } as const;
 
 export const ENEMY_STATES = ['spawn', 'move', 'windup', 'active', 'recover', 'stagger', 'air', 'dead', 'roar'] as const;
@@ -112,6 +115,8 @@ export const PROJECTILE_KINDS = [
   'melon', 'melonWide', 'melonDense', 'bigMelon', 'seed', 'woundBolt',
   /** Maycon: garrafa (básico) e bomba de fumaça (Q, em arco). */
   'bottle', 'chokeBomb',
+  /** Jota: Prompt (linha de código), batarangue e bomba de medo (Modo Batman). */
+  'prompt', 'batarang', 'fearBomb',
 ] as const;
 /** Projéteis desenhados em arco (altura só visual; a colisão continua no plano do chão). */
 export const LOB_KINDS: ReadonlySet<string> = new Set(['melon', 'melonWide', 'melonDense', 'bigMelon', 'chokeBomb']);
@@ -124,6 +129,8 @@ export const ZONE_KINDS = [
   'peel', 'wetFloor', 'assaultWarn', 'ambushWarn',
   /** Maycon: nuvem de fumaça e anel de cachaça em chamas. */
   'choke', 'brew',
+  /** Jota: bomba de medo (Modo Batman) e a sombra do Rewind (posição de 3 s atrás). */
+  'fear', 'rewind',
 ] as const;
 export type ZoneKind = (typeof ZONE_KINDS)[number];
 

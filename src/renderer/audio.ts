@@ -547,6 +547,53 @@ const RECIPES: Record<string, Recipe> = {
     a.tone(t, 0.5, o, { f0: 120, f1: 45, gain: 0.4 });
     a.noise(t + 0.1, 0.9, o, { type: 'bandpass', f0: 1200, f1: 600, q: 0.7, gain: 0.25, attack: 0.1 });
   },
+  // --- Jota: teclado, feixe de patch, /compact, /rewind, transformação e batarangues
+  prompt: (a, t, o) => {
+    a.noise(t, 0.03, o, { type: 'highpass', f0: 4200, gain: 0.3 });
+    a.tone(t + 0.01, 0.07, o, { type: 'square', f0: 1040, f1: 1560, gain: 0.05, lp: 3000 });
+  },
+  patch: (a, t, o) => {
+    a.tone(t, 0.22, o, { type: 'sawtooth', f0: 420, f1: 1700, gain: 0.07, lp: 2600 });
+    a.noise(t, 0.2, o, { type: 'bandpass', f0: 2600, f1: 5200, q: 1.2, gain: 0.22 });
+    a.tone(t + 0.1, 0.12, o, { type: 'square', f0: 1320, f1: 1980, gain: 0.04, lp: 3500 });
+  },
+  compact: (a, t, o) => {
+    a.tone(t, 0.3, o, { f0: 160, f1: 60, gain: 0.4 });
+    a.noise(t, 0.28, o, { type: 'lowpass', f0: 1600, f1: 200, gain: 0.45 });
+    for (let i = 0; i < 4; i++) a.tone(t + 0.04 + i * 0.05, 0.06, o, { type: 'square', f0: 880 + i * 220, f1: 880 + i * 220, gain: 0.04, lp: 3200 });
+  },
+  rewind: (a, t, o) => {
+    a.tone(t, 0.35, o, { type: 'sawtooth', f0: 1400, f1: 180, gain: 0.08, lp: 2200, vib: 14 });
+    a.noise(t, 0.3, o, { type: 'bandpass', f0: 3200, f1: 500, q: 1.4, gain: 0.25 });
+    a.tone(t + 0.3, 0.12, o, { type: 'triangle', f0: 330, f1: 660, gain: 0.08 });
+  },
+  batStart: (a, t, o) => {
+    a.tone(t, 0.6, o, { type: 'sawtooth', f0: 70, f1: 150, gain: 0.12, lp: 600, attack: 0.3, vib: 5 });
+    a.noise(t, 0.6, o, { type: 'bandpass', f0: 400, f1: 1800, q: 0.8, gain: 0.2, attack: 0.3 });
+  },
+  batTransform: (a, t, o) => {
+    a.noise(t, 0.7, o, { type: 'lowpass', f0: 2200, f1: 120, gain: 0.85 });
+    a.tone(t, 0.55, o, { f0: 98, f1: 40, gain: 0.45 });
+    a.tone(t + 0.02, 0.8, o, { type: 'sawtooth', f0: 147, f1: 110, gain: 0.1, lp: 700 });
+    a.tone(t + 0.02, 0.8, o, { type: 'sawtooth', f0: 196, f1: 146, gain: 0.07, lp: 700 });
+    a.noise(t + 0.1, 0.5, o, { type: 'highpass', f0: 3500, gain: 0.15 });
+  },
+  batEnd: (a, t, o) => {
+    a.tone(t, 0.4, o, { type: 'triangle', f0: 440, f1: 130, gain: 0.08 });
+    a.noise(t, 0.3, o, { type: 'lowpass', f0: 1400, f1: 200, gain: 0.3 });
+  },
+  batarang: (a, t, o) => {
+    a.noise(t, 0.15, o, { type: 'bandpass', f0: 1800, f1: 3400, q: 2.2, gain: 0.3 });
+    a.tone(t, 0.12, o, { type: 'triangle', f0: 900, f1: 1500, gain: 0.04, vib: 30 });
+  },
+  fearBurst: (a, t, o) => {
+    a.noise(t, 0.5, o, { type: 'lowpass', f0: 1100, f1: 160, gain: 0.55 });
+    a.tone(t, 0.45, o, { type: 'sawtooth', f0: 240, f1: 90, gain: 0.07, lp: 700, vib: 8 });
+  },
+  grappleDash: (a, t, o) => {
+    a.noise(t, 0.08, o, { type: 'highpass', f0: 3000, gain: 0.35 });
+    a.noise(t + 0.04, 0.25, o, { type: 'bandpass', f0: 600, f1: 2600, q: 1.2, gain: 0.35 });
+  },
   // --- Ferida Profana, atordoamento, cerco e escolta
   woundCharge: (a, t, o) => a.tone(t, 0.9, o, { type: 'sawtooth', f0: 110, f1: 180, gain: 0.07, lp: 900, attack: 0.2, vib: 7 }),
   woundCast: (a, t, o) => a.noise(t, 0.18, o, { type: 'bandpass', f0: 1400, f1: 700, q: 3, gain: 0.3 }),

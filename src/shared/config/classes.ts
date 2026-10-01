@@ -4,8 +4,8 @@
  * distâncias em pixels; ângulos de arco em graus.
  */
 
-export type ClassId = 'hunter' | 'mage' | 'tank' | 'vampire' | 'berserker' | 'dog' | 'necromancer' | 'lapanha' | 'maycon';
-export const CLASS_IDS: readonly ClassId[] = ['hunter', 'mage', 'tank', 'vampire', 'berserker', 'dog', 'necromancer', 'lapanha', 'maycon'];
+export type ClassId = 'hunter' | 'mage' | 'tank' | 'vampire' | 'berserker' | 'dog' | 'necromancer' | 'lapanha' | 'maycon' | 'jota';
+export const CLASS_IDS: readonly ClassId[] = ['hunter', 'mage', 'tank', 'vampire', 'berserker', 'dog', 'necromancer', 'lapanha', 'maycon', 'jota'];
 
 export interface Timing {
   windup: number;
@@ -75,7 +75,7 @@ export interface ClassBase {
 /** Alcance de combate de cada classe (prioridade dos chefes e das ameaças anti-kite). */
 export type CombatRange = 'melee' | 'mid' | 'ranged';
 export const CLASS_RANGE: Record<ClassId, CombatRange> = {
-  hunter: 'ranged', mage: 'ranged', necromancer: 'ranged', dog: 'mid', lapanha: 'mid', maycon: 'mid', tank: 'melee', vampire: 'melee', berserker: 'melee',
+  hunter: 'ranged', mage: 'ranged', necromancer: 'ranged', dog: 'mid', lapanha: 'mid', maycon: 'mid', jota: 'ranged', tank: 'melee', vampire: 'melee', berserker: 'melee',
 };
 /** Classes corpo a corpo recebem menos dano: compensa ter de ficar dentro do alcance da horda. */
 export const MELEE_RULES = { damageTakenMul: 0.88 } as const;
@@ -167,7 +167,7 @@ export const HEAL_RULES = {
   /** Bônus de dano acima de +25% (Sede, Banquete, cartas) não aumentam a cura. */
   basisCapMul: 1.25,
   /** Teto de cura "de combate" por segundo, por classe. */
-  combatPerSecond: { hunter: 12, mage: 12, tank: 12, vampire: VAMPIRE.healPerSecondCap, berserker: 16, dog: 12, necromancer: 10, lapanha: 8, maycon: 10 } as Record<ClassId, number>,
+  combatPerSecond: { hunter: 12, mage: 12, tank: 12, vampire: VAMPIRE.healPerSecondCap, berserker: 16, dog: 12, necromancer: 10, lapanha: 8, maycon: 10, jota: 12 } as Record<ClassId, number>,
   /** Janela usada para medir "cura recente" (alvo preferido da Ferida Profana), em segundos. */
   recentWindow: 3,
 } as const;
@@ -361,6 +361,55 @@ export const MAYCON = {
   },
   /** Passiva — Visão Sombria: controlados por ele ficam marcados (+dano recebido de todos). */
   darkSight: { seconds: 3, damageMul: 1.12 },
+} as const;
+
+// ---------------------------------------------------------------- JOTA
+/**
+ * Vibecoder de capuz: glass cannon de dano à distância (v1.6). Poucos pontos de vida, projéteis
+ * que perfuram e uma passiva de Contexto que enche a cada acerto e estoura em "Compactar".
+ * A sobrevivência vem do Rewind (/rewind: volta à posição e à vida de 3 s atrás) e, na suprema, da
+ * transformação em Batman (menos frágil, mais móvel, com bombas de medo que atordoam).
+ */
+export const JOTA = {
+  /** Básico — Prompt: linha de código que perfura 1 inimigo (o seguinte leva menos dano). */
+  prompt: {
+    windup: 5, active: 1, recovery: 9, stamina: 3, moveMul: 0.7,
+    speed: 430, damage: 15, range: 340, radius: 4, pierce: 1, pierceFalloff: 0.75, poise: 6, knockback: 25,
+    tokens: 5,
+  },
+  /** Q — Patch: feixe em linha que atravessa tudo, corta e marca (marcados levam mais dano do Jota). */
+  patch: {
+    cooldown: 7, windup: 9, recovery: 9, moveMul: 0.4,
+    length: 270, width: 9, damage: 30, poise: 22, knockback: 60,
+    markSeconds: 4, markBonus: 0.18, tokensPerHit: 6, tokensCap: 18,
+  },
+  /** E — Rewind: volta à posição e à vida de 3 s atrás; o ponto de partida estoura em código. */
+  rewind: {
+    cooldown: 12, stamina: 10, lookbackSeconds: 3, sampleEvery: 3, iframes: 9, recovery: 6,
+    burstDamage: 22, burstRadius: 44, burstPoise: 30, burstKnockback: 120,
+  },
+  /** R — Modo Batman: transforma o Jota por alguns segundos. */
+  bat: {
+    windup: 18, recovery: 6, duration: 9, damageTaken: 0.6, speedMul: 1.2, dodgeMul: 1.3, shield: 25, shieldSeconds: 5,
+    /** Recarga mínima de Q/E ao voltar ao capuz. */
+    endQ: 4, endE: 5,
+    batarang: {
+      windup: 4, active: 1, recovery: 7, stamina: 2, moveMul: 0.8, count: 3, spread: 0.24,
+      speed: 480, damage: 13, range: 300, radius: 4, poise: 8, knockback: 30,
+    },
+    fear: {
+      cooldown: 5.5, windup: 5, recovery: 6, moveMul: 0.5, maxRange: 210, speed: 280,
+      radius: 62, duration: 3, slow: 0.6, tickInterval: 0.5, tickDamage: 3, stunCommon: 0.8, stunElite: 0.3, poise: 16,
+    },
+    grapple: {
+      cooldown: 3.5, stamina: 8, distance: 190, ticks: 9, iframes: 6, recovery: 4, width: 22, damage: 16, knockback: 90, poise: 20,
+    },
+  },
+  /** Passiva — Contexto: enche a cada acerto; cheio estoura em Compactar (nova + bônus). */
+  context: {
+    max: 100, damagePerPoint: 0.002, idleSeconds: 5, decayPerSecond: 5,
+    compact: { damage: 38, radius: 78, poise: 40, knockback: 200, buffSeconds: 5, buffDamage: 0.2, buffHaste: 0.25 },
+  },
 } as const;
 
 export const CLASSES: Record<ClassId, ClassBase> = {
@@ -589,6 +638,32 @@ export const CLASSES: Record<ClassId, ClassBase> = {
       e: { name: 'Voo Rasante', desc: `O tapete corta ${MAYCON.flight.distance}px na direção mirada (invulnerável no início): ${MAYCON.flight.damage} de dano, joga os inimigos para os lados e os deixa lentos por ${MAYCON.flight.slowSeconds}s. Recarga ${MAYCON.flight.cooldown}s.` },
       r: { name: 'Rodada da Casa', desc: `Vira a garrafa e cospe um anel de cachaça em chamas (${MAYCON.brew.radius}px, ${MAYCON.brew.duration}s): puxa a horda para o centro, deixa ${Math.round((1 - MAYCON.brew.slow) * 100)}% mais lenta e queima ${MAYCON.brew.tickDamage} a cada ${(MAYCON.brew.tickEvery / 30).toFixed(1)}s. Aliados dentro recuperam ${MAYCON.brew.allyHealPerSecond} de vida por segundo.` },
       passive: { name: 'Visão Sombria', desc: `Todo inimigo que o Maycon desacelera, atordoa ou puxa fica marcado por ${MAYCON.darkSight.seconds}s e recebe +${Math.round((MAYCON.darkSight.damageMul - 1) * 100)}% de dano de toda a equipe.` },
+    },
+  },
+  jota: {
+    id: 'jota',
+    tag: 'Glass cannon',
+    name: 'Jota',
+    role: 'Dano à distância frágil: contexto, patches e rewind',
+    difficulty: 3,
+    ultName: 'Deploy',
+    blurb: 'Moletom de capuz, rosto na sombra e o brilho de uma tela no queixo. Programa a noite inteira com "só mais um prompt" — e, quando o deploy dá certo, vira o Batman.',
+    weakness: 'Frágil: pouca vida e nenhum controle de grupo. Sem Contexto e sem o Rewind pronto, qualquer descuido é fatal.',
+    hp: 88,
+    stamina: 100,
+    staminaRegen: 34,
+    staminaDelay: 0.5,
+    speed: 106,
+    radius: 6,
+    dodge: DODGE_STD,
+    ultPerDamage: 0.22,
+    color: 0x58d6a8,
+    texts: {
+      basic: { name: 'Prompt', desc: `Dispara uma linha de código que atravessa ${JOTA.prompt.pierce} inimigo (o seguinte leva ${Math.round(JOTA.prompt.pierceFalloff * 100)}% do dano): ${JOTA.prompt.damage} de dano. Cada acerto rende +${JOTA.prompt.tokens} de Contexto.` },
+      q: { name: 'Patch', desc: `Executa um feixe de ${JOTA.patch.length}px que atravessa tudo: ${JOTA.patch.damage} de dano e marca por ${JOTA.patch.markSeconds}s (+${Math.round(JOTA.patch.markBonus * 100)}% de dano do Jota nos marcados). Recarga ${JOTA.patch.cooldown}s.` },
+      e: { name: 'Rewind', desc: `/rewind: volta à posição e à vida (se era maior) de ${JOTA.rewind.lookbackSeconds}s atrás, fica invulnerável por um instante, limpa gelo e fogo e estoura o ponto de partida (${JOTA.rewind.burstDamage} de dano). A sombra azul mostra para onde vai voltar. Recarga ${JOTA.rewind.cooldown}s.` },
+      r: { name: 'Modo Batman', desc: `Por ${JOTA.bat.duration}s vira o Batman: -${Math.round((1 - JOTA.bat.damageTaken) * 100)}% de dano recebido, +${Math.round((JOTA.bat.speedMul - 1) * 100)}% de velocidade, escudo de ${JOTA.bat.shield}, imune a atordoamento. O básico lança ${JOTA.bat.batarang.count} batarangues em leque (${JOTA.bat.batarang.damage} cada); Q joga uma Bomba de Medo (${JOTA.bat.fear.radius}px, atordoa quem entra); E é o Gancho (${JOTA.bat.grapple.distance}px).` },
+      passive: { name: 'Contexto', desc: `Cada acerto enche o Contexto (máx. ${JOTA.context.max}): +${Math.round(JOTA.context.damagePerPoint * 1000) / 10}% de dano por ponto. Cheio, vira "/compact": nova de ${JOTA.context.compact.damage} de dano em ${JOTA.context.compact.radius}px e ${JOTA.context.compact.buffSeconds}s de +${Math.round(JOTA.context.compact.buffDamage * 100)}% de dano e +${Math.round(JOTA.context.compact.buffHaste * 100)}% de velocidade de ataque. Sem acertar, o Contexto escorre.` },
     },
   },
 };

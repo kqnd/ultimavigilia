@@ -107,6 +107,12 @@ export function buildFxSheet(): SheetBuilder {
   px('p_smokeDark', 4, 3, 0x565b70);
   px('p_booze', 2, 2, 0xf0b54a);
   px('p_glass', 2, 1, 0xb8f0a0);
+  // Jota: bits de código (verde-água), fumaça violeta do medo e penas de capa
+  px('p_code', 2, 2, 0x7dffd0);
+  px('p_codeDim', 2, 1, 0x2f8f70);
+  px('p_fear', 3, 3, 0x6a4a95);
+  px('p_fearDark', 4, 3, 0x2c2040);
+  px('p_cape', 3, 2, 0x20263a);
   // projétil de osso (Rajada Óssea)
   const bone = new PixelCanvas(12, 7);
   bone.hline(2, 9, 3, P.gray6);
@@ -205,6 +211,32 @@ export function buildFxSheet(): SheetBuilder {
     cb.set(7, f ? 0 : 1, f ? P.amb3 : P.red5);
     cb.outline(P.outline);
     sb.add(`proj_chokeBomb_${f}`, cb);
+    // Jota: linha de código (Prompt), batarangue girando e bomba de medo com pavio aceso
+    const pm = new PixelCanvas(12, 5);
+    pm.rect(0, 0, 12, 5, 0x0c1a22);
+    pm.hline(0, 11, 0, 0x58d6a8);
+    pm.hline(0, 11, 4, 0x58d6a8);
+    pm.vline(11, 0, 4, 0x9affe0);
+    const code = f === 0 ? [1, 2, 4, 5, 6, 8] : [1, 3, 4, 6, 7, 9];
+    for (const x of code) pm.set(x, 2, 0x9affe0);
+    pm.set(f === 0 ? 3 : 2, 1, 0x7dffd0);
+    pm.set(f === 0 ? 7 : 8, 3, 0x7dffd0);
+    pm.outline(P.outline);
+    sb.add(`proj_prompt_${f}`, pm);
+    const br = new PixelCanvas(11, 7);
+    br.matrix(['#.........#', '##...h...##', '###..#..###', '###########', '.#########.', '..###.###..', '...#...#...'], { '#': 0x38405c, h: 0xb8c4e8 }, 0, 0);
+    br.hline(2, 8, 3, 0x8a96c0);
+    br.outline(P.outline);
+    sb.add(`proj_batarang_${f}`, br);
+    const fb = new PixelCanvas(10, 11);
+    fb.ellipse(5, 6.5, 3.6, 3.6, P.pur1);
+    fb.ellipse(4.5, 6, 2, 2, P.pur3);
+    fb.set(3, 5, P.pur6);
+    fb.rect(4, 1, 2, 2, P.gray3);
+    fb.set(6, 0, f ? 0x9affe0 : 0x58d6a8);
+    fb.set(7, f ? 0 : 1, f ? P.white : 0x7dffd0);
+    fb.outline(P.outline);
+    sb.add(`proj_fearBomb_${f}`, fb);
   }
   // casca de melancia no chão (Lapanha): meia-lua verde com a parte branca e um fio vermelho
   const peel = new PixelCanvas(16, 8);

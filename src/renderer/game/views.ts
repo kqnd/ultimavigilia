@@ -4,7 +4,7 @@ import { CLASS_WEAPON } from '../../art/characters.js';
 import { AFFIX_IDS, AFFIXES, type AffixId } from '../../shared/config/affixes.js';
 import type { Climate } from '../../shared/config/chapters.js';
 import { ATK, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
-import { BERSERKER, LAPANHA, CLASSES, type ClassId, DOG, HUNTER, MAGE, MAYCON, NECRO, TANK, VAMPIRE } from '../../shared/config/classes.js';
+import { BERSERKER, JOTA, LAPANHA, CLASSES, type ClassId, DOG, HUNTER, MAGE, MAYCON, NECRO, TANK, VAMPIRE } from '../../shared/config/classes.js';
 import { EVENT_RULES } from '../../shared/config/objectives.js';
 import { ACTIONS, ENEMY_ATTACKS, ENEMY_FLAGS, ENEMY_STATES, MINION_KINDS, MINION_STATES, type MinionTuple, PLAYER_FLAGS, type SnapPlayer } from '../../shared/protocol.js';
 import type { GlowFrame, GlowOpts } from './effects.js';
@@ -64,6 +64,10 @@ function actionTiming(cls: ClassId, act: string): { wu: number; ac: number; arc:
     case 'maycon':
       if (act === 'basic1') return { wu: MAYCON.bottle.windup, ac: 1, arc: 0 };
       if (act === 'q') return { wu: MAYCON.choke.windup, ac: 1, arc: 0 };
+      return null;
+    case 'jota':
+      if (act === 'basic1') return { wu: JOTA.prompt.windup, ac: 1, arc: 0 };
+      if (act === 'q') return { wu: JOTA.patch.windup, ac: 1, arc: 0 };
       return null;
   }
 }
@@ -202,8 +206,11 @@ export class PlayerView {
     const act = ACTIONS[d.act] ?? 'idle';
     const { dir, flip } = facingOf(act !== 'idle' && d.ad !== 0 ? d.ad / 1000 : aim);
     const cls = this.cls;
+    // Jota em Modo Batman troca de desenho (prefixo jotabat na mesma folha)
+    const bat = cls === 'jota' && (d.f & PLAYER_FLAGS.batman) !== 0;
+    const sp: string = bat ? 'jotabat' : cls;
     const dodging = r.serverTick - d.dg < CLASSES[cls].dodge.ticks + 1;
-    let frame = `${cls}_idle_${dir}_${Math.floor(performance.now() / 500) % 2}`;
+    let frame = `${sp}_idle_${dir}_${Math.floor(performance.now() / 500) % 2}`;
     if (!hitstop) this.walkT += s * (r.moving ? 9 : 0);
     // queda animada: 2 quadros de transição (~0,2 s) antes de ficar deitado
     if (d.s !== 0 && this.prevStatus === 0) this.fallT = 0.24;
@@ -211,19 +218,22 @@ export class PlayerView {
     if (this.fallT > 0) this.fallT -= s;
     const airborne = (d.f & PLAYER_FLAGS.airborne) !== 0;
     let spinFlip: boolean | null = null;
-    if (d.s === 1 || d.s === 2) frame = this.fallT > 0.12 ? `${cls}_fall_0` : this.fallT > 0 ? `${cls}_fall_1` : `${cls}_down`;
-    else if (act === 'hurt' || act === 'guardBreak') frame = `${cls}_hurt_${dir}`;
-    else if (dodging || airborne) frame = `${cls}_dash_${dir}`;
+    if (d.s === 1 || d.s === 2) frame = this.fallT > 0.12 ? `${sp}_fall_0` : this.fallT > 0 ? `${sp}_fall_1` : `${sp}_down`;
+    else if (act === 'hurt' || act === 'guardBreak') frame = `${sp}_hurt_${dir}`;
+    else if (cls === 'jota' && act === 'r') {
+      // transformação: cast → clarão do Jota → clarão do Batman → pouso
+      frame = bat ? 'jotabat_land' : r.at < 6 ? 'jota_cast_down' : r.at < 10 ? 'jota_morph_0' : r.at < 14 ? 'jota_morph_1' : 'jota_morph_2';
+    } else if (dodging || airborne) frame = `${sp}_dash_${dir}`;
     else if (act.startsWith('basic')) {
       const t = actionTiming(cls, act);
-      frame = `${cls}_atk_${dir}_${t && r.at < t.wu ? 0 : 1}`;
+      frame = `${sp}_atk_${dir}_${t && r.at < t.wu ? 0 : 1}`;
     } else if (act === 'e' && cls === 'vampire') {
       // Redemoinho Rubro: gira passando pelas quatro direções
       const k = Math.floor(r.at / 2) % 4;
       const spin = (['down', 'side', 'up', 'side'] as const)[k] ?? 'down';
       frame = `${cls}_atk_${spin}_1`;
       spinFlip = k === 3 ? true : k === 1 ? false : null;
-    } else if (act === 'stun') frame = `${cls}_hurt_${dir}`;
+    } else if (act === 'stun') frame = `${sp}_hurt_${dir}`;
     else if (cls === 'maycon' && act === 'r' && r.at < MAYCON.brew.windup + 4) frame = `maycon_drink_${Math.floor(r.at / 5) % 2}`;
     else if (cls === 'maycon' && act === 'q') frame = `${cls}_atk_${dir}_${r.at < MAYCON.choke.windup ? 0 : 1}`;
     else if (cls === 'lapanha' && act === 'eat') frame = `lapanha_eat_${Math.floor(r.at / 6) % 2}`;
@@ -232,9 +242,9 @@ export class PlayerView {
     else if (act === 'q' && cls === 'berserker') {
       frame = `${cls}_atk_${dir}_${Math.floor(r.at / 3) % 2}`;
     } else if (act === 'q' || act === 'e' || act === 'r' || act === 'cast') {
-      const dash = act === 'e' && (cls === 'hunter' || cls === 'maycon');
-      frame = dash ? `${cls}_dash_${dir}` : `${cls}_cast_${dir}`;
-    } else if (r.moving) frame = `${cls}_walk_${dir}_${Math.floor(this.walkT) % 4}`;
+      const dash = act === 'e' && (cls === 'hunter' || cls === 'maycon' || bat);
+      frame = dash ? `${sp}_dash_${dir}` : `${sp}_cast_${dir}`;
+    } else if (r.moving) frame = `${sp}_walk_${dir}_${Math.floor(this.walkT) % 4}`;
     setFrame(this.body, frame);
     // Salto Brutal: sobe em arco
     let lift = 0;
@@ -418,6 +428,23 @@ export class PlayerView {
         if (act === 'r' && r.at < MAYCON.brew.windup) fx.aura(x + 7, y - 24 - lift, LIGHT.maycon, 0.35 + (r.at / MAYCON.brew.windup) * 0.5, 0.7);
         if (act === 'e' && Math.random() < s * 30) fx.glow(x + (Math.random() - 0.5) * 22, y - 2, LIGHT.gold, 0.14, { life: 0.5, vy: 20, frame: 'glow_core', grow: 0.3 });
       }
+      if (cls === 'jota') {
+        if (bat) {
+          // Modo Batman: névoa fria em volta da capa, penas escuras e olhos acesos
+          fx.aura(x, body, LIGHT.bat, 0.7, 0.1 + beat * 0.05);
+          fx.aura(x, y, LIGHT.bat, 0.5, 0.2, 'glow_ring', 0.45);
+          if (Math.random() < s * 10) fx.particle('p_cape', x + (Math.random() - 0.5) * 22, y - 8 - Math.random() * 14);
+          if (Math.random() < s * 6) fx.glow(x + (Math.random() - 0.5) * 18, y - 4, LIGHT.batHi, 0.12, { life: 0.6, vy: -22, frame: 'glow_core', grow: 0.3 });
+        } else {
+          // o rosto acende com a luz da tela; Contexto cheio / Compactar acendem o corpo todo
+          fx.aura(x + (dir === 'side' ? (flip ? -3 : 3) : 0), y - 21 - lift, LIGHT.jota, 0.34, 0.2 + beat * 0.06);
+          if (d.f & PLAYER_FLAGS.compact) {
+            fx.aura(x, body, LIGHT.jotaHi, 0.8, 0.28 + beat * 0.2);
+            if (Math.random() < s * 12) fx.glow(x + (Math.random() - 0.5) * 18, y - 6 - Math.random() * 12, LIGHT.jota, 0.12, { life: 0.6, vy: -34, frame: 'glow_core', grow: 0.3 });
+          } else if (d.k >= 70) fx.aura(x, body, LIGHT.jota, 0.4, 0.12 + (d.k - 70) * 0.006 + beat * 0.08);
+        }
+        if (act === 'r' && !bat) fx.aura(x, body, LIGHT.jotaHi, 0.6 + (r.at / JOTA.bat.windup) * 1.4, 0.35 + (r.at / JOTA.bat.windup) * 0.5, 'glow_star', 1, now / 250);
+      }
       if (cls === 'necromancer' && d.k > 0) fx.aura(x, body, LIGHT.necro, 0.35 + d.k * 0.05, 0.2 + beat * 0.1);
       if (act === 'cast' || (act === 'q' && cls === 'mage') || (act === 'r' && (cls === 'mage' || cls === 'necromancer' || cls === 'dog'))) {
         const col = cls === 'mage' ? LIGHT.mage : cls === 'necromancer' ? LIGHT.necro : cls === 'dog' ? LIGHT.dog : CLASSES[cls].color;
@@ -439,7 +466,7 @@ export class PlayerView {
 
     // rastro fantasma durante esquiva/deslocamentos
     this.ghostT -= s;
-    if ((dodging || airborne || (act === 'e' && (cls === 'hunter' || cls === 'tank' || cls === 'maycon') && r.at < 12)) && this.ghostT <= 0 && d.s === 0) {
+    if ((dodging || airborne || (act === 'e' && (cls === 'hunter' || cls === 'tank' || cls === 'maycon' || bat) && r.at < 12)) && this.ghostT <= 0 && d.s === 0) {
       this.ghostT = 0.035;
       fx.ghost(this.body.frame.name, x, y - lift, this.body.flipX);
     }
@@ -447,7 +474,7 @@ export class PlayerView {
     // arma
     if (this.weapon) {
       const w = this.weapon;
-      w.setVisible(d.s === 0 && !(cls === 'maycon' && act === 'r' && r.at < MAYCON.brew.windup + 4) && !(cls === 'lapanha' && (act === 'eat' || (act === 'throw' && r.at >= 3) || (act === 'basic1' && r.at >= LAPANHA.melon.windup))));
+      w.setVisible(d.s === 0 && !bat && !(cls === 'jota' && act === 'r') && !(cls === 'maycon' && act === 'r' && r.at < MAYCON.brew.windup + 4) && !(cls === 'lapanha' && (act === 'eat' || (act === 'throw' && r.at >= 3) || (act === 'basic1' && r.at >= LAPANHA.melon.windup))));
       if (cls === 'lapanha') {
         // a melancia cresce durante a carga do Q (4 tamanhos, rachada na carga máxima)
         const key = act === 'charge' && d.ch >= 0 ? `melonQ_${Math.min(3, Math.floor(d.ch / 34) + (d.ch >= 100 ? 1 : 0))}` : act === 'throw' ? 'melonQ_2' : 'melonHeld';

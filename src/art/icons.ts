@@ -78,6 +78,15 @@ const DEF: Record<string, [string[], Pal]> = {
   carpet: [['............', '.y.y.y.y.y..', 'RRRRRRRRRRR.', 'RyyyyyyyyyR.', 'RyrDrrrDryR.', 'RyrrDrDrryR.', 'RyrDrrrDryR.', 'RyyyyyyyyyR.', 'RRRRRRRRRRR.', '.y.y.y.y.y..', '............', '............'], { R: 0x5a1020, r: 0x9c1e2e, y: 0xe0b040, D: 0x4d6fa3 }],
   brew: [['.....kk.....', '.....gg.....', '....gGGg....', '....gGGg....', '...gGwGGg...', '...gGwGGg...', '...gGGGGg...', '...gaaaag...', '.o.gggggg.o.', 'oaoo.oo.ooao', '.oaaooooaao.', '..oooooooo..'], { g: 0x1f5a2a, G: 0x3f9a3a, w: 0xd8f6c8, k: 0xb08262, a: P.amb5, o: P.amb3 }],
   eyeDark: [['............', '....####....', '..##....##..', '.#..oooo..#.', '#..oo##oo..#', '#..o####o..#', '#..o####o..#', '#..oo##oo..#', '.#..oooo..#.', '..##....##..', '....####....', '............'], { '#': P.pur5, o: P.amb4 }],
+  // ---- Jota (prompt, patch, rewind, contexto e Modo Batman)
+  prompt: [['############', '#kkkkkkkkkk#', '#kgkkkkkkkk#', '#kkgkkkkkkk#', '#kgkkkkkkkk#', '#kkkkkkkkkk#', '#kkkgggkkkk#', '#kkkkkkkkkk#', '############', '............', '............', '............'], { '#': P.gray4, k: 0x0c1a22, g: 0x7dffd0 }],
+  patch: [['.##########.', '#..........#', '#.rrrrrr...#', '#..........#', '#.gggggggg.#', '#.....g....#', '#....ggg...#', '#.....g....#', '#..........#', '.##########.', '............', '............'], { '#': P.gray5, r: 0xe05a5a, g: 0x7dffd0 }],
+  rewind: [['............', '.....#...#..', '....##..##..', '...###.###..', '..####.####.', '...###.###..', '....##..##..', '.....#...#..', '............', '.#.#.#.#.#..', '............', '............'], { '#': 0x7dffd0 }],
+  context: [['............', '.#########..', '.#gggggg..#.', '.#gggggg..##', '.#gggggg..##', '.#gggggg..#.', '.#########..', '............', '.g.g.gg.g.g.', '..g.g..g.g..', '............', '............'], { '#': P.gray5, g: 0x58d6a8 }],
+  bat: [['............', '.#........#.', '.##......##.', '####.##.####', '############', '#.########.#', '..#.####.#..', '....#..#....', '............', '............', '............', '............'], { '#': 0x9aa6c8 }],
+  batarang: [['............', '.#........#.', '.##......##.', '..###..###..', '...######...', '....####....', '.....##.....', '............', '............', '............', '............', '............'], { '#': 0xb8c4e8 }],
+  fear: [['....pp......', '..pppppp.p..', '.ppPPPPPppp.', 'ppPPwPPwPPpp', 'pPPPPPPPPPPp', '.ppPPPPPPpp.', '..pppppppp..', '............', '............', '............', '............', '............'], { p: P.pur5, P: P.pur3, w: P.white }],
+  hook: [['.........#..', '.......##...', '......#.....', '.....#......', '....#..###..', '...#..#...#.', '..#...#...#.', '.#....#..#..', '......##....', '............', '............', '............'], { '#': 0xb8c4e8 }],
   stun: [['.....#......', '....###.....', '.#########..', '..#######...', '...##.##....', '..##...##...', '............', '.#......#...', '###....###..', '.#......#...', '............', '............'], { '#': P.amb4 }],
 };
 
@@ -91,7 +100,11 @@ export const ABILITY_ICONS: Record<string, [string, string, string, string, stri
   necromancer: ['bone', 'raise', 'hand', 'army', 'soul'],
   lapanha: ['melon', 'bigMelon', 'peel', 'harvest', 'heartMelon'],
   maycon: ['bottle', 'smoke', 'carpet', 'brew', 'eyeDark'],
+  jota: ['prompt', 'patch', 'rewind', 'bat', 'context'],
 };
+
+/** Ícones de Q/E/R do Jota durante o Modo Batman (básico, Q, E, R, passiva). */
+export const BAT_ABILITY_ICONS: [string, string, string, string, string] = ['batarang', 'fear', 'hook', 'bat', 'context'];
 
 /** Aliases de ícones de melhorias → ícones existentes. */
 export const UPGRADE_ICON_ALIAS: Record<string, string> = {
