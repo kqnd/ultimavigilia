@@ -121,4 +121,11 @@ export const berserkerKit: Kit = {
       w.emit({ k: 'sfx', n: 'madness', x: p.x, y: p.y });
     }
   },
+
+  /** Loucura: roubo de vida nos golpes (dano válido; respeita o teto de cura por segundo). */
+  onDealt(w, p, _e, _dmg, o) {
+    if (p.buffs.madness <= 0 || o.kind === 'proj') return;
+    const valid = w.lastValid;
+    if (valid > 0) w.healPlayer(p, valid * BERSERKER.madness.lifesteal, 'madness');
+  },
 };

@@ -4,9 +4,11 @@ import { CLASS_WEAPON } from '../../art/characters.js';
 import { AFFIX_IDS, AFFIXES, type AffixId } from '../../shared/config/affixes.js';
 import type { Climate } from '../../shared/config/chapters.js';
 import { ATK, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
-import { BERSERKER, LAPANHA, CLASSES, type ClassId, DOG, HUNTER, MAGE, NECRO, TANK, VAMPIRE } from '../../shared/config/classes.js';
+import { BERSERKER, LAPANHA, CLASSES, type ClassId, DOG, HUNTER, MAGE, MAYCON, NECRO, TANK, VAMPIRE } from '../../shared/config/classes.js';
 import { EVENT_RULES } from '../../shared/config/objectives.js';
 import { ACTIONS, ENEMY_ATTACKS, ENEMY_FLAGS, ENEMY_STATES, MINION_KINDS, MINION_STATES, type MinionTuple, PLAYER_FLAGS, type SnapPlayer } from '../../shared/protocol.js';
+import type { GlowFrame, GlowOpts } from './effects.js';
+import { LIGHT } from './lightfx.js';
 import { FONT, frameSheet, pixelOrigin, placeText, tf } from './textures.js';
 
 export type Facing = 'down' | 'up' | 'side';
@@ -37,6 +39,7 @@ function actionTiming(cls: ClassId, act: string): { wu: number; ac: number; arc:
       return null;
     case 'tank':
       if (act === 'basic1') return { wu: TANK.mace.windup, ac: TANK.mace.active, arc: TANK.mace.arc };
+      if (act === 'basic2') return { wu: TANK.quake.windup, ac: TANK.quake.active, arc: 200 };
       return null;
     case 'vampire':
       if (act === 'basic1' || act === 'basic2') return { wu: VAMPIRE.claws.windup, ac: VAMPIRE.claws.active, arc: VAMPIRE.claws.arc };
@@ -57,6 +60,10 @@ function actionTiming(cls: ClassId, act: string): { wu: number; ac: number; arc:
     case 'lapanha':
       if (act === 'basic1') return { wu: LAPANHA.melon.windup, ac: 1, arc: 0 };
       if (act === 'throw') return { wu: LAPANHA.ripe.throwWindup, ac: 1, arc: 0 };
+      return null;
+    case 'maycon':
+      if (act === 'basic1') return { wu: MAYCON.bottle.windup, ac: 1, arc: 0 };
+      if (act === 'q') return { wu: MAYCON.choke.windup, ac: 1, arc: 0 };
       return null;
   }
 }
@@ -84,8 +91,8 @@ class NameTag {
   readonly text: Phaser.GameObjects.BitmapText;
   readonly shadows: Phaser.GameObjects.BitmapText[];
   constructor(scene: Phaser.Scene, name: string, color: number) {
-    this.shadows = [0, 1, 2, 3].map(() => scene.add.bitmapText(0, 0, FONT, name, 11).setTint(0x07070d).setDepth(94001));
-    this.text = scene.add.bitmapText(0, 0, FONT, name, 11).setTint(color).setDepth(94002);
+    this.shadows = [0, 1, 2, 3].map(() => scene.add.bitmapText(0, 0, FONT, name, 11).setTint(0x07070d).setDepth(157001));
+    this.text = scene.add.bitmapText(0, 0, FONT, name, 11).setTint(color).setDepth(157002);
   }
   place(x: number, y: number, alpha: number): { w: number; h: number; left: number; top: number } {
     placeText(this.text, x, y, 0.5, 1);
@@ -138,10 +145,10 @@ export class PlayerView {
     const w = CLASS_WEAPON[cls];
     this.weapon = w ? scene.add.image(0, 0, ...tf(w)).setOrigin(0.25, 0.5) : null;
     this.shield = cls === 'tank' ? scene.add.image(0, 0, ...tf('shield')).setOrigin(0.5, 0.6) : null;
-    this.back = scene.add.graphics().setDepth(94000);
-    this.aura = cls === 'tank' || cls === 'berserker' ? scene.add.graphics() : null;
+    this.back = scene.add.graphics().setDepth(157000);
+    this.aura = cls === 'tank' || cls === 'berserker' || cls === 'maycon' ? scene.add.graphics() : null;
     this.tag = new NameTag(scene, name, local ? LOCAL_NAME_COLOR : CLASSES[cls].color);
-    this.bars = scene.add.graphics().setDepth(94003);
+    this.bars = scene.add.graphics().setDepth(157003);
   }
 
   hitFlash(): void {
@@ -159,7 +166,17 @@ export class PlayerView {
     this.bars.destroy();
   }
 
-  update(r: RenderPlayer, dt: number, fx: { ghost: (key: string, x: number, y: number, flip: boolean) => void; particle: (frame: string, x: number, y: number) => void }, hitstop: boolean): void {
+  update(
+    r: RenderPlayer,
+    dt: number,
+    fx: {
+      ghost: (key: string, x: number, y: number, flip: boolean) => void;
+      particle: (frame: string, x: number, y: number) => void;
+      aura: (x: number, y: number, color: number, size: number, alpha: number, frame?: GlowFrame, sy?: number, rot?: number) => void;
+      glow: (x: number, y: number, color: number, size: number, o?: GlowOpts) => void;
+    },
+    hitstop: boolean,
+  ): void {
     const d = r.data;
     const s = dt / 1000;
     this.x = r.x;
@@ -192,23 +209,27 @@ export class PlayerView {
       frame = `${cls}_atk_${spin}_1`;
       spinFlip = k === 3 ? true : k === 1 ? false : null;
     } else if (act === 'stun') frame = `${cls}_hurt_${dir}`;
+    else if (cls === 'maycon' && act === 'r' && r.at < MAYCON.brew.windup + 4) frame = `maycon_drink_${Math.floor(r.at / 5) % 2}`;
+    else if (cls === 'maycon' && act === 'q') frame = `${cls}_atk_${dir}_${r.at < MAYCON.choke.windup ? 0 : 1}`;
     else if (cls === 'lapanha' && act === 'eat') frame = `lapanha_eat_${Math.floor(r.at / 6) % 2}`;
     else if (cls === 'lapanha' && act === 'throw') frame = `${cls}_atk_${dir}_${r.at < 3 ? 0 : 1}`;
     else if (cls === 'lapanha' && (act === 'charge' || act === 'peel' || act === 'crush')) frame = `${cls}_cast_${dir}`;
     else if (act === 'q' && cls === 'berserker') {
       frame = `${cls}_atk_${dir}_${Math.floor(r.at / 3) % 2}`;
     } else if (act === 'q' || act === 'e' || act === 'r' || act === 'cast') {
-      const dash = act === 'e' && cls === 'hunter';
+      const dash = act === 'e' && (cls === 'hunter' || cls === 'maycon');
       frame = dash ? `${cls}_dash_${dir}` : `${cls}_cast_${dir}`;
     } else if (r.moving) frame = `${cls}_walk_${dir}_${Math.floor(this.walkT) % 4}`;
     setFrame(this.body, frame);
     // Salto Brutal: sobe em arco
     let lift = 0;
     if (airborne) lift = Math.round(Math.sin(Math.min(1, r.at / BERSERKER.leap.ticks) * Math.PI) * 22);
+    // Maycon flutua no tapete: sobe e desce devagar (mais alto no Voo Rasante)
+    if (cls === 'maycon' && d.s === 0) lift = Math.round(4 + Math.sin(performance.now() / 280 + this.id) * 1.6 + (act === 'e' ? 3 : 0));
     this.body.setFlipX((spinFlip ?? flip) && d.s === 0);
     this.body.setPosition(x, y - lift);
     this.body.setDepth(y);
-    this.shadow.setPosition(x, y).setDepth(y - 40).setScale(lift ? Math.max(0.5, 1 - lift / 40) : 1);
+    this.shadow.setPosition(x, y).setDepth(y - 40).setScale(lift ? Math.max(0.5, 1 - lift / 40) * (cls === 'maycon' ? 1.25 : 1) : 1);
 
     // estados visuais
     let alpha = 1;
@@ -238,7 +259,7 @@ export class PlayerView {
           aura.lineStyle(1, 0x25343d, 1).lineBetween(sx - 3, sy - 3, sx + 2, sy + 4);
         }
       }
-      if (d.s === 0 && act === 'r') {
+      if (cls === 'tank' && d.s === 0 && act === 'r') {
         const charge = d.k / 100;
         const grow = Math.min(1, r.at / 16);
         const radius = TANK.bastion.radius * grow;
@@ -294,6 +315,55 @@ export class PlayerView {
     } else if (d.f & PLAYER_FLAGS.burn) {
       this.body.setTint(Math.floor(now / 120) % 2 ? 0xffc080 : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
     } else this.body.clearTint();
+    // auras de luz (camada aditiva, por cima da escuridão): cada estado forte "acende" o boneco
+    if (d.s === 0) {
+      const body = y - 12 - lift;
+      const beat = 0.5 + 0.5 * Math.sin(now / 150);
+      if (d.f & PLAYER_FLAGS.madness) {
+        fx.aura(x, y - 2, LIGHT.berserker, 1.3 + beat * 0.2, 0.55, 'glow_soft', 0.5);
+        fx.aura(x, body, 0xff3a10, 0.75, 0.35 + beat * 0.25);
+        fx.aura(x, y, LIGHT.berserkerHi, 0.62, 0.35 + beat * 0.2, 'glow_ring', 0.45);
+        if (Math.random() < s * 14) fx.glow(x + (Math.random() - 0.5) * 26, y - Math.random() * 6, Math.random() < 0.5 ? LIGHT.berserkerHi : LIGHT.berserker, 0.16, { life: 0.7, vy: -40 - Math.random() * 30, frame: 'glow_core', grow: 0.3, alpha: 0.95 });
+      } else if (d.f & PLAYER_FLAGS.rage) fx.aura(x, body, LIGHT.berserker, 0.5, 0.18 + beat * 0.12);
+      if (cls === 'tank' && act === 'r') {
+        // muralha: domo de almas que acompanha o Guardião
+        const charge = d.k / 100;
+        const rad = TANK.bastion.radius * Math.min(1, r.at / 16);
+        fx.aura(x, y, LIGHT.tank, rad / 56, 0.45 + charge * 0.35, 'glow_ring', 0.45);
+        fx.aura(x, y - 4, LIGHT.tank, (rad * 2) / 64, 0.12 + charge * 0.12, 'glow_soft', 0.45);
+        fx.aura(x, body, LIGHT.tankHi, 0.7 + charge * 0.4, 0.35 + beat * 0.2);
+        if (Math.random() < s * (6 + charge * 14)) {
+          const a = Math.random() * Math.PI * 2;
+          fx.glow(x + Math.cos(a) * rad * 0.9, y + Math.sin(a) * rad * 0.4, LIGHT.tankHi, 0.16, { life: 0.9, vy: -30, frame: 'glow_core', grow: 0.3, alpha: 0.9 });
+        }
+      } else if (d.f & PLAYER_FLAGS.blocking) {
+        fx.aura(x, y - 11, LIGHT.tank, 0.42, 0.55 + beat * 0.2, 'glow_ring', 0.78);
+      }
+      if (d.f & PLAYER_FLAGS.bastion && cls !== 'tank') fx.aura(x, body, LIGHT.tank, 0.45, 0.3);
+      if (d.f & PLAYER_FLAGS.feast) {
+        fx.aura(x, body, LIGHT.vampire, 0.9, 0.3 + beat * 0.2);
+        fx.aura(x, y, LIGHT.vampire, 0.4, 0.3, 'glow_ring', 0.45);
+      }
+      if (d.f & PLAYER_FLAGS.harvest) fx.aura(x, body, LIGHT.lapanhaLeaf, 0.85, 0.25 + beat * 0.15);
+      if (d.f & PLAYER_FLAGS.empowered) fx.aura(x + Math.cos(aim) * 8, body, LIGHT.mage, 0.4, 0.5 + beat * 0.3, 'glow_star', 1, now / 300);
+      if (d.f & PLAYER_FLAGS.resonant) fx.aura(x, y - 10, LIGHT.dog, 0.7, 0.3 + beat * 0.3, 'glow_ring', 0.8);
+      if (d.f & PLAYER_FLAGS.shielded) fx.aura(x, body, 0xbfe3ff, 0.55, 0.22);
+      if (cls === 'maycon') {
+        // o tapete brilha por baixo (magia do voo); na Rodada ele pega fogo
+        fx.aura(x, y - 1, LIGHT.gold, 0.55, 0.16 + beat * 0.08, 'glow_soft', 0.35);
+        if (d.f & PLAYER_FLAGS.brewing) {
+          fx.aura(x, body, LIGHT.mayconFlame, 0.85, 0.3 + beat * 0.2);
+          if (Math.random() < s * 8) fx.glow(x + (Math.random() - 0.5) * 18, y - 6, LIGHT.maycon, 0.15, { life: 0.6, vy: -36, frame: 'glow_core', grow: 0.3 });
+        }
+        if (act === 'r' && r.at < MAYCON.brew.windup) fx.aura(x + 7, y - 24 - lift, LIGHT.maycon, 0.35 + (r.at / MAYCON.brew.windup) * 0.5, 0.7);
+        if (act === 'e' && Math.random() < s * 30) fx.glow(x + (Math.random() - 0.5) * 22, y - 2, LIGHT.gold, 0.14, { life: 0.5, vy: 20, frame: 'glow_core', grow: 0.3 });
+      }
+      if (cls === 'necromancer' && d.k > 0) fx.aura(x, body, LIGHT.necro, 0.35 + d.k * 0.05, 0.2 + beat * 0.1);
+      if (act === 'cast' || (act === 'q' && cls === 'mage') || (act === 'r' && (cls === 'mage' || cls === 'necromancer' || cls === 'dog'))) {
+        const col = cls === 'mage' ? LIGHT.mage : cls === 'necromancer' ? LIGHT.necro : cls === 'dog' ? LIGHT.dog : CLASSES[cls].color;
+        fx.aura(x + (flip ? -6 : 6), body - 4, col, 0.45 + beat * 0.2, 0.7, 'glow_star', 1, now / 200);
+      }
+    }
     // partículas de estado
     if (d.s === 0 && Math.random() < s * 8) {
       if (d.f & PLAYER_FLAGS.madness) {
@@ -309,7 +379,7 @@ export class PlayerView {
 
     // rastro fantasma durante esquiva/deslocamentos
     this.ghostT -= s;
-    if ((dodging || airborne || (act === 'e' && (cls === 'hunter' || cls === 'tank') && r.at < 12)) && this.ghostT <= 0 && d.s === 0) {
+    if ((dodging || airborne || (act === 'e' && (cls === 'hunter' || cls === 'tank' || cls === 'maycon') && r.at < 12)) && this.ghostT <= 0 && d.s === 0) {
       this.ghostT = 0.035;
       fx.ghost(this.body.frame.name, x, y - lift, this.body.flipX);
     }
@@ -317,7 +387,7 @@ export class PlayerView {
     // arma
     if (this.weapon) {
       const w = this.weapon;
-      w.setVisible(d.s === 0 && !(cls === 'lapanha' && (act === 'eat' || (act === 'throw' && r.at >= 3) || (act === 'basic1' && r.at >= LAPANHA.melon.windup))));
+      w.setVisible(d.s === 0 && !(cls === 'maycon' && act === 'r' && r.at < MAYCON.brew.windup + 4) && !(cls === 'lapanha' && (act === 'eat' || (act === 'throw' && r.at >= 3) || (act === 'basic1' && r.at >= LAPANHA.melon.windup))));
       if (cls === 'lapanha') {
         // a melancia cresce durante a carga do Q (4 tamanhos, rachada na carga máxima)
         const key = act === 'charge' && d.ch >= 0 ? `melonQ_${Math.min(3, Math.floor(d.ch / 34) + (d.ch >= 100 ? 1 : 0))}` : act === 'throw' ? 'melonQ_2' : 'melonHeld';
@@ -694,6 +764,16 @@ export class EnemyView {
       }
     }
     if (r.flags & ENEMY_FLAGS.rooted) g.lineStyle(1, 0xc0c8d8, 1).strokeEllipse(x, y, this.body.width * 0.7, 6);
+    // Visão Sombria (Maycon): olho âmbar sobre a cabeça e anel violeta nos pés — marcado leva mais dano
+    if (r.flags & ENEMY_FLAGS.darkSight && r.state !== 'dead') {
+      const ey = Math.round(y - this.body.height - 9);
+      const blink = Math.floor(now / 140) % 6 === 0;
+      g.fillStyle(0x0b0a12, 1).fillRect(x - 4, ey - 1, 9, 5);
+      g.fillStyle(0x8d62b3, 1).fillRect(x - 3, ey, 7, 3);
+      g.fillStyle(blink ? 0x8d62b3 : 0xf6c257, 1).fillRect(x - 1, ey, 3, 3);
+      g.fillStyle(0xfff0ae, 1).fillRect(x, ey + 1, 1, 1);
+      g.lineStyle(1, 0xb894e0, 0.7).strokeEllipse(x, y, this.body.width * 0.8, 7);
+    }
     // olhos do Caçador de Névoa: sempre legíveis; brilham forte na preparação do salto
     if (this.type === 'mistStalker' && r.state !== 'spawn' && (this.veilA < 0.9 || (r.state === 'windup' && r.atk === 'mistLeap'))) {
       const hot = r.state === 'windup';

@@ -146,6 +146,8 @@ export interface Player {
   lastSayTick: number;
   /** Lapanha: ticks de carga da Melancia Madura em curso (-1 = sem carga). */
   charge: number;
+  /** Penalidade de vida máxima acumulada por voltar ao checkpoint (fração da vida base). */
+  hpPenalty: number;
   /** Telemetria de balanceamento (não vai para os clientes). */
   tele: PlayerTelemetry;
 }
@@ -269,6 +271,9 @@ export interface Enemy {
   slideVx: number;
   slideVy: number;
   vulnT: number;
+  /** Maycon: Visão Sombria (ticks marcado, +dano recebido de todos). */
+  dsT: number;
+  dsMul: number;
   /** Jogador alvo do telegraph atual (Ferida Profana). */
   aimPid: number;
   /** Tick da última Marcha/Ferida (espaçamento entre as duas). */

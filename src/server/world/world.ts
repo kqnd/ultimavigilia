@@ -4,11 +4,11 @@
  */
 import { AFFIX_IDS, AFFIX_RULES, affixChance, affixesFor, type AffixId } from '../../shared/config/affixes.js';
 import { CHAPTERS, type ChapterDef, chapterOfWave, CLIMATE_EFFECTS, type Route, ROUTE, TRAVEL_SECONDS } from '../../shared/config/chapters.js';
-import { BERSERKER, CLASS_RANGE, CLASSES, type ClassId, HEAL_RULES, type HealSource, HUNTER, LAPANHA, MELEE_RULES, NECRO, PLAYER_RULES, TANK, VAMPIRE } from '../../shared/config/classes.js';
+import { BERSERKER, CLASS_RANGE, CLASSES, type ClassId, HEAL_RULES, type HealSource, HUNTER, LAPANHA, MAYCON, MELEE_RULES, NECRO, PLAYER_RULES, TANK, VAMPIRE } from '../../shared/config/classes.js';
 import { COMBOS } from '../../shared/config/combos.js';
 import { ATK, BOSS_AI, BOSS_STAGGER_IMMUNITY, CC_DR, ENEMIES, ENEMY_TYPES, type EnemyType } from '../../shared/config/enemies.js';
 import { BASE_OFFER_COUNT, INTERMISSION_SECONDS, LEGENDARY_MAX_PER_BUILD, MAX_OFFER_COUNT, UPGRADE_BY_ID, UPGRADE_CAPS } from '../../shared/config/upgrades.js';
-import { SCALING, TOTAL_WAVES, WAVES, waveInChapter } from '../../shared/config/waves.js';
+import { CHECKPOINT, isCheckpointWave, SCALING, TOTAL_WAVES, WAVES, waveInChapter } from '../../shared/config/waves.js';
 import { DT, sec, SHOT_HEIGHT, TICK_RATE, TILE } from '../../shared/constants.js';
 import { circleFree, lineOfSight, moveCircle, resolveCircle } from '../../shared/collision.js';
 import { type ArenaMap, Obst, blocksShot, breakableAt, cloneMap, getMap, mapIndex, WORLD_H, WORLD_W } from '../../shared/map.js';
@@ -130,6 +130,13 @@ export class World {
   onOffersChange: (() => void) | null = null;
   onModsChange: (() => void) | null = null;
   onRouteChange: (() => void) | null = null;
+  /**
+   * Último checkpoint (onda de chefe/minichefe vencida): estado de cada jogador NO FIM da onda,
+   * antes das escolhas do intervalo. Voltar a ele desfaz as melhorias tomadas depois.
+   */
+  checkpoint: { wave: number; players: Map<number, { mods: Record<string, number>; maxHp: number; maxStamina: number; penalty: number }> } | null = null;
+  /** Quantas vezes a equipe voltou ao checkpoint nesta partida. */
+  wipes = 0;
   /** Telemetria de balanceamento (servidor; não vai para os clientes). */
   readonly tele = new WorldTelemetry();
   /** Dano válido do último acerto (sem excesso sobre a vida restante; 0 em objetivos/invulneráveis). */
@@ -268,6 +275,7 @@ export class World {
       harvestHitBudget: LAPANHA.harvest.hitHealPerSecond,
       lastSayTick: -9999,
       charge: -1,
+      hpPenalty: 0,
       tele: newTelemetry(),
     };
     this.players.set(id, p);
@@ -376,6 +384,8 @@ export class World {
 
   startMatch(): void {
     this.wave = 0;
+    this.checkpoint = null;
+    this.wipes = 0;
     this.route = null;
     this.routeResult = null;
     this.votes.clear();
@@ -429,6 +439,7 @@ export class World {
     p.guardianCounterUntil = 0;
     p.guardianGuardStart = -9999;
     p.guardianLastUltBlock = -9999;
+    p.hpPenalty = 0;
   }
 
   private setPhase(ph: Phase): void {
@@ -811,6 +822,75 @@ export class World {
     this.checkEnd();
   }
 
+  /** Salva o estado de cada jogador ao vencer uma onda de chefe/minichefe (antes das escolhas). */
+  private saveCheckpoint(): void {
+    const players = new Map<number, { mods: Record<string, number>; maxHp: number; maxStamina: number; penalty: number }>();
+    for (const p of this.players.values()) players.set(p.id, { mods: { ...p.mods }, maxHp: p.maxHp, maxStamina: p.maxStamina, penalty: p.hpPenalty });
+    this.checkpoint = { wave: this.wave, players };
+    this.emit({ k: 'msg', txt: `CHECKPOINT SALVO — onda ${this.wave}`, c: 'good' });
+    this.emit({ k: 'fx', n: 'checkpoint', x: this.map.campfire.x, y: this.map.campfire.y, a: 0, o: 0, r: 0 });
+  }
+
+  /**
+   * Todos caíram depois de um checkpoint: volta para a onda seguinte a ele. Melhorias tomadas desde
+   * então se perdem e cada jogador perde CHECKPOINT.hpPenalty da vida base (acumula, com teto).
+   */
+  private restoreCheckpoint(): void {
+    const cp = this.checkpoint;
+    if (!cp) return;
+    this.wipes++;
+    this.tele.endWave(this.tick, this);
+    const next = cp.wave + 1;
+    const ch = chapterOfWave(next);
+    if (ch.n !== this.chapter.n) this.setChapter(ch.n);
+    else this.clearTransient();
+    this.offers.clear();
+    this.picks.clear();
+    let lost = 0;
+    let i = 0;
+    for (const p of this.players.values()) {
+      const snap = cp.players.get(p.id);
+      const before = Object.values(p.mods).reduce((a, n) => a + n, 0);
+      const penalty = Math.min(CHECKPOINT.maxPenalty, p.hpPenalty + CHECKPOINT.hpPenalty);
+      if (snap) {
+        p.mods = { ...snap.mods };
+        p.maxStamina = snap.maxStamina;
+        p.maxHp = Math.max(1, Math.round(snap.maxHp - p.base.hp * (penalty - snap.penalty)));
+      } else p.maxHp = Math.max(1, Math.round(p.maxHp - p.base.hp * (penalty - p.hpPenalty)));
+      lost = Math.max(lost, before - Object.values(p.mods).reduce((a, n) => a + n, 0));
+      p.hpPenalty = penalty;
+      const s = this.map.starts[i++ % this.map.starts.length] ?? this.map.campfire;
+      p.move.x = s.x;
+      p.move.y = s.y;
+      p.move.ft = 0;
+      p.move.stamina = p.maxStamina;
+      p.status = 0;
+      p.hp = p.maxHp;
+      p.bleed = 0;
+      p.reviveProgress = 0;
+      p.revivingId = 0;
+      p.action = null;
+      p.blocking = false;
+      p.buffered = null;
+      p.cd = { q: 0, e: 0 };
+      p.shieldHp = 0;
+      p.shieldT = 0;
+      p.rage = 0;
+      p.essence = 0;
+      p.charge = -1;
+      for (const k of Object.keys(p.buffs) as (keyof Player['buffs'])[]) p.buffs[k] = 0;
+      clearAfflictions(p);
+      this.emit({ k: 'respawn', pi: p.id });
+    }
+    this.onModsChange?.();
+    const pct = Math.round(Math.min(CHECKPOINT.maxPenalty, this.wipes * CHECKPOINT.hpPenalty) * 100);
+    this.emit({ k: 'msg', txt: `De volta ao checkpoint (onda ${next}). -${pct}% de vida máxima${lost > 0 ? `, ${lost} melhoria${lost > 1 ? 's' : ''} perdida${lost > 1 ? 's' : ''}` : ''}.`, c: 'bad' });
+    this.beginWave(next);
+    this.phaseTimer = sec(CHECKPOINT.restartSeconds);
+    this.emit({ k: 'fx', n: 'checkpointRestore', x: this.map.campfire.x, y: this.map.campfire.y, a: 0, o: 0, r: 0 });
+    for (const p of this.players.values()) playerSay(this, p, 'checkpoint', true);
+  }
+
   private stepStorm(): void {
     const st = this.chapter.storm;
     if (!st) return;
@@ -842,13 +922,17 @@ export class World {
     const ps = [...this.players.values()];
     if (ps.length === 0) return;
     if (ps.every((p) => p.status !== 0)) {
-      this.endMatch(false);
+      if (this.checkpoint) this.restoreCheckpoint();
+      else this.endMatch(false);
       return;
     }
     if (!this.holdWave && this.director.complete() && !this.objectives.blocking()) {
       this.objectives.endWave();
       if (this.wave >= TOTAL_WAVES) this.endMatch(true);
-      else this.beginIntermission();
+      else {
+        if (isCheckpointWave(this.wave)) this.saveCheckpoint();
+        this.beginIntermission();
+      }
     }
   }
 
@@ -1220,6 +1304,8 @@ export class World {
     if (p.surrounded) m *= 1.25;
     if (CLASS_RANGE[p.cls] === 'melee') m *= MELEE_RULES.damageTakenMul;
     if (p.cls === 'vampire' && p.action?.name === 'e') m *= VAMPIRE.vortex.damageTaken;
+    // Última Vigília: o Guardião vira a muralha
+    if (p.cls === 'tank' && p.action?.name === 'r') m *= 1 - TANK.bastion.selfReduction;
     if (p.cls === 'berserker') {
       if (p.buffs.madness > 0) m *= 1 + (p.mods['b_iron'] ? BERSERKER.madness.ironDamageTaken : BERSERKER.madness.damageTaken);
       else if (p.rage >= BERSERKER.fury.high) m *= BERSERKER.fury.damageTakenMulHigh;
@@ -1341,6 +1427,8 @@ export class World {
     base *= bossObjectiveDamageMul(this, e);
     // Casca Traiçoeira: vulnerável logo após escorregar
     if (e.vulnT > 0) base *= LAPANHA.peel.vulnerableMul;
+    // Visão Sombria do Maycon: marcados recebem mais dano de toda a equipe
+    if (e.dsT > 0) base *= e.dsMul;
     // Portador do Ossário: o escudo frontal absorve (projéteis são tratados em stepProjectiles)
     let poiseMul = 1;
     if (e.shieldHp > 0 && o.kind !== 'proj' && this.shieldFaces(e, o.fromX, o.fromY)) {
@@ -1532,6 +1620,12 @@ export class World {
       cc.drUntil = this.tick + sec(CC_DR.window);
     }
     if (source) this.addUlt(source, PLAYER_RULES.ultPerCc);
+    // Visão Sombria: tudo que o Maycon controla fica marcado
+    if (source?.cls === 'maycon') {
+      const sharp = (source.mods['y_sight'] ?? 0) > 0;
+      e.dsT = Math.max(e.dsT, sec(MAYCON.darkSight.seconds + (sharp ? 1 : 0)));
+      e.dsMul = Math.max(e.dsT > 0 ? e.dsMul : 1, MAYCON.darkSight.damageMul + this.mod(source, 'y_sight'));
+    }
     return dur;
   }
 
@@ -1548,6 +1642,8 @@ export class World {
     if (by && !objective) {
       by.stats.kills++;
       if (e.def.tier === 'elite' && (by.mods['g_second'] ?? 0) > 0) by.move.stamina = Math.min(by.maxStamina, by.move.stamina + this.mod(by, 'g_second'));
+      // Sede de Sangue do Berserker: abates devolvem vida (dentro do teto por segundo)
+      if (by.cls === 'berserker') this.healPlayer(by, e.def.tier === 'common' ? BERSERKER.bloodlust.healPerKill : BERSERKER.bloodlust.healPerEliteKill, 'bloodlust');
     }
     if (!objective && (e.def.miniboss || e.def.tier === 'boss')) {
       for (const p of this.players.values()) playerSay(this, p, e.def.tier === 'boss' ? 'bossDown' : 'minibossDown', true);
@@ -1721,7 +1817,7 @@ export class World {
    * Mesma fórmula do cliente (ver scene.ts): SHOT_HEIGHT + parábola pela fração do voo.
    */
   private lobLift(pr: Projectile): number {
-    const peak = pr.kind === 'bigMelon' ? LAPANHA.ripe.arcHeight : LAPANHA.melon.arcHeight;
+    const peak = pr.kind === 'bigMelon' || pr.kind === 'chokeBomb' ? LAPANHA.ripe.arcHeight : LAPANHA.melon.arcHeight;
     const k = clamp(1 - pr.range / pr.lob, 0, 1);
     return SHOT_HEIGHT + 4 * peak * k * (1 - k);
   }
@@ -1772,7 +1868,7 @@ export class World {
         const tx = Math.floor(pr.x / TILE);
         const ty = Math.floor(pr.y / TILE);
         // a Melancia Madura sobe num arco alto: passa por cima de paredes (e de caixas, abaixo)
-        const overWall = pr.kind === 'bigMelon';
+        const overWall = pr.kind === 'bigMelon' || pr.kind === 'chokeBomb';
         if (pr.kind !== 'slipper' && (pr.range <= 0 || (!overWall && blocksShot(this.map, tx, ty)))) {
           this.projectileEnd(pr, true);
           break;
@@ -1785,7 +1881,7 @@ export class World {
           const owner = this.players.get(pr.owner) ?? null;
           const kit = owner ? kitFor(owner.cls) : null;
           // caixas e barris param projéteis de jogadores (a Melancia Madura passa por cima em arco)
-          const bi = pr.kind === 'bigMelon' ? -1 : breakableAt(this.map, tx, ty);
+          const bi = overWall ? -1 : breakableAt(this.map, tx, ty);
           if (bi >= 0) {
             if (!LOB_KINDS.has(pr.kind)) damageBreakable(this, bi, pr.dmg, owner);
             this.projectileEnd(pr, true);
@@ -2078,6 +2174,8 @@ export class World {
       slideVx: 0,
       slideVy: 0,
       vulnT: 0,
+      dsT: 0,
+      dsMul: 1,
       aimPid: 0,
       lastCastTick: -9999,
       markStaggerCd: 0,
@@ -2279,6 +2377,7 @@ export class World {
       if (e.shoutCd > 0) e.shoutCd--;
       if (e.hasteT > 0 && --e.hasteT === 0) e.hasteMul = 0;
       if (e.vulnT > 0) e.vulnT--;
+      if (e.dsT > 0) e.dsT--;
       // exposedT do Devorador (luas) é decrementado em tickBossObjectives; para outros tipos
       // (combo Caçador de Névoa velado exposto por área) o decaimento é genérico aqui.
       if (e.exposedT > 0 && e.type !== 'moonDevourer') e.exposedT--;
@@ -2460,6 +2559,13 @@ export class World {
     }
   }
 
+  /** Inimigos marcados pela Visão Sombria agora (HUD do Maycon). */
+  private darkSightCount(_p: Player): number {
+    let n = 0;
+    for (const e of this.enemies.values()) if (e.dsT > 0 && e.state !== 'dead') n++;
+    return Math.min(99, n);
+  }
+
   // ------------------------------------------------------------------ snapshots
 
   snapPlayers(): SnapPlayer[] {
@@ -2488,6 +2594,8 @@ export class World {
       if (p.woundBlockT > 0) f |= PLAYER_FLAGS.woundBlock;
       if (p.buffs.harvest > 0) f |= PLAYER_FLAGS.harvest;
       if (p.shieldHp > 0) f |= PLAYER_FLAGS.shielded;
+      if (p.cls === 'maycon' && this.zones.some((z) => z.kind === 'brew' && z.owner === p.id && !z.dead)) f |= PLAYER_FLAGS.brewing;
+      if (p.cls === 'tank' && p.action?.name === 'r') f |= PLAYER_FLAGS.bulwark;
       const a = p.action;
       out.push({
         id: p.id,
@@ -2518,6 +2626,7 @@ export class World {
           : p.cls === 'necromancer' ? p.essence
           : p.cls === 'tank' ? Math.round(Math.min(100, p.guardianCharge * TANK.bastion.damageRatio / TANK.bastion.bonusCap * 100))
           : p.cls === 'lapanha' ? Math.ceil(p.buffs.harvest / 3)
+          : p.cls === 'maycon' ? this.darkSightCount(p)
           : p.comboStep,
         cn: p.connected ? 1 : 0,
         dg: p.lastDodgeTick,
@@ -2576,6 +2685,7 @@ export class World {
       }
       if (wounding.has(e.id)) f |= ENEMY_FLAGS.wounding;
       if (e.vulnT > 0) f |= ENEMY_FLAGS.vulnerable;
+      if (e.dsT > 0) f |= ENEMY_FLAGS.darkSight;
       if (e.slideT > 0) f |= ENEMY_FLAGS.sliding;
       out.push([
         e.id,

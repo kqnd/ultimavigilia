@@ -129,7 +129,7 @@ export class App {
   applySettings(): void {
     const s = this.settings;
     audio.setVolumes(s.volumeMaster, s.volumeSfx, s.volumeAmbience);
-    this.game.fx.settings = { shake: s.shake, flashes: s.flashes, damageNumbers: s.damageNumbers };
+    this.game.fx.settings = { shake: s.shake, flashes: s.flashes, damageNumbers: s.damageNumbers, glow: s.skillGlow };
     this.game.brightness = s.brightness;
     this.game.setEnhancedLighting(s.enhancedLighting);
     this.input.binds = s.keys;
@@ -1298,6 +1298,7 @@ export class App {
           shaderBtn,
           slider('Tremor de câmera', () => s.shake, (v) => (s.shake = v)),
           slider('Intensidade de flashes', () => s.flashes, (v) => (s.flashes = v)),
+          slider('Brilho das habilidades', () => s.skillGlow, (v) => (s.skillGlow = v)),
           h('label', { text: 'Tamanho da janela' }),
           size,
           h('div', { style: 'height:4px' }),

@@ -160,7 +160,8 @@ describe('combate autoritativo', () => {
     survivor!.state = 'move';
     guard.ult = PLAYER_RULES.ultMax;
     expect(w.tryStart(guard, 'r')).toBe(true);
-    expect(w.moveParams(guard).moveMul).toBe(0);
+    // v1.5: a muralha anda devagar levando a área
+    expect(w.moveParams(guard).moveMul).toBe(TANK.bastion.moveMul);
     const a0 = ally.hp;
     w.hitPlayer(ally, { dmg: 50, heavy: false, fromX: ally.x + 10, fromY: ally.y, enemy: null, proj: null, blockable: true });
     expect(a0 - ally.hp).toBe(Math.round(50 * (1 - TANK.bastion.reduction)));
@@ -264,10 +265,12 @@ describe('combate autoritativo', () => {
     run(w, 1, (pl) => (pl.id === 1 ? { pressed: BTN.r } : null));
     run(w, BERSERKER.madness.windup + 2);
     expect(p.buffs.madness).toBeGreaterThan(0);
+    p.hp = p.maxHp;
     const hpBefore = p.hp;
     p.iframes = 0;
-    w.hitPlayer(p, { dmg: 10, heavy: false, fromX: p.x + 10, fromY: p.y, enemy: null, proj: null, blockable: false });
-    expect(hpBefore - p.hp).toBeGreaterThan(10); // recebe mais dano durante a Loucura
+    w.hitPlayer(p, { dmg: 100, heavy: false, fromX: p.x + 10, fromY: p.y, enemy: null, proj: null, blockable: false });
+    // recebe mais dano durante a Loucura (acima do normal de corpo a corpo)
+    expect(hpBefore - p.hp).toBeGreaterThan(Math.round(100 * MELEE_RULES.damageTakenMul));
     run(w, sec(BERSERKER.madness.duration) + 5);
     expect(p.buffs.madness).toBe(0);
     expect(p.buffs.exhausted).toBeGreaterThan(0);

@@ -502,6 +502,36 @@ const RECIPES: Record<string, Recipe> = {
     a.tone(t + 0.35, 0.5, o, { type: 'triangle', f0: 330, f1: 495, gain: 0.08, attack: 0.08 });
   },
   harvestEnd: (a, t, o) => a.tone(t, 0.35, o, { type: 'triangle', f0: 440, f1: 260, gain: 0.07 }),
+  // --- Guardião v1.5: Martelo Sísmico
+  maceQuake: (a, t, o) => {
+    a.noise(t, 0.4, o, { type: 'lowpass', f0: 900, f1: 120, gain: 0.8 });
+    a.tone(t, 0.35, o, { f0: 110, f1: 38, gain: 0.45 });
+    a.noise(t + 0.03, 0.15, o, { type: 'bandpass', f0: 2400, q: 2, gain: 0.18 });
+  },
+  // --- Maycon: garrafa, vidro, fumaça, tapete e o gole da Rodada
+  bottleThrow: (a, t, o) => a.noise(t, 0.12, o, { type: 'bandpass', f0: 900, f1: 1800, q: 1.4, gain: 0.2 }),
+  bottleBreak: (a, t, o) => {
+    a.noise(t, 0.16, o, { type: 'highpass', f0: 3200, gain: 0.45 });
+    a.tone(t, 0.08, o, { type: 'triangle', f0: 2600, f1: 1900, gain: 0.07 });
+    a.noise(t + 0.03, 0.12, o, { type: 'lowpass', f0: 900, gain: 0.25 });
+  },
+  chokeBurst: (a, t, o) => {
+    a.noise(t, 0.5, o, { type: 'lowpass', f0: 1400, f1: 200, gain: 0.6 });
+    a.noise(t + 0.05, 0.8, o, { type: 'bandpass', f0: 600, f1: 300, q: 0.8, gain: 0.25, attack: 0.08 });
+  },
+  carpetDash: (a, t, o) => {
+    a.noise(t, 0.3, o, { type: 'bandpass', f0: 500, f1: 2200, q: 1.1, gain: 0.35 });
+    a.tone(t, 0.25, o, { type: 'triangle', f0: 520, f1: 880, gain: 0.05, vib: 9 });
+  },
+  gulp: (a, t, o) => {
+    for (let i = 0; i < 3; i++) a.tone(t + i * 0.17, 0.12, o, { type: 'sine', f0: 190, f1: 120, gain: 0.16 });
+    a.noise(t + 0.55, 0.15, o, { type: 'bandpass', f0: 500, q: 2, gain: 0.25 });
+  },
+  brewBurst: (a, t, o) => {
+    a.noise(t, 0.7, o, { type: 'lowpass', f0: 1800, f1: 160, gain: 0.85 });
+    a.tone(t, 0.5, o, { f0: 120, f1: 45, gain: 0.4 });
+    a.noise(t + 0.1, 0.9, o, { type: 'bandpass', f0: 1200, f1: 600, q: 0.7, gain: 0.25, attack: 0.1 });
+  },
   // --- Ferida Profana, atordoamento, cerco e escolta
   woundCharge: (a, t, o) => a.tone(t, 0.9, o, { type: 'sawtooth', f0: 110, f1: 180, gain: 0.07, lp: 900, attack: 0.2, vib: 7 }),
   woundCast: (a, t, o) => a.noise(t, 0.18, o, { type: 'bandpass', f0: 1400, f1: 700, q: 3, gain: 0.3 }),

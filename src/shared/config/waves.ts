@@ -84,6 +84,23 @@ export const SCALING = {
 
 export const TOTAL_WAVES = WAVES.length;
 
+/**
+ * Checkpoints: vencer uma onda de chefe ou minichefe salva o progresso. Se todos caírem depois,
+ * a equipe volta para a onda seguinte ao checkpoint em vez de recomeçar do zero — mas perde as
+ * melhorias escolhidas desde então e cada volta custa vida máxima (acumula, com teto).
+ */
+export const CHECKPOINT = {
+  /** Vida máxima perdida a cada volta (fração da vida base da classe). */
+  hpPenalty: 0.1,
+  /** Teto da penalidade acumulada. */
+  maxPenalty: 0.5,
+  /** Contagem antes de recomeçar a onda (s). */
+  restartSeconds: 5,
+} as const;
+
+/** A onda tem chefe ou minichefe (vencê-la salva um checkpoint). */
+export const isCheckpointWave = (wave: number): boolean => !!(WAVES[wave - 1]?.boss || WAVES[wave - 1]?.miniboss);
+
 export function scaledBudget(wave: number, players: number, mul = 1): number {
   const w = WAVES[wave - 1];
   if (!w) return 0;

@@ -5,6 +5,7 @@ import { hunterKit } from './hunter.js';
 import { lapanhaKit } from './lapanha.js';
 import type { Kit } from './kit.js';
 import { mageKit } from './mage.js';
+import { mayconKit } from './maycon.js';
 import { necromancerKit } from './necromancer.js';
 import { tankKit } from './tank.js';
 import { vampireKit } from './vampire.js';
@@ -18,6 +19,7 @@ const KITS: Record<ClassId, Kit> = {
   dog: dogKit,
   necromancer: necromancerKit,
   lapanha: lapanhaKit,
+  maycon: mayconKit,
 };
 
 export const kitFor = (c: ClassId): Kit => KITS[c];

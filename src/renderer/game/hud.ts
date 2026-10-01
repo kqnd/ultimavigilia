@@ -2,7 +2,7 @@
 import Phaser from 'phaser';
 import { ABILITY_ICONS } from '../../art/icons.js';
 import { CHAPTERS } from '../../shared/config/chapters.js';
-import { BERSERKER, CLASSES, DOG, LAPANHA, NECRO, PLAYER_RULES, ripeCostFrac, ripePower } from '../../shared/config/classes.js';
+import { BERSERKER, CLASSES, DOG, LAPANHA, MAYCON, NECRO, PLAYER_RULES, ripeCostFrac, ripePower, TANK } from '../../shared/config/classes.js';
 import { ATK, ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
 import { CHALLENGES, WAVE_EVENTS, type ChallengeKind, type WaveEventKind } from '../../shared/config/objectives.js';
 import { TOTAL_WAVES, WAVES } from '../../shared/config/waves.js';
@@ -229,7 +229,7 @@ export class HudScene extends Phaser.Scene {
         for (let i = 6; i < fill; i += 12) g.fillStyle(0x1a0d0d, 1).fillRect(x0 + 32 + i, y0 + 18 + ((i / 12) % 2), 1, 2);
       } else this.bar(x0 + 32, y0 + 17, 94, 4, ult, ult >= 1 ? (Math.floor(now / 200) % 2 ? 0xf6c257 : 0xfff0ae) : 0xa8591a, 0x3e1e08);
       const guardianCasting = me.c === 'tank' && ACTIONS[me.act] === 'r';
-      this.text('ultlbl', x0 + 32, y0 + 22, guardianCasting ? `R DETONAR: ${60 + Math.round(me.k * 1.2)} DANO` : me.ul > 0 ? `Suprema selada ${me.ul}s` : ult >= 1 ? `${cls.ultName ? cls.ultName.toUpperCase() + ' CHEIA' : 'SUPREMA PRONTA'} [${keyLabel(this.keys().r)}]` : `${cls.ultName ?? 'Suprema'} ${Math.floor(ult * 100)}%`, guardianCasting || ult >= 1 ? 0xf6c257 : 0x7a8096);
+      this.text('ultlbl', x0 + 32, y0 + 22, guardianCasting ? `R DETONAR: ${TANK.bastion.baseDamage + Math.round((me.k * TANK.bastion.bonusCap) / 100)} DANO` : me.ul > 0 ? `Suprema selada ${me.ul}s` : ult >= 1 ? `${cls.ultName ? cls.ultName.toUpperCase() + ' CHEIA' : 'SUPREMA PRONTA'} [${keyLabel(this.keys().r)}]` : `${cls.ultName ?? 'Suprema'} ${Math.floor(ult * 100)}%`, guardianCasting || ult >= 1 ? 0xf6c257 : 0x7a8096);
       // passiva
       let passive = '';
       if (me.c === 'vampire' && me.k > 0) passive = `Sede ×${me.k}`;
@@ -257,7 +257,8 @@ export class HudScene extends Phaser.Scene {
       }
       if (me.c === 'lapanha') passive = me.f & PLAYER_FLAGS.harvest ? 'SAFRA ABENÇOADA' : 'Coração Maduro';
       if (me.c === 'hunter' && me.f & PLAYER_FLAGS.surrounded) passive = 'CERCADO! +25% dano recebido';
-      if (me.c === 'tank') passive = guardianCasting ? 'ÁREA: -12% DANO' : me.f & PLAYER_FLAGS.blocking ? 'Égide 360° erguida' : '';
+      if (me.c === 'tank') passive = guardianCasting ? `MURALHA: -${TANK.bastion.selfReduction * 100}% / ALIADOS -${TANK.bastion.reduction * 100}%` : me.f & PLAYER_FLAGS.blocking ? 'Égide 360° erguida' : '';
+      if (me.c === 'maycon') passive = me.f & PLAYER_FLAGS.brewing ? 'RODADA DA CASA!' : me.k > 0 ? `Visão Sombria: ${me.k} marcado${me.k > 1 ? 's' : ''} (+${Math.round((MAYCON.darkSight.damageMul - 1) * 100)}%)` : 'Visão Sombria';
       if (passive) this.text('passive', x0, y0 - 16, passive, cls.color);
 
       // barra de habilidades

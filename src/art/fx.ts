@@ -102,6 +102,11 @@ export function buildFxSheet(): SheetBuilder {
   px('p_mist', 3, 2, 0x9aa6c0);
   px('p_shadow', 2, 2, 0x2a1a3a);
   px('p_rune', 2, 2, 0x7dffb0);
+  // Maycon: fumaça (cinza-azulada, grande), cachaça (âmbar) e vidro
+  px('p_smoke', 3, 3, 0x8a93a8);
+  px('p_smokeDark', 4, 3, 0x565b70);
+  px('p_booze', 2, 2, 0xf0b54a);
+  px('p_glass', 2, 1, 0xb8f0a0);
   // projétil de osso (Rajada Óssea)
   const bone = new PixelCanvas(12, 7);
   bone.hline(2, 9, 3, P.gray6);
@@ -172,6 +177,34 @@ export function buildFxSheet(): SheetBuilder {
     wb.ellipse(4.5, 4.5, 1.5 + f * 0.5, 1.5 + f * 0.5, P.abyss3);
     wb.outline(P.outline);
     sb.add(`proj_woundBolt_${f}`, wb);
+    // Maycon: garrafa girando (deitada / inclinada) e bomba de fumaça com pavio aceso
+    const bt = new PixelCanvas(9, 9);
+    const glass = 0x3f9a3a;
+    const dark = 0x1f5a2a;
+    if (f === 0) {
+      bt.rect(0, 3, 5, 3, glass);
+      bt.hline(0, 4, 5, dark);
+      bt.rect(5, 4, 2, 1, glass);
+      bt.set(7, 4, 0xb08262);
+      bt.set(1, 3, 0xd8f6c8);
+    } else {
+      for (let k = 0; k < 4; k++) bt.rect(1 + k, 5 - k, 2, 2, glass);
+      bt.set(1, 6, dark);
+      bt.set(6, 1, glass);
+      bt.set(7, 0, 0xb08262);
+      bt.set(2, 4, 0xd8f6c8);
+    }
+    bt.outline(P.outline);
+    sb.add(`proj_bottle_${f}`, bt);
+    const cb = new PixelCanvas(10, 11);
+    cb.ellipse(5, 6.5, 3.6, 3.6, P.gray1);
+    cb.ellipse(4.5, 6, 2, 2, P.gray2);
+    cb.set(3, 5, P.gray4);
+    cb.rect(4, 1, 2, 2, P.gray3);
+    cb.set(6, 0, f ? P.amb5 : P.amb3);
+    cb.set(7, f ? 0 : 1, f ? P.amb3 : P.red5);
+    cb.outline(P.outline);
+    sb.add(`proj_chokeBomb_${f}`, cb);
   }
   // casca de melancia no chão (Lapanha): meia-lua verde com a parte branca e um fio vermelho
   const peel = new PixelCanvas(16, 8);

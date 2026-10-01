@@ -91,9 +91,10 @@ export const FORKS: Record<string, { name: string }> = {
   berserker_path: { name: 'Caminho da Fúria' },
   necro_path: { name: 'Caminho dos Mortos' },
   lapanha_path: { name: 'Caminho da Feira' },
+  maycon_path: { name: 'Caminho do Caçador de Recompensas' },
 };
 
-const SHOOTERS: readonly ClassId[] = ['hunter', 'mage', 'necromancer', 'lapanha'];
+const SHOOTERS: readonly ClassId[] = ['hunter', 'mage', 'necromancer', 'lapanha', 'maycon'];
 
 export const UPGRADES: readonly UpgradeDef[] = [
   // ================================================================ GERAIS — comuns
@@ -161,7 +162,7 @@ export const UPGRADES: readonly UpgradeDef[] = [
   U('b_cleave', 'Machado Largo', 'berserker', 'uncommon', 'numeric', 2, 0.12, 'axe', 'Combo e Rasgo Frenético com +12% de alcance.'),
   U('b_quake', 'Salto Sísmico', 'berserker', 'uncommon', 'numeric', 2, 0.15, 'quake', 'Salto Brutal: +15% de raio no pouso e -0,5s de recarga.'),
   U('b_rage', 'Fúria Ofensiva', 'berserker', 'rare', 'fork', 1, 0.2, 'fury', 'BIFURCAÇÃO: com Fúria acima de 60, +20% de dano adicional.', { fork: 'berserker_path' }),
-  U('b_iron', 'Mente de Ferro', 'berserker', 'rare', 'fork', 1, 1.5, 'helm', 'BIFURCAÇÃO: durante a Loucura recebe +10% de dano (em vez de +20%) e a exaustão dura 1,5s.', { fork: 'berserker_path' }),
+  U('b_iron', 'Mente de Ferro', 'berserker', 'rare', 'fork', 1, 1.5, 'helm', 'BIFURCAÇÃO: durante a Loucura não recebe dano extra (em vez de +10%) e a exaustão dura 1,5s.', { fork: 'berserker_path' }),
   // ================================================================ Dog
   U('d_pulse', 'Pulso Extra', 'dog', 'rare', 'numeric', 1, 1, 'rings', 'GRITO DO FIM ganha +1 pulso.'),
   U('d_throat', 'Garganta de Ferro', 'dog', 'common', 'numeric', 2, 0.12, 'mouth', 'Grito com +12% de alcance.', { cap: 'area' }),
@@ -187,6 +188,14 @@ export const UPGRADES: readonly UpgradeDef[] = [
   U('l_last', 'Último Pedaço', 'lapanha', 'rare', 'conditional', 1, 0.015, 'harvest', 'Na Safra Abençoada, abaixo de 20% da vida a regeneração sobe +1,5%/s até passar de 35%. A Ferida Profana continua valendo.'),
   U('l_endless', 'Melancia Sem Fim', 'lapanha', 'legendary', 'transform', 1, 1, 'bigMelon', 'Durante a Safra Abençoada, a primeira Melancia Madura com carga máxima não custa vida (uma vez por Safra; não aumenta o dano).'),
   U('l_fair', 'Feira da Meia-Noite', 'lapanha', 'legendary', 'transform', 1, 1, 'melon', 'Os básicos alternam: melancia larga (+35% de área, -20% de dano) e melancia densa (-25% de área, +25% no centro).'),
+  // ================================================================ Maycon
+  U('y_smoke', 'Fumaça Densa', 'maycon', 'common', 'numeric', 2, 0.15, 'smoke', 'Bomba de Fumaça com +15% de raio.', { cap: 'area', show: pct('Raio da fumaça') }),
+  U('y_bottle', 'Garrafa Cheia', 'maycon', 'common', 'numeric', 3, 0.15, 'bottle', 'Garrafada: +15% de dano e de respingo.', { show: pct('Dano da garrafa') }),
+  U('y_carpet', 'Tapete Turbinado', 'maycon', 'common', 'numeric', 2, 24, 'carpet', 'Voo Rasante voa +24px e recarrega 0,5s mais rápido.', { show: { label: 'Distância do voo', unit: 'px', sign: '+' } }),
+  U('y_round', 'Rodada Dupla', 'maycon', 'uncommon', 'numeric', 2, 1.5, 'brew', 'Rodada da Casa dura +1,5s.', { show: { label: 'Duração da Rodada', unit: 's', sign: '+' } }),
+  U('y_sight', 'Olho de Caçador', 'maycon', 'rare', 'fork', 1, 0.08, 'eyeDark', 'BIFURCAÇÃO: marcados pela Visão Sombria recebem +8% de dano a mais e ficam marcados +1s.', { fork: 'maycon_path' }),
+  U('y_hellfire', 'Fumaça Incendiária', 'maycon', 'rare', 'fork', 1, 6, 'smoke', 'BIFURCAÇÃO: a Bomba de Fumaça também queima: +6 de dano por pulso e a nuvem dura +1s.', { fork: 'maycon_path' }),
+  U('y_vitality', 'Vitality da Roça', 'maycon', 'legendary', 'transform', 1, 1, 'brew', 'A Rodada da Casa também dá escudo de 15 a cada aliado dentro do anel ao ser lançada e o dobro de cura.'),
 ];
 
 export const UPGRADE_BY_ID: ReadonlyMap<string, UpgradeDef> = new Map(UPGRADES.map((u) => [u.id, u]));

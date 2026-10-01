@@ -166,7 +166,8 @@ export type StunResult = 'stun' | 'resisted' | 'ignored';
  */
 export function stunPlayer(w: World, p: Player, seconds: number): StunResult {
   if (p.status !== 0 || seconds <= 0) return 'ignored';
-  if (p.buffs.stunRes > 0 || p.buffs.madness > 0) {
+  // Loucura e a Última Vigília do Guardião (muralha) não deixam atordoar
+  if (p.buffs.stunRes > 0 || p.buffs.madness > 0 || (p.cls === 'tank' && p.action?.name === 'r')) {
     p.buffs.slowed = Math.max(p.buffs.slowed, sec(PLAYER_CC.resistSlowSeconds));
     p.slowMul = Math.min(p.slowMul, PLAYER_CC.resistSlowMul);
     p.tele.stunsResisted++;

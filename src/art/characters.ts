@@ -25,7 +25,7 @@ function back(rows: readonly string[], headRows: number, map: Record<string, str
   return rows.map((r, i) => (i < headRows ? [...r].map((ch) => map[ch] ?? ch).join('') : r));
 }
 
-export type LegStyle = 'adult' | 'robe' | 'kid' | 'heavy';
+export type LegStyle = 'adult' | 'robe' | 'kid' | 'heavy' | 'carpet';
 
 export interface ClassArt {
   pal: Record<string, Color>;
@@ -40,7 +40,7 @@ export interface ClassArt {
 
 // ---------------------------------------------------------------- pernas
 
-const LEGS: Record<LegStyle, { down: string[][]; side: string[][] }> = {
+const LEGS: Record<Exclude<LegStyle, 'carpet'>, { down: string[][]; side: string[][] }> = {
   adult: {
     down: [
       ['.....pp..pp.....', '.....pp..pp.....', '.....pp..pp.....', '.....pP..pP.....', '.....bb..bb.....', '....bbb..bbb....'],
@@ -489,6 +489,97 @@ const LAP_CHEER = [
   '....ooo..ooo....',
 ];
 
+// Maycon: grandão de pele clara e bochecha rosada, boina de tweed, barba por fazer, camisa creme
+// com suspensório vinho, sentado de pernas cruzadas sobre um tapete persa voador.
+const MAY_DOWN = mirror([
+  '........',
+  '.....kkk',
+  '....kkkk',
+  '...kkkkk',
+  '..KKKKKK',
+  '...hssss',
+  '..hsssss',
+  '..sssess',
+  '..scssss',
+  '..sszzzm',
+  '...zzzzz',
+  '..wwwvww',
+  '.wwwwvww',
+  'wwwwwvww',
+  'swwwwvww',
+  'swwwwwww',
+  '.BBBBBBg',
+  '.ppppppp',
+  'pppppppo',
+  'ppp...oo',
+]);
+
+const MAY_SIDE = [
+  '................',
+  '.....kkkkkk.....',
+  '....kkkkkkkk....',
+  '....kkkkkkkkKKK.',
+  '....hhhhssssss..',
+  '....hhhsssssss..',
+  '....hhhssssess..',
+  '....hhsssscsss..',
+  '.....hzzzzzzmz..',
+  '......zzzzzzz...',
+  '.....wwwwwwww...',
+  '....wwvwwwwwww..',
+  '....wwvwwwwwwws.',
+  '....wwvwwwwwwwww',
+  '....wwvwwwwwwwww',
+  '....wwwwwwwwwww.',
+  '....BBBBBBBBgB..',
+  '...ppppppppppp..',
+  '..pppppppppppoo.',
+  '..oo............',
+];
+
+const MAY_PAL: Record<string, Color> = {
+  k: 0x5a4636, K: 0x33271f, h: 0x8a6440, s: 0xf2cdb0, S: 0xdba78a, c: 0xec8f84, e: P.ink, z: 0xc49a7e, m: 0x8a3a3a,
+  w: 0xe9e0c8, v: 0x7a1f1f, B: 0x2e2018, g: 0xe0b040, p: 0x3d4a5c, P: 0x2c3644, o: 0x3a2618,
+  q: 0x2c3644, d: 0x2a1a12, b: 0x3a2618,
+  // tapete
+  R: 0x5a1020, r: 0x9c1e2e, y: 0xe0b040, D: 0x28395f, f: 0xe9e0c8,
+};
+
+/** Tapete voador (vista de cima ou de lado), com ondulação de pano por quadro. */
+const CARPET_DOWN = [
+  '..RRRRRRRRRRRRRRRRRRRR..',
+  '.RyyyyyyyyyyyyyyyyyyyyR.',
+  'fRyrrrDrrrrDDrrrrDrrryRf',
+  'fRyrrDyDrrDyyDrrDyDrryRf',
+  'fRyrrrDrrrrDDrrrrDrrryRf',
+  '.RyyyyyyyyyyyyyyyyyyyyR.',
+  '..RRRRRRRRRRRRRRRRRRRR..',
+];
+const CARPET_SIDE = [
+  '..RRRRRRRRRRRRRRRRRRRR..',
+  'fRyyyyyyyyyyyyyyyyyyyyRf',
+  'fRyrDrrDrrDyyDrrDrrDryRf',
+  '..RRRRRRRRRRRRRRRRRRRR..',
+];
+
+function drawCarpet(c: PixelCanvas, dir: Dir, frame: number, oy: number): void {
+  const rows = dir === 'side' ? CARPET_SIDE : CARPET_DOWN;
+  const w = (rows[0] as string).length;
+  const x0 = 4;
+  const y0 = (dir === 'side' ? 22 : 21) + oy;
+  for (let x = 0; x < w; x++) {
+    // ondulação: meia onda sobe 1px e anda com o quadro (o pano "respira" no ar)
+    const off = Math.sin((x / w) * Math.PI * 2 + (frame * Math.PI) / 2) > 0.35 ? 1 : 0;
+    rows.forEach((row, y) => {
+      const ch = row[x];
+      if (!ch || ch === '.') return;
+      // franjas balançam: some uma a cada quadro alternado
+      if (ch === 'f' && (y + frame) % 2 === 0) return;
+      c.set(x0 + x, y0 + y + off, MAY_PAL[ch] as Color);
+    });
+  }
+}
+
 const LAP_PAL: Record<string, Color> = {
   h: 0x1c1512, g: 0x3f9a3a, R: 0xd23a3a, s: 0x8f5b3d, S: 0x6f4330, e: P.ink, M: 0x6a1c1c, w: 0xf4efe4,
   c: 0xe6dfcb, G: 0x3f9a3a, b: 0x6b4a2f, r: 0xc23434, o: 0x2f6e3a, k: 0xb8894a, K: 0x3f9a3a,
@@ -561,7 +652,39 @@ const ARTS: Record<ClassId, ClassArt> = {
     legs: 'adult',
     noShade: 'ewMR',
   },
+  maycon: {
+    pal: MAY_PAL,
+    down: MAY_DOWN,
+    side: MAY_SIDE,
+    up: back(MAY_DOWN, 11, { s: 'h', e: 'h', c: 'h', z: 'h', m: 'h', K: 'k' }),
+    legs: 'carpet',
+    noShade: 'ecg',
+  },
 };
+
+/** Quadros extras do Maycon: virar a garrafa (Rodada da Casa) e comemorar no tapete. */
+function mayconExtras(sb: SheetBuilder): void {
+  const art = ARTS.maycon;
+  for (let k = 0; k < 2; k++) {
+    const c = composeArt(art, { dir: 'down', leg: k, dx: 0, dy: -k }, 'maycon');
+    // garrafa verde inclinada na boca, gargalo para baixo e fundo para cima-direita
+    const mx = 15;
+    const my = 13 - k;
+    const glass = 0x3f9a3a;
+    c.set(mx, my, 0xb08262);
+    for (let i = 1; i <= 2; i++) c.set(mx + i, my - i, glass);
+    for (let i = 0; i < 4; i++) {
+      c.rect(mx + 2 + i, my - 4 - i, 3, 2, glass);
+      c.set(mx + 2 + i, my - 4 - i, 0xd8f6c8);
+    }
+    c.set(mx + 6, my - 9, 0x1f5a2a);
+    // mão segurando
+    c.set(mx + 3, my - 2, MAY_PAL.s as Color);
+    c.set(mx + 4, my - 3, MAY_PAL.s as Color);
+    sb.add(`maycon_drink_${k}`, c);
+  }
+}
+
 
 /** Quadros extras do Lapanha: comer a melancia (Safra) e comemorar (vitória). */
 function lapanhaExtras(sb: SheetBuilder): void {
@@ -625,7 +748,8 @@ function compose(cls: ClassId, o: FrameOpts): PixelCanvas {
 
 export function composeArt(art: ClassArt, o: FrameOpts, cls: ClassId | null = null): PixelCanvas {
   const c = new PixelCanvas(CHAR_FRAME, CHAR_FRAME);
-  const legs = LEGS[art.legs];
+  const carpet = art.legs === 'carpet';
+  const legs = LEGS[art.legs === 'carpet' ? 'adult' : art.legs];
   const legRows = (o.dir === 'side' ? legs.side : legs.down)[o.leg % 4] as string[];
   const kid = art.kid === true;
   const legY = kid ? 27 : 24;
@@ -637,7 +761,9 @@ export function composeArt(art: ClassArt, o: FrameOpts, cls: ClassId | null = nu
   pal.P ??= pal.p ?? P.gray1;
   pal.R ??= pal.r ?? P.gray1;
   pal.M ??= pal.m ?? P.gray3;
-  c.matrix(legRows, pal, 8, legY);
+  // tapete voador no lugar das pernas (o corpo sentado é desenhado por cima)
+  if (carpet) drawCarpet(c, o.dir, o.leg, 0);
+  else c.matrix(legRows, pal, 8, legY);
   const upper = o.dir === 'side' ? art.side : o.dir === 'up' ? art.up : art.down;
   c.matrix(upper, pal, 8 + o.dx, upperY + o.dy);
   if (o.shout && o.dir !== 'up') {
@@ -651,7 +777,7 @@ export function composeArt(art: ClassArt, o: FrameOpts, cls: ClassId | null = nu
   autoShade(c, skip);
   if (o.cast) {
     // brilho nas mãos (habilidade)
-    const glow = o.glow ?? (cls === 'mage' ? P.arc3 : cls === 'dog' ? P.mag2 : cls === 'vampire' ? P.red5 : cls === 'hunter' ? P.sil2 : cls === 'necromancer' ? 0xa8d05a : cls === 'berserker' ? P.red5 : cls === 'lapanha' ? 0xff7a6a : P.amb4);
+    const glow = o.glow ?? (cls === 'mage' ? P.arc3 : cls === 'dog' ? P.mag2 : cls === 'vampire' ? P.red5 : cls === 'hunter' ? P.sil2 : cls === 'necromancer' ? 0xa8d05a : cls === 'berserker' ? P.red5 : cls === 'lapanha' ? 0xff7a6a : cls === 'maycon' ? 0xf0b54a : P.amb4);
     const hy = upperY + o.dy + (kid ? 9 : 12);
     if (o.dir === 'side') {
       c.set(8 + o.dx + 14, hy, glow);
@@ -695,6 +821,7 @@ export function buildClassSheet(cls: ClassId): SheetBuilder {
   down.blit(lying, 0, 6);
   sb.add(`${cls}_down`, down);
   if (cls === 'lapanha') lapanhaExtras(sb);
+  if (cls === 'maycon') mayconExtras(sb);
   return sb;
 }
 
@@ -721,6 +848,8 @@ export function buildWeapons(): SheetBuilder {
   w('boneStaff', ['..............ww.', 'bbbbbbbbbbbbbwgw.', 'bbbbbbbbbbbbbwww.', '..............ww.'], { b: P.gray5, w: P.gray6, g: 0xa8d05a });
   // melancias na mão do Lapanha: pequena (básico) e crescendo na carga do Q (4 tamanhos, rachada no máximo)
   const melonPal = { G: 0x4fb04a, g: 0x24602a, k: 0x7a1f1f, w: P.amb5 };
+  // garrafa do Maycon (deitada, gargalo à direita)
+  w('bottleHeld', ['.gGGGg...', 'gGwGGGggc', 'gGGGGGggc', '.gGGGg...'], { g: 0x1f5a2a, G: 0x3f9a3a, w: 0xd8f6c8, c: 0xb08262 });
   w('melonHeld', ['.gGgG.', 'gGgGgG', 'GgGgGg', 'gGgGgG', '.gGgG.'], melonPal);
   w('melonQ_0', ['..gGgG..', '.gGgGgG.', 'gGgGgGgG', 'GgGgGgGg', 'gGgGgGgG', '.gGgGgG.', '..gGgG..'], melonPal);
   w('melonQ_1', ['...gGgG...', '.gGgGgGgG.', '.GgGgGgGg.', 'gGgGgGgGgG', 'GgGgGgGgGg', 'gGgGgGgGgG', '.GgGgGgGg.', '.gGgGgGgG.', '...gGgG...'], melonPal);
@@ -738,4 +867,5 @@ export const CLASS_WEAPON: Record<ClassId, string | null> = {
   dog: null,
   necromancer: 'boneStaff',
   lapanha: 'melonHeld',
+  maycon: 'bottleHeld',
 };

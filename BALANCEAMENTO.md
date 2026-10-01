@@ -364,3 +364,62 @@ No meio da horda, olhar para o canto da tela custa caro: o jogador local agora t
 sobre a cabeça** (mais larga e alta que a dos aliados, cor mudando em 60% e 30%, piscando no
 crítico, com o escudo temporário emendado acima) e o **apelido em laranja**, para achar seu boneco
 de relance.
+
+## v1.5 — Checkpoints, Maycon, Guardião-muralha, Berserker mais forte e camada de luz
+
+### Checkpoints por chefe (`waves.ts` → `CHECKPOINT`)
+Recomeçar da onda 1 depois de 40 minutos era só castigo. Agora vencer uma onda de **chefe ou
+minichefe** (5, 10, 15, 20, 25, 30) salva um checkpoint com o estado de cada jogador **no fim da
+onda, antes das escolhas do intervalo**. Se todos caírem depois, a equipe volta para a **onda
+seguinte ao checkpoint** em vez de perder a partida, com o custo:
+- as melhorias escolhidas desde o checkpoint se perdem (ex.: onda 5 → minichefe → cai na 7: volta à
+  6 sem as duas cartas das ondas 5 e 6);
+- **−10% da vida base** por volta, acumulando, até **−50%** (a penalidade continua nos próximos
+  checkpoints);
+- 5 s de contagem antes de a onda recomeçar; vida e stamina cheias, recargas zeradas.
+Sem checkpoint (antes da onda 5), cair todo mundo continua sendo derrota.
+
+### Berserker (vida 135 → **150**)
+Ainda morria antes de render. Mais dano, mais alcance e, principalmente, **sustento**:
+| | antes | agora |
+|---|---|---|
+| Combo | 18 / 20 / 40 | **23 / 25 / 50** (3º golpe 200°, alcance +2–4 px, stamina 8/8/14) |
+| Redemoinho (Q) | 4×13, recarga 6 s | **4×18**, alcance 50, recarga 5,5 s |
+| Salto (E) | 28 em 46 px, recarga 7 s | **40 em 54 px**, alcance 160, recarga 6 s |
+| Loucura (R) | +35% dano, +20% dano recebido, 8 s, exaustão 3 s | **+45% dano, +10% recebido, 9 s, 10% de roubo de vida**, exaustão 2,5 s |
+| Fúria | até +35% dano / +20% vel. ataque, −12% dano recebido acima de 60 | **+45% / +25%, −15%** |
+| **Sede de Sangue** (novo) | — | cada abate cura **4** (elites e chefes **10**), dentro do teto de cura por segundo (16/s) |
+`Mente de Ferro` agora zera o dano extra da Loucura (antes reduzia para +10%).
+
+### Guardião: muralha de verdade e mais o que fazer
+- **Última Vigília (R)**: dura **5 s** (era 4), o Guardião **anda a 40%** levando a área (antes
+  imóvel), recebe **−50% de dano**, ganha **escudo de 30**, não pode ser atordoado e **provoca todos
+  os inimigos na área a cada segundo** (chefes por 0,6 s). Aliados na área: **−25%** (era −12%).
+  Detonação: 60 + 60% do dano absorvido até **200** (era 180; chefes até 110) e cura **10%** da vida.
+- **Martelo Sísmico** (novo, no básico): o 3º golpe de maça seguido vira uma pancada em 360°
+  (**30 de dano, 54 px, atordoa comuns 0,7 s / elites 0,25 s**). Ritmo: bate, bate, ESTRONDO.
+- **Reflexo** (novo, no bloqueio perfeito): o projétil volta para quem atirou com **×1,6** de dano.
+- Maça: 20 → **22**.
+
+### Maycon (novo — controle de área, 112 de vida, velocidade 100)
+Grandão que voa num tapete persa e só fala de Hunt: Showdown. Pouco dano próprio; o valor dele é
+segurar a horda e **marcar** para a equipe bater.
+- **Garrafada** (básico): 11 de dano + respingo de 7 (30 px), −30% de velocidade por 1,2 s.
+- **Bomba de Fumaça** (Q, 9 s): arremessada em arco até 220 px; nuvem de 72 px por 3,5 s que atordoa
+  quem entra (comuns 0,7 s, elites 0,3 s), deixa 50% mais lento, causa 4 a cada 0,5 s e **apaga
+  projéteis inimigos**.
+- **Voo Rasante** (E, 8 s): 128 px com invulnerabilidade inicial; 14 de dano, joga os inimigos para
+  os **lados** da rota e os deixa lentos por 1,6 s.
+- **Rodada da Casa** (R): vira a garrafa (0,67 s) e cospe um anel de cachaça em chamas (124 px, 6 s)
+  que **puxa** comuns (80) e elites (28) para o centro, −45% de velocidade, 10 de dano a cada 0,5 s
+  (chefes ×0,6) e cura aliados dentro em 3/s.
+- **Visão Sombria** (passiva): tudo que ele desacelera, atordoa ou puxa fica marcado por 3 s e recebe
+  **+12% de dano de toda a equipe**.
+- Cartas: Fumaça Densa, Garrafa Cheia, Tapete Turbinado, Rodada Dupla, bifurcação Olho de Caçador ×
+  Fumaça Incendiária e a lendária Vitality da Roça.
+
+### Camada de luz (todas as classes)
+Os efeitos ficavam por baixo da máscara de escuridão e "apagavam" à noite. Agora toda habilidade
+emite luz aditiva por cima dela (clarões, ondas de choque, faíscas, raios, colunas de luz, rastro
+luminoso nos arcos de golpe e luz dinâmica que recorta a noite). Ajustável em **Configurações →
+Brilho das habilidades** (0 = só pixels).

@@ -11,12 +11,16 @@
  * - Necromante: solene e formal; é educado com os mortos e frio com os vivos.
  * - Lapanha: alegre, corajoso, bem-humorado e natural — expressões regionais com moderação,
  *   sem sotaque fonético forçado.
+ * - Maycon: gamer bonachão; vive citando Hunt: Showdown (Bounty, Dark Sight, extração, Choke,
+ *   Lawson, Bayou...) e trata a noite como uma partida ranqueada.
  */
 import type { ClassId } from './classes.js';
 
 export type LineKind =
   | 'select' | 'matchStart' | 'waveStart' | 'fullQ' | 'slip' | 'ult' | 'lowHp' | 'heal'
-  | 'minibossDown' | 'bossDown' | 'reviveAlly' | 'revived' | 'victory' | 'defeat';
+  | 'minibossDown' | 'bossDown' | 'reviveAlly' | 'revived' | 'victory' | 'defeat'
+  /** A equipe caiu e voltou ao último checkpoint. */
+  | 'checkpoint';
 
 export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly string[]>>>> = {
   hunter: {
@@ -29,6 +33,7 @@ export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly st
     bossDown: ['Rastro encerrado.', 'Caça feita. Recolham o que der.'],
     reviveAlly: ['De pé. Ainda tem noite.', 'Fica comigo. Levanta.'],
     revived: ['Obrigado. Não erro de novo.', 'Voltei. Onde estão eles?'],
+    checkpoint: ['De novo. Agora eu sei por onde eles vêm.', 'Recomeçar o rastro. Sem pressa.'],
     victory: ['Amanheceu. Boa caça.', 'Sobrevivemos. É o que importa.'],
     defeat: ['Errei o tiro que importava.', 'Perdi o rastro...'],
   },
@@ -42,6 +47,7 @@ export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly st
     bossDown: ['Encerrado, e com elegância.', 'Estava tudo nos cálculos.'],
     reviveAlly: ['Levante-se. Ainda preciso de você.', 'Ainda não. Respire.'],
     revived: ['Grato. Isso não constava.', 'De volta. Não me distraio outra vez.'],
+    checkpoint: ['Recalculando. O erro foi de variável, não de método.', 'Segunda tentativa. Agora com dados.'],
     victory: ['A noite cedeu ao método.', 'Belo trabalho. Previsível, mas belo.'],
     defeat: ['As contas não fecharam...', 'Eu devia ter visto.'],
   },
@@ -55,6 +61,7 @@ export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly st
     bossDown: ['A linha aguentou.', 'Segurar era o plano. Funcionou.'],
     reviveAlly: ['Eu te cubro. Levanta!', 'De pé, soldado. Eu estou aqui.'],
     revived: ['Obrigado. Volto para a frente.', 'De pé. Minha vez de segurar.'],
+    checkpoint: ['Reagrupem atrás de mim. Desta vez a linha segura.', 'Caímos. Levantamos. Formação!'],
     victory: ['A linha não quebrou.', 'Todos de pé. É só isso que conta.'],
     defeat: ['Eu devia ter segurado...', 'A linha caiu comigo.'],
   },
@@ -68,6 +75,7 @@ export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly st
     bossDown: ['Guardei o melhor para o fim.', 'Um brinde. A mim.'],
     reviveAlly: ['Levante-se. Você ainda me é útil.', 'Não morra. É desperdício.'],
     revived: ['Devo-lhe uma taça.', 'Gentileza. Anotada.'],
+    checkpoint: ['Um contratempo deselegante. Repitamos o prato.', 'A noite ainda me deve um jantar.'],
     victory: ['A noite foi minha. E de vocês, claro.', 'Que ceia excelente.'],
     defeat: ['Que fim... vulgar.', 'Sede. Só sede...'],
   },
@@ -81,6 +89,7 @@ export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly st
     bossDown: ['EU DERRUBEI!', 'RACHOU no meio!'],
     reviveAlly: ['LEVANTA! Falta muito!', 'De pé! Tem gente pra bater!'],
     revived: ['HAH! De volta!', 'Valeu. Agora sai da frente.'],
+    checkpoint: ['DE NOVO! AGORA COM MAIS RAIVA!', 'Morri? Ótimo. Volto pior.'],
     victory: ['AMANHECEU E EU TÔ VIVO!', 'Boa noite. Boa MESMO.'],
     defeat: ['Não... me deixa bater... mais uma...', 'Cansei.'],
   },
@@ -94,6 +103,7 @@ export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly st
     bossDown: ['A GENTE GANHOU DELE!', 'Eu gritei mais alto!'],
     reviveAlly: ['Levanta! Levanta!', 'Eu te ajudo! Segura!'],
     revived: ['Valeu! Você é o melhor!', 'Voltei! Cadê eles?'],
+    checkpoint: ['Continua! Continua! Ainda dá!', 'Foi só um susto! Bora de novo!'],
     victory: ['A GENTE CONSEGUIU!', 'Melhor noite da minha vida!'],
     defeat: ['Eu gritei... não deu...', 'Quero ir pra casa.'],
   },
@@ -107,6 +117,7 @@ export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly st
     bossDown: ['Até os grandes obedecem no fim.', 'Nome anotado. Alma também.'],
     reviveAlly: ['Ainda não é sua hora. Eu decido isso.', 'Volte. Eu não autorizei sua morte.'],
     revived: ['Curioso. Do outro lado é silencioso.', 'Grato. Eu devolvo o favor um dia.'],
+    checkpoint: ['A morte nos devolveu. Desta vez, cobrem caro.', 'Voltamos do outro lado. Ninguém comente.'],
     victory: ['A noite cobrou o preço dela. Nós pagamos menos.', 'Todos de pé. Notável.'],
     defeat: ['Então é assim... do outro lado...', 'Eu voltarei. De uma forma ou de outra.'],
   },
@@ -123,8 +134,24 @@ export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly st
     bossDown: ['A noite é nossa!', 'Arretado! Derrubamos!', 'Quem manda aqui é a vigília!'],
     reviveAlly: ['Levanta, que a noite não acabou!', 'Toma um pedaço e bora!'],
     revived: ['Valeu! Fico te devendo uma melancia.', 'De pé de novo, graças a você!'],
+    checkpoint: ['Caímo, mas levantamo! Bora, meu povo!', 'Recomeça a feira, que a melancia ainda tá boa.'],
     victory: ['Amanheceu! Vou dividir o resto do cesto com todo mundo.', 'Conseguimos, meu povo!'],
     defeat: ['Hoje não deu... amanhã a gente volta.', 'Guarda uma melancia pra mim.'],
+  },
+  maycon: {
+    select: ['Bora de Bounty? Eu levo o tapete.', 'Contrato aceito. Agora é sobreviver e extrair.', 'Pode deixar que eu dou o Choke neles.'],
+    matchStart: ['Dark Sight ligado. Tô vendo tudo.', 'Isso aqui é pior que Lawson Delta de madrugada.', 'Escuta... corvo assustado é sinal de grunt.'],
+    waveStart: ['Ouvi passo no Bayou!', 'Mais grunt que hive no Scrapbeak.', 'Choke neles, galera!', 'Cuidado que tem Hive aí no meio!'],
+    ult: ['RODADA DA CASA! Eu pago!', 'Um gole e é Hellfire na cara!', 'Saideira de Vitality, rapaziada!'],
+    lowHp: ['Tô no último bar de vida!', 'Me tira do fogo! Ninguém revive pegando fogo!', 'Tô sangrando igual sem Bandage.'],
+    heal: ['Ahh, Vitality Shot da roça.', 'Recarreguei a barra!'],
+    minibossDown: ['Caiu! Pega o clue!', 'Banish nesse aí!'],
+    bossDown: ['BOSS BANIDO! Corre pra extração!', 'Bounty no ombro, rapaziada!'],
+    reviveAlly: ['Levanta! Não vou te deixar virar loot!', 'Toma esse Vitality e volta pro jogo!'],
+    revived: ['Valeu! Achei que ia pro lobby.', 'Voltei! Só perdi uma Trait.'],
+    victory: ['EXTRAÍMOS! GG, time!', 'Amanheceu e a Bounty é nossa!'],
+    defeat: ['Wipe... igual quando o Assassino pula de dois.', 'Fomos pro lobby, rapaziada...'],
+    checkpoint: ['Wipe, mas a Bounty ainda tá no mapa!', 'Respawn no Bayou. Agora é tryhard.'],
   },
 };
 

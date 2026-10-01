@@ -52,6 +52,10 @@ export const PLAYER_FLAGS = {
   harvest: 1048576,
   /** Escudo temporário (cartas). */
   shielded: 2097152,
+  /** Maycon: Rodada da Casa ativa (anel de cachaça em chamas). */
+  brewing: 4194304,
+  /** Guardião: Última Vigília erguida (muralha). */
+  bulwark: 8388608,
 } as const;
 
 export const ENEMY_STATES = ['spawn', 'move', 'windup', 'active', 'recover', 'stagger', 'air', 'dead', 'roar'] as const;
@@ -99,14 +103,18 @@ export const ENEMY_FLAGS = {
   vulnerable: 131072,
   /** Escorregando. */
   sliding: 262144,
+  /** Marcado pela Visão Sombria do Maycon (+dano recebido). */
+  darkSight: 524288,
 } as const;
 
 export const PROJECTILE_KINDS = [
   'bolt', 'pierceBolt', 'missile', 'empMissile', 'orb', 'slipper', 'abyssOrb', 'bone', 'iceShard',
   'melon', 'melonWide', 'melonDense', 'bigMelon', 'seed', 'woundBolt',
+  /** Maycon: garrafa (básico) e bomba de fumaça (Q, em arco). */
+  'bottle', 'chokeBomb',
 ] as const;
 /** Projéteis desenhados em arco (altura só visual; a colisão continua no plano do chão). */
-export const LOB_KINDS: ReadonlySet<string> = new Set(['melon', 'melonWide', 'melonDense', 'bigMelon']);
+export const LOB_KINDS: ReadonlySet<string> = new Set(['melon', 'melonWide', 'melonDense', 'bigMelon', 'chokeBomb']);
 export type ProjectileKind = (typeof PROJECTILE_KINDS)[number];
 
 export const ZONE_KINDS = [
@@ -114,6 +122,8 @@ export const ZONE_KINDS = [
   'graveHand', 'moonPulse', 'nova', 'iceSpike', 'leapLand',
   /** Lapanha: casca no chão e piso molhado; avisos de assalto e de emboscada. */
   'peel', 'wetFloor', 'assaultWarn', 'ambushWarn',
+  /** Maycon: nuvem de fumaça e anel de cachaça em chamas. */
+  'choke', 'brew',
 ] as const;
 export type ZoneKind = (typeof ZONE_KINDS)[number];
 

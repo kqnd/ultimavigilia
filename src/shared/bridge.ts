@@ -64,6 +64,8 @@ export interface Settings {
   windowSize: '960x540' | '1280x720' | '1600x900' | '1920x1080';
   shake: number;
   flashes: number;
+  /** Intensidade da camada de luz das habilidades (0 = só pixels, 1 = brilho total). */
+  skillGlow: number;
   damageNumbers: boolean;
   /** Clareia apenas o mapa (0 = atmosfera original, 1 = iluminação máxima). */
   brightness: number;
@@ -101,6 +103,7 @@ export const DEFAULT_SETTINGS: Settings = {
   windowSize: '1280x720',
   shake: 1,
   flashes: 1,
+  skillGlow: 1,
   damageNumbers: true,
   brightness: 0,
   enhancedLighting: false,
@@ -127,6 +130,7 @@ export function normalizeSettings(raw: unknown): Settings {
   if (typeof r.windowSize === 'string' && (WINDOW_SIZES as readonly string[]).includes(r.windowSize)) s.windowSize = r.windowSize as Settings['windowSize'];
   s.shake = num(r.shake, 0, 1, 1);
   s.flashes = num(r.flashes, 0, 1, 1);
+  s.skillGlow = num(r.skillGlow, 0, 1, 1);
   s.damageNumbers = r.damageNumbers !== false;
   s.brightness = num(r.brightness, 0, 1, 0);
   s.enhancedLighting = r.enhancedLighting === true;

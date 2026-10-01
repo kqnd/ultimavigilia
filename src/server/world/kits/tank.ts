@@ -1,6 +1,7 @@
 import { TANK } from '../../../shared/config/classes.js';
 import { sec } from '../../../shared/constants.js';
 import { BTN } from '../../../shared/movement.js';
+import { addShield } from '../healing.js';
 import type { Player } from '../types.js';
 import type { World } from '../world.js';
 import type { Kit } from './kit.js';
@@ -17,6 +18,7 @@ export function detonateGuardian(w: World, p: Player): void {
     });
   }
   w.breakInCircle(p.x, p.y, b.radius, damage, p);
+  w.healPlayer(p, p.maxHp * b.healOnBurst, 'bastion');
   w.emit({ k: 'fx', n: 'guardianBurst', x: p.x, y: p.y, a: bonus / b.bonusCap, o: p.id, r: b.radius });
   w.emit({ k: 'sfx', n: 'guardianBurst', x: p.x, y: p.y });
   p.action = null;
@@ -27,11 +29,18 @@ export function detonateGuardian(w: World, p: Player): void {
 export const tankKit: Kit = {
   start(w, p, slot) {
     switch (slot) {
-      case 'basic':
-        if (!w.spendStamina(p, TANK.mace.stamina)) return 'st';
+      case 'basic': {
+        // Juramento: bate, bate, ESTRONDO — o 3º golpe seguido vira o Martelo Sísmico
+        const quake = p.comboStep % 3 === 2;
+        const spec = quake ? TANK.quake : TANK.mace;
+        if (!w.spendStamina(p, spec.stamina)) return 'st';
         p.blocking = false;
-        w.startAction(p, 'basic1', TANK.mace, { moveMul: TANK.mace.moveMul });
+        const a = w.startAction(p, quake ? 'basic2' : 'basic1', spec, { moveMul: spec.moveMul });
+        p.comboStep = (p.comboStep + 1) % 3;
+        p.comboT = a.total + TANK.comboWindow;
+        if (quake) w.emit({ k: 'fx', n: 'quakeWindup', x: p.x, y: p.y, a: 0, o: p.id, r: TANK.quake.range });
         return null;
+      }
       case 'q':
         if (p.move.stamina < 1) return 'st';
         p.blocking = true;
@@ -54,8 +63,9 @@ export const tankKit: Kit = {
       case 'r': {
         p.blocking = false;
         p.guardianCharge = 0;
-        const a = w.startAction(p, 'r', { windup: 0, active: sec(TANK.bastion.duration), recovery: 0 }, { moveMul: 0 });
+        const a = w.startAction(p, 'r', { windup: 0, active: sec(TANK.bastion.duration), recovery: 0 }, { moveMul: TANK.bastion.moveMul });
         a.cancelFrom = 999;
+        addShield(p, TANK.bastion.shield, TANK.bastion.duration);
         w.emit({ k: 'fx', n: 'guardianPlant', x: p.x, y: p.y, a: 0, o: p.id, r: TANK.bastion.radius });
         w.emit({ k: 'sfx', n: 'guardianPlant', x: p.x, y: p.y });
         return null;
@@ -79,6 +89,19 @@ export const tankKit: Kit = {
         w.emit({ k: 'fx', n: 'guardianCounter', x: p.x, y: p.y, a: a.dir, o: p.id, r: TANK.guard.counterRadius });
         w.emit({ k: 'sfx', n: 'guardianCounter', x: p.x, y: p.y });
       }
+    } else if (a.name === 'basic2' && inActive(a)) {
+      // Martelo Sísmico: pancada no chão em 360°, atordoa comuns
+      const Q = TANK.quake;
+      if (firstActive(a)) {
+        const mul = 1 + w.mod(p, 't_mace');
+        for (const e of w.enemiesInCircle(p.x, p.y, Q.range)) {
+          w.hitEnemy(p, e, Q.damage * mul, { poise: Q.poise * mul, kb: Q.knockback, fromX: p.x, fromY: p.y, kind: 'aoe' });
+          if (e.def.tier !== 'boss') w.applyCC(e, 'stun', e.def.tier === 'common' ? Q.stunCommon : Q.stunElite, 1, p);
+        }
+        w.breakInCircle(p.x, p.y, Q.range, Q.damage, p);
+        w.emit({ k: 'fx', n: 'maceQuake', x: p.x, y: p.y, a: a.dir, o: p.id, r: Q.range });
+        w.emit({ k: 'sfx', n: 'maceQuake', x: p.x, y: p.y });
+      }
     } else if (a.name === 'e' && inActive(a)) {
       const c = TANK.charge;
       if (a.t % 2 === 0) w.emit({ k: 'fx', n: 'guardianTrail', x: p.x, y: p.y, a: a.dir, o: p.id, r: 0 });
@@ -98,6 +121,17 @@ export const tankKit: Kit = {
         w.emit({ k: 'sfx', n: 'guardianImpact', x: e.x, y: e.y });
       }
     } else if (a.name === 'r') {
+      // muralha: provoca tudo em volta a cada segundo (chefes por pouco tempo)
+      const B = TANK.bastion;
+      if (a.t % B.tauntEvery === 1) {
+        for (const e of w.enemiesInCircle(p.x, p.y, B.radius)) {
+          if (e.def.stationary || e.def.objective) continue;
+          e.tauntBy = p.id;
+          e.tauntT = Math.max(e.tauntT, sec(e.def.tier === 'boss' ? B.tauntBoss : B.tauntCommon));
+          e.targetId = p.id;
+        }
+        w.emit({ k: 'fx', n: 'bulwarkTaunt', x: p.x, y: p.y, a: 0, o: p.id, r: B.radius });
+      }
       if (a.t % 10 === 0) w.emit({ k: 'fx', n: 'guardianCharge', x: p.x, y: p.y, a: Math.min(1, p.guardianCharge * TANK.bastion.damageRatio / TANK.bastion.bonusCap), o: p.id, r: TANK.bastion.radius });
       if (p.mods['t_bastion'] && a.t % 30 === 0) for (const ally of w.alivePlayers()) {
         if ((ally.x - p.x) ** 2 + (ally.y - p.y) ** 2 <= TANK.bastion.radius ** 2) w.healPlayer(ally, w.mod(p, 't_bastion'), 'bastion');
@@ -124,6 +158,15 @@ export const tankKit: Kit = {
       if (perfect) {
         p.guardianCounter = true;
         p.guardianCounterUntil = w.tick + sec(2.5);
+        // bloqueio perfeito devolve o projétil para quem atirou
+        if (h.proj) {
+          const R = TANK.reflect;
+          const src = h.proj.owner < 0 ? w.enemies.get(-h.proj.owner) : undefined;
+          const ang = src && src.state !== 'dead' ? Math.atan2(src.y - p.y, src.x - p.x) : Math.atan2(h.fromY - p.y, h.fromX - p.x);
+          const kind = h.proj.kind === 'slipper' || h.proj.kind === 'woundBolt' ? 'orb' : h.proj.kind;
+          w.spawnProjectile({ kind, team: 'p', owner: p.id, x: p.x + Math.cos(ang) * 12, y: p.y + Math.sin(ang) * 12, vx: Math.cos(ang) * R.speed, vy: Math.sin(ang) * R.speed, r: 5, dmg: h.dmg * R.damageMul, range: 320, poise: 20, kb: 60 });
+          w.emit({ k: 'fx', n: 'guardianReflect', x: p.x, y: p.y - 8, a: ang, o: p.id, r: 0 });
+        }
       }
       w.emit({ k: 'dmg', tg: 'p', ti: p.id, v: 0, x: p.x, y: p.y - 18, c: 'blk', s: 0 });
       w.emit({ k: 'fx', n: h.proj ? 'guardianBlockProjectile' : 'guardianBlockPhysical', x: p.x, y: p.y - 8, a: Math.atan2(h.fromY - p.y, h.fromX - p.x), o: p.id, r: p.move.stamina / p.maxStamina });

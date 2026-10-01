@@ -72,6 +72,12 @@ const DEF: Record<string, [string[], Pal]> = {
   pulp: [['.....r......', '.....r......', '....rrr.....', '....rrr.....', '...rrrrr....', '..rrrkrrr...', '..rrprrrr...', '..rrrrrkr...', '...rrrrr....', '....rrr.....', '............', '............'], { r: 0xe04848, p: 0xff9a8a, k: P.ink }],
   seeds: [['............', '.kk.........', 'kkkk....kk..', '.kk....kkkk.', '........kk..', '............', '....kk......', '...kkkk.....', '....kk......', '............', '............', '............'], { k: 0x2a1a14 }],
   wound: [['....#..#....', '...#.##.#...', '..#.#..#.#..', '.#.#....#.#.', '#.#..oo..#.#', '#.#.oooo.#.#', '#.#.o##o.#.#', '#.#..oo..#.#', '.#.#....#.#.', '..#.#..#.#..', '...#.##.#...', '....#..#....'], { '#': 0x7dffb0, o: P.abyss3 }],
+  // ---- Maycon (garrafa, fumaça, tapete, rodada e Visão Sombria)
+  bottle: [['........kk..', '........gg..', '.......gGg..', '......gGGg..', '.....gGGg...', '....gGwGg...', '...gGwGg....', '..gGGGg.....', '.gGGGg......', '.gGGg.......', '..gg........', '............'], { g: 0x1f5a2a, G: 0x3f9a3a, w: 0xd8f6c8, k: 0xb08262 }],
+  smoke: [['....ss..s...', '..ssssssss..', '.ssSSsssSss.', 'ssSSSSssSSss', 'sSSSSSSSSSSs', '.ssSSSSSSss.', '..ssssssss..', '...s.oo.s...', '.....##.....', '....####....', '....####....', '.....##.....'], { s: 0xa3a9bb, S: 0x7a8096, o: P.amb4, '#': P.gray2 }],
+  carpet: [['............', '.y.y.y.y.y..', 'RRRRRRRRRRR.', 'RyyyyyyyyyR.', 'RyrDrrrDryR.', 'RyrrDrDrryR.', 'RyrDrrrDryR.', 'RyyyyyyyyyR.', 'RRRRRRRRRRR.', '.y.y.y.y.y..', '............', '............'], { R: 0x5a1020, r: 0x9c1e2e, y: 0xe0b040, D: 0x4d6fa3 }],
+  brew: [['.....kk.....', '.....gg.....', '....gGGg....', '....gGGg....', '...gGwGGg...', '...gGwGGg...', '...gGGGGg...', '...gaaaag...', '.o.gggggg.o.', 'oaoo.oo.ooao', '.oaaooooaao.', '..oooooooo..'], { g: 0x1f5a2a, G: 0x3f9a3a, w: 0xd8f6c8, k: 0xb08262, a: P.amb5, o: P.amb3 }],
+  eyeDark: [['............', '....####....', '..##....##..', '.#..oooo..#.', '#..oo##oo..#', '#..o####o..#', '#..o####o..#', '#..oo##oo..#', '.#..oooo..#.', '..##....##..', '....####....', '............'], { '#': P.pur5, o: P.amb4 }],
   stun: [['.....#......', '....###.....', '.#########..', '..#######...', '...##.##....', '..##...##...', '............', '.#......#...', '###....###..', '.#......#...', '............', '............'], { '#': P.amb4 }],
 };
 
@@ -84,6 +90,7 @@ export const ABILITY_ICONS: Record<string, [string, string, string, string, stri
   dog: ['mouth', 'rings', 'magnet', 'bigRings', 'wave'],
   necromancer: ['bone', 'raise', 'hand', 'army', 'soul'],
   lapanha: ['melon', 'bigMelon', 'peel', 'harvest', 'heartMelon'],
+  maycon: ['bottle', 'smoke', 'carpet', 'brew', 'eyeDark'],
 };
 
 /** Aliases de ícones de melhorias → ícones existentes. */

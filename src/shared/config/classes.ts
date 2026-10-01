@@ -4,8 +4,8 @@
  * distâncias em pixels; ângulos de arco em graus.
  */
 
-export type ClassId = 'hunter' | 'mage' | 'tank' | 'vampire' | 'berserker' | 'dog' | 'necromancer' | 'lapanha';
-export const CLASS_IDS: readonly ClassId[] = ['hunter', 'mage', 'tank', 'vampire', 'berserker', 'dog', 'necromancer', 'lapanha'];
+export type ClassId = 'hunter' | 'mage' | 'tank' | 'vampire' | 'berserker' | 'dog' | 'necromancer' | 'lapanha' | 'maycon';
+export const CLASS_IDS: readonly ClassId[] = ['hunter', 'mage', 'tank', 'vampire', 'berserker', 'dog', 'necromancer', 'lapanha', 'maycon'];
 
 export interface Timing {
   windup: number;
@@ -75,7 +75,7 @@ export interface ClassBase {
 /** Alcance de combate de cada classe (prioridade dos chefes e das ameaças anti-kite). */
 export type CombatRange = 'melee' | 'mid' | 'ranged';
 export const CLASS_RANGE: Record<ClassId, CombatRange> = {
-  hunter: 'ranged', mage: 'ranged', necromancer: 'ranged', dog: 'mid', lapanha: 'mid', tank: 'melee', vampire: 'melee', berserker: 'melee',
+  hunter: 'ranged', mage: 'ranged', necromancer: 'ranged', dog: 'mid', lapanha: 'mid', maycon: 'mid', tank: 'melee', vampire: 'melee', berserker: 'melee',
 };
 /** Classes corpo a corpo recebem menos dano: compensa ter de ficar dentro do alcance da horda. */
 export const MELEE_RULES = { damageTakenMul: 0.88 } as const;
@@ -105,10 +105,27 @@ export const MAGE = {
 
 // ---------------------------------------------------------------- TANK
 export const TANK = {
-  mace: { windup: 8, active: 3, recovery: 12, damage: 20, range: 36, arc: 110, poise: 34, knockback: 110, stamina: 10, moveMul: 0.45 },
+  mace: { windup: 8, active: 3, recovery: 12, damage: 22, range: 36, arc: 110, poise: 34, knockback: 110, stamina: 10, moveMul: 0.45 },
+  /**
+   * Juramento: o 3º golpe de maça seguido (dentro da janela) vira o Martelo Sísmico — pancada no
+   * chão em 360° que atordoa comuns. Dá ritmo ao básico do Guardião (bate, bate, ESTRONDO).
+   */
+  quake: { windup: 12, active: 2, recovery: 14, damage: 30, range: 54, arc: 360, poise: 55, knockback: 150, stamina: 14, moveMul: 0.25, stunCommon: 0.7, stunElite: 0.25 },
+  comboWindow: 14,
   guard: { arc: 360, moveMul: 0.65, staminaPerDamage: 0.8, minStaminaCost: 5, breakStun: 1.0, perfectTicks: 7, counterBonus: 16, counterRadius: 48, counterKnockback: 170 },
   charge: { cooldown: 9, stamina: 20, distance: 92, ticks: 11, recovery: 8, damage: 18, radius: 23, tauntRadius: 65, duration: 3, bossDuration: 0.8 },
-  bastion: { duration: 4, radius: 104, reduction: 0.12, baseDamage: 60, damageRatio: 0.6, bonusCap: 120, bossDamageCap: 95, knockback: 230 },
+  /**
+   * R — Última Vigília (v1.5): o Guardião vira a muralha. Anda devagar levando a área, recebe -50%
+   * de dano, ganha escudo ao erguer, provoca tudo em volta a cada segundo e protege aliados em -25%.
+   * Ao fim (ou R de novo) detona com o dano que a área absorveu e se cura um pouco.
+   */
+  bastion: {
+    duration: 5, radius: 104, reduction: 0.25, selfReduction: 0.5, moveMul: 0.4, shield: 30,
+    tauntEvery: 30, tauntCommon: 1.4, tauntBoss: 0.6,
+    baseDamage: 60, damageRatio: 0.6, bonusCap: 140, bossDamageCap: 110, knockback: 230, healOnBurst: 0.1,
+  },
+  /** Bloqueio perfeito devolve o projétil inimigo com este multiplicador de dano. */
+  reflect: { damageMul: 1.6, speed: 340 },
   wall: { ultPerBlock: 2, blockUltIntervalTicks: 12 },
 } as const;
 
@@ -141,16 +158,16 @@ export const VAMPIRE = {
 
 // ---------------------------------------------------------------- CURA (função central)
 /** Fontes de cura de jogador (telemetria e regras de teto). */
-export type HealSource = 'bite' | 'vortex' | 'feast' | 'feastBurst' | 'pickup' | 'reward' | 'bastion' | 'reaper' | 'harvest' | 'harvestHit' | 'perk';
+export type HealSource = 'bite' | 'vortex' | 'feast' | 'feastBurst' | 'pickup' | 'reward' | 'bastion' | 'reaper' | 'harvest' | 'harvestHit' | 'perk' | 'bloodlust' | 'madness' | 'brew';
 /** Fontes "de combate" (roubo de vida/cura por acerto): consomem o teto por segundo da classe. */
-export const COMBAT_HEAL: ReadonlySet<HealSource> = new Set<HealSource>(['bite', 'vortex', 'feast', 'feastBurst', 'harvestHit', 'reaper']);
+export const COMBAT_HEAL: ReadonlySet<HealSource> = new Set<HealSource>(['bite', 'vortex', 'feast', 'feastBurst', 'harvestHit', 'reaper', 'bloodlust', 'madness']);
 export const HEAL_RULES = {
   /** Retorno decrescente por alvo na mesma ação: 1º, 2º, 3º e cada um dos demais. */
   multiTarget: [1, 0.6, 0.35, 0.15] as readonly number[],
   /** Bônus de dano acima de +25% (Sede, Banquete, cartas) não aumentam a cura. */
   basisCapMul: 1.25,
   /** Teto de cura "de combate" por segundo, por classe. */
-  combatPerSecond: { hunter: 12, mage: 12, tank: 12, vampire: VAMPIRE.healPerSecondCap, berserker: 12, dog: 12, necromancer: 10, lapanha: 8 } as Record<ClassId, number>,
+  combatPerSecond: { hunter: 12, mage: 12, tank: 12, vampire: VAMPIRE.healPerSecondCap, berserker: 16, dog: 12, necromancer: 10, lapanha: 8, maycon: 10 } as Record<ClassId, number>,
   /** Janela usada para medir "cura recente" (alvo preferido da Ferida Profana), em segundos. */
   recentWindow: 3,
 } as const;
@@ -175,9 +192,9 @@ export const PLAYER_SHIELD = { max: 40 } as const;
 export const BERSERKER = {
   /** Combo de machado: dois golpes rápidos e um terceiro brutal, amplo e lento. */
   combo: [
-    { windup: 5, active: 2, recovery: 7, damage: 18, range: 38, arc: 120, poise: 14, knockback: 50, stamina: 9, moveMul: 0.6 },
-    { windup: 5, active: 2, recovery: 7, damage: 20, range: 38, arc: 120, poise: 16, knockback: 50, stamina: 9, moveMul: 0.6 },
-    { windup: 11, active: 3, recovery: 17, damage: 40, range: 44, arc: 190, poise: 46, knockback: 150, stamina: 16, moveMul: 0.25 },
+    { windup: 5, active: 2, recovery: 7, damage: 23, range: 40, arc: 120, poise: 14, knockback: 50, stamina: 8, moveMul: 0.65 },
+    { windup: 5, active: 2, recovery: 7, damage: 25, range: 40, arc: 120, poise: 16, knockback: 50, stamina: 8, moveMul: 0.65 },
+    { windup: 10, active: 3, recovery: 15, damage: 50, range: 48, arc: 200, poise: 50, knockback: 160, stamina: 14, moveMul: 0.3 },
   ],
   comboWindow: 9,
   /**
@@ -186,11 +203,11 @@ export const BERSERKER = {
    * anda enquanto gira. Acertar qualquer inimigo rende `furyGain` de Fúria na hora: é o Q que
    * acende a passiva, e por isso custa pouca stamina.
    */
-  frenzy: { cooldown: 6, stamina: 12, windup: 4, pulses: 4, pulseEvery: 5, recovery: 10, damage: 13, range: 46, arc: 170, spinStep: Math.PI / 2, poise: 12, knockback: 35, moveMul: 0.55, furyGain: 15 },
+  frenzy: { cooldown: 5.5, stamina: 12, windup: 4, pulses: 4, pulseEvery: 5, recovery: 9, damage: 18, range: 50, arc: 170, spinStep: Math.PI / 2, poise: 12, knockback: 35, moveMul: 0.55, furyGain: 15 },
   /** E — Salto Brutal: salta até o ponto mirado e esmaga ao pousar. */
-  leap: { cooldown: 7, stamina: 18, maxRange: 150, ticks: 12, iframes: 8, radius: 46, damage: 28, poise: 42, knockback: 160, recovery: 10 },
+  leap: { cooldown: 6, stamina: 18, maxRange: 160, ticks: 12, iframes: 8, radius: 54, damage: 40, poise: 48, knockback: 170, recovery: 9 },
   /** R — Loucura: força máxima com custo claro (dano recebido e exaustão ao final). */
-  madness: { windup: 8, recovery: 6, castMoveMul: 0.2, duration: 8, damageBonus: 0.35, attackSpeed: 0.3, damageTaken: 0.2, ironDamageTaken: 0.1, exhaustion: 3, exhaustSpeedMul: 0.6 },
+  madness: { windup: 8, recovery: 6, castMoveMul: 0.2, duration: 9, damageBonus: 0.45, attackSpeed: 0.35, damageTaken: 0.1, ironDamageTaken: 0, exhaustion: 2.5, exhaustSpeedMul: 0.65, lifesteal: 0.1 },
   /**
    * Passiva — Fúria (0–100): sobe ao causar e ao receber dano. Acima de `high` a Fúria é VANTAGEM
    * (mais dano, mais velocidade, golpes mais baratos, stamina volta mais rápido e um pouco mais
@@ -200,9 +217,11 @@ export const BERSERKER = {
    */
   fury: {
     max: 100, perDamageDealt: 0.35, perDamageTaken: 0.9, decayDelay: 2, decayPerSecond: 11, high: 60,
-    maxDamageBonus: 0.35, maxAttackSpeed: 0.2,
-    staminaCostMulHigh: 0.85, staminaDelayMulHigh: 0.6, damageTakenMulHigh: 0.88,
+    maxDamageBonus: 0.45, maxAttackSpeed: 0.25,
+    staminaCostMulHigh: 0.85, staminaDelayMulHigh: 0.6, damageTakenMulHigh: 0.85,
   },
+  /** Sede de Sangue: cada abate do Berserker devolve um pouco de vida (respeita o teto por segundo). */
+  bloodlust: { healPerKill: 4, healPerEliteKill: 10 },
 } as const;
 
 // ---------------------------------------------------------------- DOG
@@ -309,6 +328,41 @@ export const ripeCostFrac = (charge: number): number => LAPANHA.ripe.minCost + (
 /** Força (0–1) da Melancia Madura com retorno decrescente. */
 export const ripePower = (charge: number): number => Math.pow(Math.max(0, Math.min(1, charge)), LAPANHA.ripe.curve);
 
+// ---------------------------------------------------------------- MAYCON
+/**
+ * Controle de área do alto de um tapete voador. Garrafas que respingam e desaceleram, fumaça que
+ * sufoca a horda (e engole projéteis), voo rasante que abre corredores e uma rodada de cachaça em
+ * chamas que puxa tudo para o centro. A passiva (Visão Sombria) marca quem ele controla: marcados
+ * recebem mais dano de toda a equipe — é assim que o Maycon "causa" dano.
+ */
+export const MAYCON = {
+  /** Básico: garrafa arremessada que estoura no primeiro inimigo (respingo e lentidão). */
+  bottle: {
+    windup: 6, active: 1, recovery: 11, stamina: 4, moveMul: 0.75,
+    speed: 310, damage: 11, range: 250, radius: 5, poise: 8, knockback: 25,
+    splash: 30, splashDamage: 7, slow: 0.7, slowSeconds: 1.2,
+  },
+  /** Q — Bomba de Fumaça: arremessada no ponto mirado; nuvem que sufoca, atordoa na entrada e apaga projéteis. */
+  choke: {
+    cooldown: 9, windup: 7, recovery: 8, moveMul: 0.5, maxRange: 220, speed: 260,
+    radius: 72, duration: 3.5, slow: 0.5, tickInterval: 0.5, tickDamage: 4,
+    stunCommon: 0.7, stunElite: 0.3, poise: 18,
+  },
+  /** E — Voo Rasante: o tapete corta a horda e joga os inimigos para os lados. */
+  flight: {
+    cooldown: 8, stamina: 14, distance: 128, ticks: 10, iframes: 6, recovery: 6,
+    width: 26, damage: 14, knockback: 150, poise: 26, slow: 0.6, slowSeconds: 1.6,
+  },
+  /** R — Rodada da Casa: vira a garrafa e cospe um anel de cachaça em chamas que puxa a horda para o centro. */
+  brew: {
+    windup: 20, recovery: 8, castMoveMul: 0.15, duration: 6, radius: 124,
+    pullCommon: 80, pullElite: 28, slow: 0.55, tickEvery: 15, tickDamage: 10, bossDamageMul: 0.6,
+    allyHealPerSecond: 3,
+  },
+  /** Passiva — Visão Sombria: controlados por ele ficam marcados (+dano recebido de todos). */
+  darkSight: { seconds: 3, damageMul: 1.12 },
+} as const;
+
 export const CLASSES: Record<ClassId, ClassBase> = {
   hunter: {
     id: 'hunter',
@@ -378,11 +432,11 @@ export const CLASSES: Record<ClassId, ClassBase> = {
     ultPerDamage: 0.09,
     color: 0x7f93b0,
     texts: {
-      basic: { name: 'Golpe de Maça', desc: `Golpe curto e pesado: ${TANK.mace.damage} de dano, grande stagger.` },
-      q: { name: 'Égide dos Mortos', desc: `Segure para bloquear em 360° gastando stamina. Bloqueio perfeito prepara um contra-ataque; guarda quebrada atordoa por ${TANK.guard.breakStun}s.` },
+      basic: { name: 'Golpe de Maça', desc: `Golpe curto e pesado: ${TANK.mace.damage} de dano, grande stagger. O 3º golpe seguido vira o Martelo Sísmico: ${TANK.quake.damage} de dano em 360° (${TANK.quake.range}px) e atordoa comuns por ${TANK.quake.stunCommon}s.` },
+      q: { name: 'Égide dos Mortos', desc: `Segure para bloquear em 360° gastando stamina. Bloqueio perfeito prepara um contra-ataque e DEVOLVE projéteis (×${TANK.reflect.damageMul} de dano); guarda quebrada atordoa por ${TANK.guard.breakStun}s.` },
       e: { name: 'Investida de Escudo', desc: `Avança ${TANK.charge.distance}px, interrompe e provoca inimigos atingidos. Recarga ${TANK.charge.cooldown}s.` },
-      r: { name: 'Última Vigília', desc: `Fica imóvel por ${TANK.bastion.duration}s. Aliados e sobrevivente na área recebem -12% de dano. Detona: ${TANK.bastion.baseDamage} + 60% do dano real sofrido (até ${TANK.bastion.baseDamage + TANK.bastion.bonusCap}). Aperte R novamente para detonar cedo.` },
-      passive: { name: 'Almas Presas', desc: `Bloqueios relevantes carregam a suprema; bloqueio perfeito fortalece a próxima maçada.` },
+      r: { name: 'Última Vigília', desc: `Por ${TANK.bastion.duration}s vira a muralha: anda devagar levando a área, recebe -${TANK.bastion.selfReduction * 100}% de dano, ganha escudo de ${TANK.bastion.shield}, não é atordoado e provoca tudo em volta a cada segundo. Aliados na área recebem -${TANK.bastion.reduction * 100}% de dano. Detona: ${TANK.bastion.baseDamage} + 60% do dano absorvido (até ${TANK.bastion.baseDamage + TANK.bastion.bonusCap}) e cura ${TANK.bastion.healOnBurst * 100}% da vida. R de novo detona cedo.` },
+      passive: { name: 'Almas Presas', desc: `Bloqueios relevantes carregam a suprema; bloqueio perfeito fortalece a próxima maçada e rebate projéteis.` },
     },
   },
   vampire: {
@@ -418,7 +472,7 @@ export const CLASSES: Record<ClassId, ClassBase> = {
     difficulty: 2,
     blurb: 'Machado, peles e cicatrizes. Quanto mais sangra e faz sangrar, mais forte e mais imprudente fica.',
     weakness: 'Pouca defesa e nenhum alcance: só existe dentro da horda. Sem bater, a Fúria escorre em segundos; a Loucura cobra exaustão ao terminar.',
-    hp: 135,
+    hp: 150,
     stamina: 130,
     staminaRegen: 40,
     staminaDelay: 0.4,
@@ -431,8 +485,8 @@ export const CLASSES: Record<ClassId, ClassBase> = {
       basic: { name: 'Machado Brutal', desc: `Três golpes: ${BERSERKER.combo[0].damage} / ${BERSERKER.combo[1].damage} / ${BERSERKER.combo[2].damage}. O terceiro varre ${BERSERKER.combo[2].arc}° e recupera devagar.` },
       q: { name: 'Redemoinho de Fúria', desc: `Gira o machado em volta de si: ${BERSERKER.frenzy.pulses} pulsos de ${BERSERKER.frenzy.damage} de dano (${BERSERKER.frenzy.pulses * BERSERKER.frenzy.damage} no total) em ${BERSERKER.frenzy.range}px ao redor, andando enquanto gira. Acertar rende +${BERSERKER.frenzy.furyGain} de Fúria na hora. Custa só ${BERSERKER.frenzy.stamina} de stamina. Recarga ${BERSERKER.frenzy.cooldown}s.` },
       e: { name: 'Salto Brutal', desc: `Salta até ${BERSERKER.leap.maxRange}px e esmaga ao pousar: ${BERSERKER.leap.damage} de dano em ${BERSERKER.leap.radius}px e grande stagger. Recarga ${BERSERKER.leap.cooldown}s.` },
-      r: { name: 'Loucura', desc: `Por ${BERSERKER.madness.duration}s: Fúria no máximo, +${BERSERKER.madness.damageBonus * 100}% de dano, +${BERSERKER.madness.attackSpeed * 100}% de velocidade de ataque e imune a stagger, mas recebe +${BERSERKER.madness.damageTaken * 100}% de dano. Depois: ${BERSERKER.madness.exhaustion}s de exaustão.` },
-      passive: { name: 'Fúria', desc: `Causar e receber dano enche a Fúria: até +${BERSERKER.fury.maxDamageBonus * 100}% de dano e +${BERSERKER.fury.maxAttackSpeed * 100}% de velocidade de ataque. Acima de ${BERSERKER.fury.high} ela vira vantagem: golpes custam ${Math.round((1 - BERSERKER.fury.staminaCostMulHigh) * 100)}% menos stamina, a stamina volta mais rápido e você recebe ${Math.round((1 - BERSERKER.fury.damageTakenMulHigh) * 100)}% menos dano. Parado, a Fúria escorre ${BERSERKER.fury.decayPerSecond} por segundo.` },
+      r: { name: 'Loucura', desc: `Por ${BERSERKER.madness.duration}s: Fúria no máximo, +${BERSERKER.madness.damageBonus * 100}% de dano, +${BERSERKER.madness.attackSpeed * 100}% de velocidade de ataque, ${BERSERKER.madness.lifesteal * 100}% de roubo de vida e imune a stagger, mas recebe +${BERSERKER.madness.damageTaken * 100}% de dano. Depois: ${BERSERKER.madness.exhaustion}s de exaustão.` },
+      passive: { name: 'Fúria', desc: `Causar e receber dano enche a Fúria: até +${BERSERKER.fury.maxDamageBonus * 100}% de dano e +${BERSERKER.fury.maxAttackSpeed * 100}% de velocidade de ataque. Acima de ${BERSERKER.fury.high} ela vira vantagem: golpes custam ${Math.round((1 - BERSERKER.fury.staminaCostMulHigh) * 100)}% menos stamina, a stamina volta mais rápido e você recebe ${Math.round((1 - BERSERKER.fury.damageTakenMulHigh) * 100)}% menos dano. Cada abate cura ${BERSERKER.bloodlust.healPerKill} (elites ${BERSERKER.bloodlust.healPerEliteKill}). Parado, a Fúria escorre ${BERSERKER.fury.decayPerSecond} por segundo.` },
     },
   },
   dog: {
@@ -509,6 +563,32 @@ export const CLASSES: Record<ClassId, ClassBase> = {
       e: { name: 'Casca Traiçoeira', desc: `Joga uma casca (até ${LAPANHA.peel.throwRange}px, dura ${LAPANHA.peel.duration}s, máx. ${LAPANHA.peel.maxActive}): o primeiro inimigo que pisa escorrega na direção em que andava e fica vulnerável (+${Math.round((LAPANHA.peel.vulnerableMul - 1) * 100)}% de dano) por ${LAPANHA.peel.vulnerableSeconds}s. Elites deslizam menos; chefes só ficam lentos. Aperte E de novo para esmagar a casca: ${Math.round(LAPANHA.peel.crush.costFrac * 100)}% da vida, ${LAPANHA.peel.crush.damage} de dano em ${LAPANHA.peel.crush.radius}px e lentidão. Recarga ${LAPANHA.peel.cooldown}s.` },
       r: { name: 'Safra Abençoada', desc: `Precisa de Polpa cheia. Come um pedaço e regenera por ${LAPANHA.harvest.duration}s: ${Math.round(LAPANHA.harvest.baseRegen * 100)}% da vida máxima por segundo, até ${Math.round(LAPANHA.harvest.maxRegen * 100)}% se ativada com pouca vida. Arremessos +${Math.round(LAPANHA.harvest.attackSpeed * 100)}% mais rápidos, custos de vida -${Math.round((1 - LAPANHA.harvest.costMul) * 100)}% e acertos no centro curam ${LAPANHA.harvest.centerHeal} (máx. ${LAPANHA.harvest.hitHealPerSecond}/s). Sem invulnerabilidade; a Polpa não enche durante a Safra.` },
       passive: { name: 'Coração Maduro', desc: `Sacrificar vida fortalece a habilidade com retorno decrescente e nunca derruba você (mínimo 1 de vida). O sacrifício não conta como dano recebido. Acertos no centro geram ${LAPANHA.pulp.center} de Polpa, na borda ${LAPANHA.pulp.edge} (elites e chefes ×${LAPANHA.pulp.bigMul}).` },
+    },
+  },
+  maycon: {
+    id: 'maycon',
+    tag: 'Controle',
+    name: 'Maycon',
+    role: 'Controle de área do alto de um tapete voador',
+    difficulty: 2,
+    ultName: 'Rodada',
+    blurb: 'Grandão de bochecha rosada que flutua num tapete persa remendado. Só fala de Hunt: Showdown, sufoca a horda com fumaça e paga a rodada — de cachaça em chamas.',
+    weakness: 'Dano próprio baixo: depende de marcar e segurar a horda para a equipe bater. Grande e lento para desviar.',
+    hp: 112,
+    stamina: 95,
+    staminaRegen: 33,
+    staminaDelay: 0.5,
+    speed: 100,
+    radius: 8,
+    dodge: DODGE_STD,
+    ultPerDamage: 0.22,
+    color: 0xe0a83a,
+    texts: {
+      basic: { name: 'Garrafada', desc: `Arremessa uma garrafa que estoura no primeiro inimigo: ${MAYCON.bottle.damage} de dano, respingo de ${MAYCON.bottle.splashDamage} em ${MAYCON.bottle.splash}px e -${Math.round((1 - MAYCON.bottle.slow) * 100)}% de velocidade por ${MAYCON.bottle.slowSeconds}s.` },
+      q: { name: 'Bomba de Fumaça', desc: `Joga uma bomba no ponto mirado (até ${MAYCON.choke.maxRange}px): nuvem de ${MAYCON.choke.radius}px por ${MAYCON.choke.duration}s que atordoa quem entra (comuns ${MAYCON.choke.stunCommon}s), deixa ${Math.round((1 - MAYCON.choke.slow) * 100)}% mais lento, causa ${MAYCON.choke.tickDamage} a cada ${MAYCON.choke.tickInterval}s e APAGA projéteis inimigos. Recarga ${MAYCON.choke.cooldown}s.` },
+      e: { name: 'Voo Rasante', desc: `O tapete corta ${MAYCON.flight.distance}px na direção mirada (invulnerável no início): ${MAYCON.flight.damage} de dano, joga os inimigos para os lados e os deixa lentos por ${MAYCON.flight.slowSeconds}s. Recarga ${MAYCON.flight.cooldown}s.` },
+      r: { name: 'Rodada da Casa', desc: `Vira a garrafa e cospe um anel de cachaça em chamas (${MAYCON.brew.radius}px, ${MAYCON.brew.duration}s): puxa a horda para o centro, deixa ${Math.round((1 - MAYCON.brew.slow) * 100)}% mais lenta e queima ${MAYCON.brew.tickDamage} a cada ${(MAYCON.brew.tickEvery / 30).toFixed(1)}s. Aliados dentro recuperam ${MAYCON.brew.allyHealPerSecond} de vida por segundo.` },
+      passive: { name: 'Visão Sombria', desc: `Todo inimigo que o Maycon desacelera, atordoa ou puxa fica marcado por ${MAYCON.darkSight.seconds}s e recebe +${Math.round((MAYCON.darkSight.damageMul - 1) * 100)}% de dano de toda a equipe.` },
     },
   },
 };

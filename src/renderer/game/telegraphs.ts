@@ -239,6 +239,43 @@ export function drawZone(g: Phaser.GameObjects.Graphics, z: ZoneTuple, now: numb
         g.fillStyle(0xfff0ae, 0.9).fillRect(Math.round(x + Math.cos(a) * r), Math.round(y + Math.sin(a) * r) - 3, 2, 3);
       }
       break;
+    case 'choke': {
+      // Bomba de Fumaça: nuvem de bolhas cinzentas que giram devagar (vermelha se incendiária)
+      const hell = extra > 0;
+      const fade = Math.min(1, ttl / 15);
+      g.fillStyle(hell ? 0x3a2418 : 0x2a2d3a, 0.42 * fade).fillCircle(x, y, r);
+      for (let i = 0; i < 14; i++) {
+        const a = i * 2.39 + now / (1800 + (i % 3) * 400);
+        const d = r * (0.25 + ((i * 37) % 70) / 100);
+        const pr = 6 + (i % 4) * 3 + Math.sin(now / 300 + i) * 2;
+        g.fillStyle(i % 3 ? 0x565b70 : 0x7a8096, 0.5 * fade).fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, pr);
+      }
+      g.lineStyle(1, hell ? 0xff7a2a : 0xa3a9bb, 0.5 * fade).strokeCircle(x, y, r);
+      break;
+    }
+    case 'brew': {
+      // Rodada da Casa: poça de cachaça com anel de fogo e línguas de chama girando
+      const fade = Math.min(1, ttl / 15);
+      g.fillStyle(0x6e360d, 0.22 * fade).fillCircle(x, y, r);
+      g.fillStyle(0xe0902a, 0.08 * fade).fillCircle(x, y, r * 0.7);
+      g.lineStyle(3, 0xd9512c, 0.8 * fade).strokeCircle(x, y, r);
+      g.lineStyle(1, 0xffd08a, (pulse ? 0.9 : 0.6) * fade).strokeCircle(x, y, r - 3);
+      for (let i = 0; i < 24; i++) {
+        const a = (i / 24) * Math.PI * 2 + now / 900;
+        const h = 3 + Math.round((1 + Math.sin(now / 80 + i * 1.9)) * 3);
+        const fx0 = Math.round(x + Math.cos(a) * r);
+        const fy0 = Math.round(y + Math.sin(a) * r);
+        g.fillStyle(i % 3 ? 0xff7a2a : 0xf6c257, 0.85 * fade).fillRect(fx0, fy0 - h, 2, h);
+      }
+      // redemoinho puxando para o centro
+      for (let i = 0; i < 10; i++) {
+        const k = (now / 900 + i / 10) % 1;
+        const a = i * 0.63 + k * 3;
+        const d = r * (1 - k);
+        g.fillStyle(0xf6c257, 0.7 * fade * (1 - k)).fillRect(Math.round(x + Math.cos(a) * d), Math.round(y + Math.sin(a) * d), 2, 2);
+      }
+      break;
+    }
     case 'polarity': {
       g.fillStyle(0x2aa3b8, 0.12).fillCircle(x, y, r);
       for (let k = 0; k < 3; k++) {

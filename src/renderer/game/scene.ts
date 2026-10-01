@@ -17,6 +17,7 @@ import { audio } from '../audio.js';
 import { FlowField } from '../../server/world/nav.js';
 import type { Session, Snapshot } from '../session.js';
 import { Effects } from './effects.js';
+import { LIGHT, projectileGlow, skillLight } from './lightfx.js';
 import { reflectionAlpha } from './graphics-quality.js';
 import type { InputCapture } from './input.js';
 import { Predictor } from './predict.js';
@@ -309,6 +310,7 @@ export class GameScene extends Phaser.Scene {
             this.fx.number(ev.x + (Math.random() - 0.5) * 8, ev.y, String(ev.v), col, ev.c === 'crit' && ev.v >= 60);
             this.fx.burst('p_blood', ev.x, ev.y + 6, 3, 50, 0.35, { g: 180 });
             this.fx.particle('hit_0', ev.x, ev.y + 4, 0, 0, 0.06, { fade: false, depth: 99000 });
+            this.fx.glow(ev.x, ev.y + 4, ev.c === 'crit' ? 0xffd25a : 0xfff0e0, ev.c === 'crit' ? 0.5 : 0.3, { life: ev.c === 'crit' ? 0.18 : 0.1, grow: 1.5, alpha: 0.6, frame: ev.c === 'crit' ? 'glow_star' : 'glow_soft' });
             if (ev.s === myId) {
               this.hitstopUntil = performance.now() + (ev.v >= 30 ? 70 : 40);
               audio.play('hit', ev.x, ev.y, 0.8);
@@ -379,6 +381,7 @@ export class GameScene extends Phaser.Scene {
           const p = this.players.get(ev.pi);
           if (p) {
             this.fx.ring(p.x, p.y - 8, 4, 30, 0x7fc47a, 0.5);
+            this.fx.pillar(p.x, p.y, 0x9fffa0, 80, 0.9, 0.6);
             this.fx.burst('p_white', p.x, p.y - 8, 12, 50, 0.6, { up: 30 });
           }
           audio.play('revive');
@@ -397,8 +400,14 @@ export class GameScene extends Phaser.Scene {
         case 'ult': {
           const p = this.players.get(ev.pi);
           if (p) {
-            this.fx.ring(p.x, p.y - 10, 6, 44, CLASSES[p.cls].color, 0.45, 3);
+            const col = CLASSES[p.cls].color;
+            this.fx.ring(p.x, p.y - 10, 6, 44, col, 0.45, 3);
             this.fx.burst('p_ember', p.x, p.y - 10, 14, 80, 0.5, { up: 20 });
+            // toda suprema acende: coluna de luz na cor da classe + onda + estrela
+            this.fx.pillar(p.x, p.y, col, 130, 1.3, 0.7);
+            this.fx.shock(p.x, p.y, 56, col, 0.5);
+            this.fx.flare(p.x, p.y - 14, col, 1.2, 0.35);
+            this.fx.light(p.x, p.y, 160, 1, 0.6);
           }
           audio.play('ult', p?.x, p?.y);
           if (ev.pi === myId) this.fx.shake(2, 150);
@@ -441,6 +450,7 @@ export class GameScene extends Phaser.Scene {
       const p = this.players.get(id);
       return p ? { x: p.x, y: p.y - 10 } : null;
     };
+    skillLight(f, ev, { follow });
     switch (ev.n) {
       case 'guardianGuard':
         f.ring(ev.x, ev.y - 10, 4, 22, 0xa7e9d9, 0.25, 2);
@@ -976,9 +986,127 @@ export class GameScene extends Phaser.Scene {
         f.burst('p_wood', ev.x, ev.y - 8, 20, 120, 0.6, { g: 220, up: 60 });
         f.shake(5, 300);
         break;
+      // ---- Guardião v1.5: Martelo Sísmico, provocação da muralha e reflexo
+      case 'quakeWindup':
+        f.burst('p_soul', ev.x, ev.y - 14, 6, 30, 0.4, { up: 20 });
+        break;
+      case 'maceQuake':
+        f.ring(ev.x, ev.y, 4, ev.r, 0xb9f5e7, 0.32, 3);
+        f.ring(ev.x, ev.y, 2, ev.r * 0.6, 0x75b5ae, 0.26, 2);
+        f.burst('p_dust', ev.x, ev.y, 18, 110, 0.5, { up: 30 });
+        f.burst('p_silver', ev.x, ev.y, 10, 120, 0.4, { g: 200, up: 40 });
+        f.shake(5, 200);
+        break;
+      case 'bulwarkTaunt':
+        f.ring(ev.x, ev.y, 10, ev.r, 0x83c9c2, 0.4, 1);
+        f.number(ev.x, ev.y - 40, 'PROVOCAÇÃO', 0x9fe4d8);
+        break;
+      case 'guardianReflect':
+        f.burst('p_silver', ev.x, ev.y, 10, 140, 0.3, { dir: ev.a, spread: 0.8 });
+        f.number(ev.x, ev.y - 22, 'REFLETIDO!', 0xd5fff2);
+        audio.play('guardianBlockProjectile', ev.x, ev.y);
+        break;
+      // ---- Maycon
+      case 'bottleBurst':
+        f.ring(ev.x, ev.y, 2, ev.r, 0xf0b54a, 0.22, 2);
+        f.burst('p_glass', ev.x, ev.y - 4, 10, 110, 0.4, { g: 280, up: 40 });
+        f.burst('p_booze', ev.x, ev.y - 4, 10, 90, 0.45, { g: 240, up: 30 });
+        break;
+      case 'chokeBurst':
+        f.burst('p_smoke', ev.x, ev.y - 4, 26, 110, 0.9, { up: 10 });
+        f.burst('p_smokeDark', ev.x, ev.y - 2, 14, 70, 1.1, { up: 6 });
+        if (ev.a > 0) f.burst('p_ember', ev.x, ev.y - 4, 12, 100, 0.6, { up: 30 });
+        f.shake(3, 140);
+        break;
+      case 'chokeFire':
+        f.particle('p_ember', ev.x + (Math.random() - 0.5) * ev.r, ev.y + (Math.random() - 0.5) * ev.r * 0.8, 0, -30, 0.5, {});
+        break;
+      case 'chokeEnd':
+        f.burst('p_smoke', ev.x, ev.y, 10, 50, 0.7, { up: 10 });
+        break;
+      case 'carpetDash':
+        f.burst('p_dust', ev.x, ev.y, 8, 50, 0.4);
+        f.burst('p_ember', ev.x, ev.y - 4, 8, 90, 0.4, { dir: ev.a + Math.PI, spread: 1.2 });
+        break;
+      case 'carpetTrail':
+        f.particle('p_ember', ev.x + (Math.random() - 0.5) * 20, ev.y - 2, 0, 20, 0.4, { depth: ev.y });
+        break;
+      case 'carpetHit':
+        f.burst('p_dust', ev.x, ev.y, 4, 50, 0.3);
+        break;
+      case 'drinkStart':
+        f.burst('p_booze', ev.x + 6, ev.y - 24, 6, 30, 0.6, { up: 20 });
+        break;
+      case 'brewBurst':
+        f.ring(ev.x, ev.y, 8, ev.r, 0xff7a2a, 0.5, 3);
+        f.ring(ev.x, ev.y, 4, ev.r * 0.7, 0xf6c257, 0.4, 2);
+        f.burst('p_booze', ev.x, ev.y - 10, 40, 180, 0.8, { up: 40, g: 120 });
+        f.burst('p_ember', ev.x, ev.y - 6, 30, 160, 0.8, { up: 50 });
+        f.flash(0xff9a3c, 0.2, 200);
+        f.shake(6, 300);
+        break;
+      case 'brewPulse':
+        if (Math.random() < 0.6) {
+          const ang = Math.random() * Math.PI * 2;
+          f.particle(Math.random() < 0.5 ? 'p_ember' : 'p_booze', ev.x + Math.cos(ang) * ev.r, ev.y + Math.sin(ang) * ev.r, 0, -40, 0.5, { depth: ev.y + 60 });
+        }
+        break;
+      case 'brewEnd':
+        f.burst('p_smoke', ev.x, ev.y, 14, 60, 0.7, { up: 20 });
+        break;
+      case 'checkpoint':
+        f.number(ev.x, ev.y - 60, 'CHECKPOINT', 0xffd25a, true);
+        f.flash(0xffd25a, 0.18, 300);
+        audio.play('ult', ev.x, ev.y);
+        break;
+      case 'checkpointRestore':
+        f.flash(0xff5a3a, 0.35, 500);
+        f.shake(5, 400);
+        audio.play('revive');
+        break;
       case 'summon':
       case 'teleport':
         f.burst('p_abyss', ev.x, ev.y - 8, 10, 50, 0.5, { up: 30 });
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Brilho contínuo das zonas (habilidades de área acendem o chão; telegraphs ganham leitura). */
+  private zoneGlow(z: ZoneTuple, now: number): void {
+    const [, kindIdx, x, y, r, ttl, , extra] = z;
+    const kind = ZONE_KINDS[kindIdx];
+    const f = this.fx;
+    const breathe = 0.85 + Math.sin(now / 160 + x) * 0.15;
+    const ring = (c: number, a: number, flat = 1): void => f.aura(x, y, c, r / 56, a * breathe, 'glow_ring', flat);
+    const disc = (c: number, a: number, flat = 1): void => f.aura(x, y, c, (r * 2.2) / 64, a * breathe, 'glow_soft', flat);
+    switch (kind) {
+      case 'glacial': ring(LIGHT.ice, 0.45); disc(LIGHT.ice, 0.2); break;
+      case 'polarity': ring(LIGHT.dog, 0.5); disc(LIGHT.dog, 0.16); break;
+      case 'bastion': ring(LIGHT.gold, 0.4); break;
+      case 'graveHand': ring(LIGHT.necro, 0.4); disc(LIGHT.necro, 0.14); break;
+      case 'rupture': {
+        const prog = extra > 0 ? 1 - ttl / extra : 0;
+        ring(LIGHT.mage, 0.3 + prog * 0.5);
+        disc(LIGHT.mageHi, 0.08 + prog * 0.3);
+        break;
+      }
+      case 'rain': ring(LIGHT.hunter, 0.25); break;
+      case 'leapLand': ring(LIGHT.berserker, 0.4); break;
+      case 'choke': disc(extra ? LIGHT.mayconFlame : 0x3a4050, extra ? 0.22 : 0.12); ring(extra ? LIGHT.mayconFlame : LIGHT.smoke, 0.18); break;
+      case 'brew': {
+        const fade = Math.min(1, ttl / 20);
+        f.aura(x, y, LIGHT.mayconFlame, r / 56, (0.55 + Math.sin(now / 70) * 0.12) * fade, 'glow_ring', 1);
+        f.aura(x, y, LIGHT.maycon, (r * 2.1) / 64, 0.2 * fade, 'glow_soft', 1);
+        break;
+      }
+      case 'rune':
+      case 'eruption':
+      case 'nova':
+      case 'moonPulse':
+      case 'iceSpike':
+        ring(kind === 'nova' || kind === 'iceSpike' || kind === 'moonPulse' ? LIGHT.ice : LIGHT.abyss, 0.3);
         break;
       default:
         break;
@@ -1040,6 +1168,7 @@ export class GameScene extends Phaser.Scene {
 
   override update(_time: number, dtRaw: number): void {
     const dt = Math.min(dtRaw, 100);
+    this.fx.beginFrame();
     this.fpsSamples.push(dtRaw);
     if (this.fpsSamples.length > 120) this.fpsSamples.shift();
     for (const a of this.animated) {
@@ -1187,7 +1316,7 @@ export class GameScene extends Phaser.Scene {
       v.update(
         { data, x, y, at: Math.max(0, at), moving, serverTick: nowTick, watched: pd.id === this.spectateId },
         dt,
-        { ghost: (k, gx, gy, fl) => this.ghost(k, gx, gy, fl), particle: (k, px, py) => this.fx.particle(k, px, py, (Math.random() - 0.5) * 20, -20 - Math.random() * 20, 0.6, { depth: py + 1 }) },
+        { ghost: (k, gx, gy, fl) => this.ghost(k, gx, gy, fl), particle: (k, px, py) => this.fx.particle(k, px, py, (Math.random() - 0.5) * 20, -20 - Math.random() * 20, 0.6, { depth: py + 1 }), aura: (ax, ay, c, sz, al, fr, sy, rot) => this.fx.aura(ax, ay, c, sz, al, fr, sy, rot), glow: (gx, gy, c, sz, o) => this.fx.glow(gx, gy, c, sz, o) },
         hitstop && pd.id === sess.myId,
       );
       this.rendered.push({ id: pd.id, cls: pd.c, x, y, data });
@@ -1353,7 +1482,7 @@ export class GameScene extends Phaser.Scene {
         // arco apenas visual (a colisão fica no chão): parábola pela fração do voo + sombra
         const k0 = p0 && p0[7] >= 0 ? p0[7] : p1[7];
         const k = Math.max(0, Math.min(1, (k0 + (p1[7] - k0) * t) / 100));
-        const peak = kind === 'bigMelon' ? LAPANHA.ripe.arcHeight : LAPANHA.melon.arcHeight;
+        const peak = kind === 'bigMelon' || kind === 'chokeBomb' ? LAPANHA.ripe.arcHeight : LAPANHA.melon.arcHeight;
         visualY -= Math.round(4 * peak * k * (1 - k));
         let sh = this.lobShadows.get(id);
         if (!sh) {
@@ -1363,6 +1492,12 @@ export class GameScene extends Phaser.Scene {
         sh.setPosition(Math.round(x), Math.round(y)).setDepth(y - 40);
       }
       img.setPosition(Math.round(x), Math.round(visualY)).setDepth(y + 8);
+      const halo = projectileGlow(kind);
+      if (halo) {
+        // halo contínuo + rastro de luz que fica para trás
+        this.fx.aura(x, visualY, halo.c, halo.s, 0.75);
+        if (Math.random() < 0.5) this.fx.glow(x, visualY, halo.c, halo.s * 0.55, { life: 0.22, grow: 0.4, alpha: 0.6, frame: 'glow_core' });
+      }
       if (kind === 'slipper') img.setRotation(performance.now() / 50);
       else if (kind === 'bolt' || kind === 'pierceBolt' || kind === 'bone') img.setRotation(Math.atan2(p1[5], p1[4]));
       else if (kind === 'iceShard') {
@@ -1423,6 +1558,7 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
       drawZone(this.zoneG, z as ZoneTuple, now);
+      this.zoneGlow(z as ZoneTuple, now);
     }
     for (const [id, img] of this.traps) {
       if (!seenT.has(id)) {
@@ -1829,11 +1965,16 @@ export class GameScene extends Phaser.Scene {
     if (this.mode === 'match' && latest) {
       for (const z of latest.z) {
         const k = ZONE_KINDS[z[1]];
-        if (k === 'glacial' || k === 'bastion' || k === 'rupture' || k === 'polarity' || k === 'eruption' || k === 'rune' || k === 'leapMark' || k === 'spawnWarn' || k === 'graveHand' || k === 'moonPulse' || k === 'nova' || k === 'iceSpike')
+        if (k === 'glacial' || k === 'bastion' || k === 'rupture' || k === 'polarity' || k === 'eruption' || k === 'rune' || k === 'leapMark' || k === 'spawnWarn' || k === 'graveHand' || k === 'moonPulse' || k === 'nova' || k === 'iceSpike' || k === 'brew')
           light(z[2], z[3], z[4] > 90 ? 112 : z[4] > 55 ? 72 : 48, 0.6);
       }
     }
     for (const p of this.pings) light(p.x, p.y, 48, 0.7);
+    // luzes das habilidades (clarões recortam a escuridão e somem suavemente)
+    for (const l of this.fx.activeLights()) {
+      const rr = l.r <= 30 ? 24 : l.r <= 60 ? 48 : l.r <= 90 ? 72 : l.r <= 130 ? 112 : 160;
+      light(l.x, l.y, rr, l.a * Math.min(1, (l.life / l.max) * 1.6));
+    }
     rt.render();
     for (const g of this.glows) g.setAlpha((this.enhancedLighting ? 0.3 : 0.18) + Math.sin(now / 80 + g.x) * 0.03);
   }

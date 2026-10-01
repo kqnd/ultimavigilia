@@ -5,7 +5,11 @@ pixel art. Uma campanha de **30 ondas em três capítulos** — a vila amaldiço
 congelado e a mansão no deserto de cinzas — com uma fogueira que precisa continuar acesa.
 
 - 1 a 6 jogadores; um deles hospeda a partida no próprio PC (LAN ou **Radmin VPN**).
-- Sete classes (uma por jogador): **Caçador, Mago, Tank, Vampiro, Berserker, Dog e Necromante**.
+- Nove classes (uma por jogador): **Caçador, Mago, Guardião (Tank), Vampiro, Berserker, Dog, Necromante,
+  Lapanha e Maycon** (controle de área num tapete voador, citando Hunt: Showdown).
+- **Checkpoints por chefe**: vencer um chefe ou minichefe salva o progresso. Se a equipe cair depois,
+  volta para a onda seguinte ao checkpoint — perdendo as melhorias tomadas desde então e 10% da vida
+  máxima por volta (acumula até 50%).
 - Três mapas com climas próprios (noite, nevasca, tempestade de cinzas); a horda se adapta a cada
   clima. Entre capítulos, a equipe vota a rota (Portal de Risco × Rota Segura) e uma cinemática em
   pixel art leva o grupo ao próximo mapa.
@@ -116,8 +120,8 @@ Ou seja: **para os jogadores receberem uma atualização, é preciso publicar um
 instalador anexado.** `npm run release` confere o que falta e imprime os comandos exatos:
 
 ```bash
-npm run release 1.4.0   # ajusta package.json e GAME_VERSION juntos
-npm run dist:win        # gera release/UltimaVigilia-1.4.0-Instalador.exe
+npm run release 1.5.0   # ajusta package.json e GAME_VERSION juntos
+npm run dist:win        # gera release/UltimaVigilia-1.5.0-Instalador.exe
 npm run release         # imprime os comandos de tag, push e gh release create
 ```
 

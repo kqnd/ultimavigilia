@@ -249,6 +249,36 @@ scenarios.showcase = async () => {
   await app.close();
 };
 
+// v1.5: posições de jogador e zonas após a Rodada da Casa (Maycon) + capturas da camada de luz.
+scenarios.brewpos = async () => {
+  const { app, page, logs } = await launch('brewpos', []);
+  try {
+    await soloStart(page, 'maycon');
+    await dbg(page, 'god');
+    await dbg(page, 'spawn', 8, 'shambler');
+    await sleep(500);
+    const pos = () => page.evaluate(() => {
+      const { session, game } = window.__app;
+      const l = session.latest();
+      const me = l?.p.find((p) => p.id === session.myId);
+      return { srv: me && [Math.round(me.x), Math.round(me.y), me.act], pred: [Math.round(game.predictor.state.x), Math.round(game.predictor.state.y)], z: (l?.z ?? []).map((z) => [z[1], Math.round(z[2]), Math.round(z[3])]) };
+    });
+    console.log('antes', JSON.stringify(await pos()));
+    await dbg(page, 'ult');
+    await sleep(200);
+    await page.mouse.move(760, 360);
+    await page.keyboard.press('KeyR');
+    for (let i = 0; i < 6; i++) {
+      await sleep(300);
+      console.log('t' + i, JSON.stringify(await pos()));
+    }
+    await shot(page, 'brewpos');
+  } finally {
+    fs.writeFileSync(path.join(out, 'logs-brewpos.txt'), logs.join('\n'));
+    await app.close();
+  }
+};
+
 // Regressão da mira: durante a preparação, mover o cursor deve mudar a direção do projétil.
 scenarios.aim = async () => {
   const cls = rest[0] ?? 'hunter';
