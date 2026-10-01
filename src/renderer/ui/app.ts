@@ -20,6 +20,7 @@ import type { GameScene } from '../game/scene.js';
 import { tf } from '../game/textures.js';
 import type { Session } from '../session.js';
 import { classSprite, h, iconEl, stars } from './dom.js';
+import { MenuNav } from './nav.js';
 
 type Screen = 'menu' | 'host' | 'join' | 'connecting' | 'lobby' | 'match' | 'results';
 
@@ -37,6 +38,15 @@ const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
 
 const DIAG =
   'Dicas:\n· Confira IP e porta com o anfitrião (ele vê o endereço no lobby).\n· Na Radmin VPN, os dois precisam estar na mesma rede e aparecer como online.\n· No PC do anfitrião, permita o Última Vigília no Firewall do Windows. A Radmin VPN costuma ser classificada como rede Pública: marque também essa opção, ou libere só a porta TCP escolhida. Não é preciso desativar o firewall.';
+
+/** Primeira frase do efeito (curta) para a face da carta; o texto completo vai no tooltip. */
+function shortDesc(desc: string): string {
+  const t = desc.replace(/^BIFURCAÇÃO:\s*/, '');
+  const first = t.split(/(?<=[.;])\s/)[0] ?? t;
+  if (first.length <= 70) return first;
+  const cut = first.slice(0, 68);
+  return `${cut.slice(0, cut.lastIndexOf(' ') > 40 ? cut.lastIndexOf(' ') : 68)}…`;
+}
 
 /** Comparação simples na carta: valor atual → valor com mais um acúmulo. */
 function compareLine(u: UpgradeDef, have: number): string {
@@ -68,6 +78,9 @@ export class App {
   private update: UpdateStatus = { state: 'idle' };
   private updateChecked = false;
   private updateDismissed = false;
+  private nav: MenuNav;
+  /** Onda do último checkpoint salvo nesta partida (0 = nenhum ainda). */
+  private checkpointWave = 0;
 
   constructor(
     private readonly session: Session,
@@ -82,6 +95,21 @@ export class App {
     this.overlay = h('div', { class: 'layer passthrough' });
     this.toasts = h('div', { class: 'layer passthrough' });
     this.root.append(this.layer, this.overlay, this.toasts);
+    this.hud.hintsSeen = new Set(this.settings.hintsSeen);
+    this.hud.onHintSeen = (id) => {
+      if (this.settings.hintsSeen.includes(id)) return;
+      this.settings.hintsSeen.push(id);
+      void this.saveSettings();
+    };
+    this.nav = new MenuNav(this.root, {
+      scope: () => this.menuScope(),
+      back: () => this.back(),
+      start: () => {
+        if (this.screen === 'match' && !this.settingsOpen && !this.introId) this.togglePause();
+      },
+      token: () => this.screen,
+      moved: () => audio.play('uiHover'),
+    });
     this.wire();
     this.initUpdates();
     this.fit();
@@ -129,10 +157,34 @@ export class App {
   applySettings(): void {
     const s = this.settings;
     audio.setVolumes(s.volumeMaster, s.volumeSfx, s.volumeAmbience);
-    this.game.fx.settings = { shake: s.shake, flashes: s.flashes, damageNumbers: s.damageNumbers, glow: s.skillGlow };
+    this.game.fx.settings = { shake: s.reduceMotion ? 0 : s.shake, flashes: s.reduceMotion ? Math.min(s.flashes, 0.3) : s.flashes, damageNumbers: s.damageNumbers, glow: s.skillGlow };
     this.game.brightness = s.brightness;
     this.game.setEnhancedLighting(s.enhancedLighting);
     this.input.binds = s.keys;
+    // acessibilidade (HUD em Phaser + menus em DOM)
+    this.hud.highContrast = s.highContrast;
+    this.hud.reduceMotion = s.reduceMotion;
+    this.hud.hintsOn = s.hints;
+    document.body.classList.toggle('hc', s.highContrast);
+    document.body.classList.toggle('rm', s.reduceMotion);
+    this.root.style.setProperty('--uis', String(s.uiScale));
+  }
+
+  /** Menu no topo (recebe a navegação por teclado/gamepad); null durante o combate. */
+  private menuScope(): HTMLElement | null {
+    const byId = (id: string): HTMLElement | null => document.getElementById(id);
+    const found = byId('settings') ?? byId('modal') ?? byId('pause') ?? this.overlay.querySelector<HTMLElement>('.upgrades, .routevote');
+    if (found) return found;
+    return this.screen === 'match' ? null : this.layer;
+  }
+
+  /** Voltar/fechar o menu atual (Esc e botão B). */
+  private back(): void {
+    const modal = document.getElementById('modal');
+    if (this.settingsOpen) this.closeSettings();
+    else if (modal) modal.remove();
+    else if (this.screen === 'match' && !this.introId) this.togglePause();
+    else if (this.screen === 'host' || this.screen === 'join') this.go('menu');
   }
 
   private wire(): void {
@@ -157,6 +209,7 @@ export class App {
         audio.stopBossTheme();
       }
       if (p.phase === 'lobby') {
+        this.checkpointWave = 0;
         this.game.toMenu();
         this.input.enabled = false;
         if (s.connected) this.go('lobby');
@@ -174,10 +227,13 @@ export class App {
         const first = ch && p.wave === ch.firstWave;
         const label = first && ch ? `${ch.name} — ${def?.title ?? ''}` : (def?.title ?? '');
         if (def?.boss) {
-          this.hud.showBanner(`ONDA ${p.wave}`, label, 0xec6a5e, 3200);
+          this.hud.showBanner(`ONDA ${p.wave}`, label, 0xec6a5e, 3200, 'boss');
           audio.play('bossWarn');
+        } else if (def?.miniboss) {
+          this.hud.showBanner(`ONDA ${p.wave}`, label, 0xe07cff, 3000, 'mini');
+          audio.play('waveStart');
         } else {
-          this.hud.showBanner(`ONDA ${p.wave}`, label, 0xf6c257, first ? 3400 : 2600);
+          this.hud.showBanner(`ONDA ${p.wave}`, label, 0xf6c257, first ? 3400 : 2600, 'wave');
           audio.play('waveStart');
         }
       } else if (p.phase === 'intermission') {
@@ -286,6 +342,16 @@ export class App {
     } else if (ev.k === 'boss' && ev.ph === 2) {
       audio.setBossPhase(2);
       this.hud.showBanner('FASE 2', 'O chefe mudou de padrão!', 0xe07cff, 2200);
+    } else if (ev.k === 'msg' && /^CHECKPOINT SALVO/.test(ev.txt)) {
+      // checkpoint do servidor: aviso animado em vez de uma linha de texto
+      this.checkpointWave = Number(/onda (\d+)/.exec(ev.txt)?.[1] ?? this.checkpointWave);
+      this.hud.showBanner('CHECKPOINT SALVO', `Onda ${this.checkpointWave} · se a equipe cair, volta daqui`, 0x7fc47a, 3400, 'checkpoint');
+      this.hud.hint('checkpoint', 'Se todos caírem, a equipe volta ao checkpoint: perde melhorias recentes e um pouco de vida máxima');
+    } else if (ev.k === 'msg' && /^De volta ao checkpoint/.test(ev.txt)) {
+      // "De volta ao checkpoint (onda N). -X% de vida máxima, M melhorias perdidas."
+      const rest = ev.txt.replace(/^De volta ao checkpoint \(onda \d+\)\.\s*/, '');
+      this.hud.showBanner('DE VOLTA AO CHECKPOINT', rest || 'Tentem de novo', 0xec6a5e, 4600, 'restore');
+      this.hud.message(ev.txt, 0xec6a5e, 4200);
     } else if (ev.k === 'msg') {
       const col = ev.c === 'good' ? 0x7fc47a : ev.c === 'bad' ? 0xec6a5e : ev.c === 'boss' ? 0xe07cff : 0xf6c257;
       this.hud.message(ev.txt, col, 3200);
@@ -296,14 +362,11 @@ export class App {
     audio.unlock();
     const k = this.settings.keys;
     if (code === 'Escape' && down && !e.repeat) {
-      if (this.settingsOpen) {
-        this.closeSettings();
-        return;
-      }
-      if (this.screen === 'match') this.togglePause();
-      else if (this.screen === 'host' || this.screen === 'join') this.go('menu');
+      this.back();
       return;
     }
+    // cartas de melhoria: 1–6 escolhem a carta (Enter/botão confirmam)
+    if (down && !e.repeat && /^Digit[1-6]$/.test(code) && this.pickUpgradeByNumber(Number(code.slice(5)) - 1)) return;
     if (code === 'F9' && down && !e.repeat) {
       // depuração da mira: cursor no mundo, linha da mira, direção enviada e trajetória
       this.game.aimDebug = !this.game.aimDebug;
@@ -330,7 +393,12 @@ export class App {
     }
   }
 
+  private pickUpgradeByNumber(i: number): boolean {
+    return this.upPick?.(i) ?? false;
+  }
+
   private clearOverlayPanels(): void {
+    this.upPick = null;
     this.overlay.querySelectorAll('.upgrades, .routevote').forEach((n) => n.remove());
     if (this.upTimer) {
       clearInterval(this.upTimer);
@@ -352,6 +420,7 @@ export class App {
 
   private go(s: Screen): void {
     this.hideBossIntro();
+    if (this.screen !== s) this.fadeScreen();
     if (s !== 'match') {
       audio.stopBossTheme();
       audio.stopBard();
@@ -393,10 +462,18 @@ export class App {
     }
   }
 
+  /** Cortina curta entre telas (suave, em degraus; some com "reduzir movimento"). */
+  private fadeScreen(): void {
+    if (this.settings.reduceMotion) return;
+    const f = h('div', { class: 'screen-fade' });
+    this.root.append(f);
+    setTimeout(() => f.remove(), 340);
+  }
+
   private modal(title: string, text: string): void {
     const m = h(
       'div',
-      { class: 'panel gold fade-in', style: 'left:120px;top:90px;width:400px;z-index:50' },
+      { id: 'modal', class: 'panel gold fade-in scalable', style: 'left:120px;top:90px;width:400px;z-index:50' },
       h('h2', { text: title }),
       h('div', { style: 'white-space:pre-wrap;max-height:150px', class: 'scroll', text }),
       h('br'),
@@ -745,17 +822,19 @@ export class App {
       const mine = owner?.id === s.myId;
       const card = h(
         'div',
-        { class: `classcard${mine ? ' mine' : ''}${owner && !mine ? ' taken' : ''}` },
+        { class: `classcard${mine ? ' mine' : ''}${owner && !mine ? ' taken' : ''}`, tabindex: 0, role: 'button', 'aria-label': `${CLASSES[c].name}${owner ? (mine ? ' (sua classe)' : ` (ocupado por ${owner.name})`) : ''}`, 'data-autofocus': mine || (!me?.cls && c === info) },
         classSprite(c, 1, mine ? 'walk' : 'idle'),
         h('div', { text: CLASSES[c].name, class: mine ? 'amber' : '' }),
         h('div', { class: owner && !mine ? 'red' : 'hint', text: owner ? (mine ? 'você' : `ocupado: ${owner.name}`) : CLASSES[c].tag }),
       );
-      card.addEventListener('mouseenter', () => {
+      const showInfo = (): void => {
         if (this.selectedInfo !== c) {
           this.selectedInfo = c;
           this.renderClassInfo(detail, c, taken);
         }
-      });
+      };
+      card.addEventListener('mouseenter', showInfo);
+      card.addEventListener('focus', showInfo);
       card.addEventListener('click', () => {
         audio.play('uiClick');
         if (owner && !mine) {
@@ -836,7 +915,7 @@ export class App {
       h('button', { class: 'btn', onclick: () => this.openSettings() }, 'Configurações'),
       h('button', { class: 'btn danger', onclick: () => void this.leave(true) }, host && !s.solo ? 'Fechar sala' : 'Sair'),
     );
-    this.layer.append(h('div', { class: 'title', style: 'position:absolute;left:10px;top:6px;font-size:11px', text: s.solo ? 'ÚLTIMA VIGÍLIA — SOLO' : 'ÚLTIMA VIGÍLIA — LOBBY' }), left, detail, right);
+    this.layer.append(h('div', { class: 'title', style: 'position:absolute;left:10px;top:6px;font-size:11px', text: s.solo ? 'ÚLTIMA VIGÍLIA — SOLO' : 'ÚLTIMA VIGÍLIA — LOBBY' }), left, detail, right, h('div', { class: 'hint', style: 'position:absolute;left:10px;bottom:6px', text: 'Setas / D-pad: navegar · Enter / A: escolher · Esc / B: voltar' }));
   }
 
   private renderClassInfo(el: HTMLElement, c: ClassId, taken: Map<ClassId, LobbyPlayer>): void {
@@ -868,6 +947,7 @@ export class App {
   private upSent: string | null = null;
   private rareSoundFor = '';
   private upKey = '';
+  private upPick: ((i: number) => boolean) | null = null;
   private upTimer = 0;
 
   private renderUpgrades(): void {
@@ -889,41 +969,67 @@ export class App {
       const other = Object.keys(off.mine).find((k) => k !== id && (off.mine[k] ?? 0) > 0 && UPGRADE_BY_ID.get(k)?.fork === u.fork);
       return other ? (UPGRADE_BY_ID.get(other)?.name ?? other) : null;
     };
-    const panel = h('div', { class: 'panel gold upgrades fade-in', style: `left:${off.options.length > 3 ? 70 : 110}px;top:62px;width:${off.options.length > 3 ? 500 : 420}px` });
+    const panel = h('div', { class: 'panel gold upgrades fade-in', style: `left:${off.options.length > 3 ? 70 : 110}px;top:40px;width:${off.options.length > 3 ? 500 : 420}px` });
     panel.append(h('h2', { text: locked ? 'Melhoria confirmada — aguardando a equipe' : 'Escolha uma melhoria e confirme' }));
     if (off.bonus) panel.append(h('div', { class: 'ok', style: 'margin:-3px 0 4px', text: `Carta extra nesta escolha: ${off.bonus}` }));
     const row = h('div', { class: 'row', style: 'align-items:stretch' });
-    const confirm = h('button', { class: 'btn primary', style: 'margin-top:6px', disabled: locked || !this.upSel || !!this.upSent }, locked ? '✓ Escolha confirmada' : this.upSent ? 'Enviando…' : this.upSel ? `Confirmar escolha: ${UPGRADE_BY_ID.get(this.upSel)?.name ?? ''}` : 'Confirmar escolha');
+    const confirm = h('button', { class: 'btn primary', style: 'margin-top:6px', disabled: locked || !this.upSel || !!this.upSent, 'data-autofocus': !locked && !!this.upSel && !this.upSent }, locked ? '✓ Escolha confirmada' : this.upSent ? 'Enviando…' : this.upSel ? `Confirmar escolha: ${UPGRADE_BY_ID.get(this.upSel)?.name ?? ''}` : 'Confirmar escolha');
+    // tooltip com os detalhes da carta sob o foco/mouse (a carta mostra só o essencial)
+    const tip = h('div', { class: 'up-tip' });
+    const showTip = (id: string): void => {
+      const u = UPGRADE_BY_ID.get(id);
+      if (!u) return;
+      const have = off.mine[id] ?? 0;
+      const forkName = u.fork ? (FORKS[u.fork]?.name ?? 'Bifurcação') : '';
+      const rivals = u.fork ? [...UPGRADE_BY_ID.values()].filter((o) => o.fork === u.fork && o.id !== id).map((o) => o.name) : [];
+      const blocked = blockedBy(id);
+      tip.replaceChildren(...[
+        h('div', {}, h('span', { class: `tipname rarity-tag rar-${u.rarity}`, text: RARITY_INFO[u.rarity].name }), ' ', h('span', { class: 'amber', text: u.name }), h('span', { class: 'hint', text: ` · ${KIND_INFO[u.kind]} · ${u.cls ? CLASSES[u.cls].name : 'Geral'}` })),
+        h('div', { text: u.desc.replace(/^BIFURCAÇÃO:\s*/, '') }),
+        u.fork ? h('div', { class: blocked ? 'red' : 'mag', text: blocked ? `Incompatível: você seguiu ${blocked}` : `${forkName} — exclui ${rivals.join(', ')}` }) : null,
+        h('div', { class: 'hint', text: `Acúmulos: ${have} → ${have + 1} (máx. ${u.maxStacks})${u.cap ? ` · Teto global de ${CAP_TEXT[u.cap]}: ${Math.round(UPGRADE_CAPS[u.cap] * 100)}%` : ''}` }),
+      ].filter((x): x is HTMLDivElement => !!x));
+    };
+    const cards: [string, HTMLElement, boolean][] = [];
+    let n = 0;
     for (const id of off.options) {
       const u = UPGRADE_BY_ID.get(id);
       if (!u) continue;
+      n++;
       const have = off.mine[id] ?? 0;
       const blocked = blockedBy(id);
       const chosen = locked ? off.picked === id : this.upSel === id;
       const dim = (locked && off.picked !== id) || (!locked && !!this.upSel && this.upSel !== id) || !!blocked;
-      const forkName = u.fork ? (FORKS[u.fork]?.name ?? 'Bifurcação') : '';
-      const rivals = u.fork ? [...UPGRADE_BY_ID.values()].filter((o) => o.fork === u.fork && o.id !== id).map((o) => o.name) : [];
       const card = h(
         'div',
-        { class: `upcard rar-${u.rarity}${chosen ? ' sel' : dim ? ' dim' : ''}`, style: blocked ? 'cursor:not-allowed' : '' },
-        h('div', { class: `rarity-tag rar-${u.rarity}`, text: `${RARITY_INFO[u.rarity].name} · ${KIND_INFO[u.kind]}` }),
-        h('div', { class: 'row' }, h('div', { style: 'flex:0 0 34px' }, iconEl(u.icon, 2)), h('div', {}, h('div', { class: 'amber', text: u.name }), h('div', { class: 'hint', text: u.cls ? CLASSES[u.cls].name : 'Geral' }))),
-        u.fork ? h('div', { class: blocked ? 'red' : 'mag', style: 'margin-top:3px', text: blocked ? `Incompatível: você seguiu ${blocked}` : `${forkName} — exclui ${rivals.join(', ')}` }) : null,
-        h('div', { style: 'margin-top:4px;min-height:36px', text: u.desc.replace(/^BIFURCAÇÃO:\s*/, '') }),
+        { class: `upcard rar-${u.rarity}${chosen ? ' sel' : dim ? ' dim' : ''}`, style: blocked ? 'cursor:not-allowed' : '', tabindex: blocked || locked ? undefined : 0, role: 'button', 'aria-label': `${RARITY_INFO[u.rarity].name}: ${u.name}` },
+        h('div', { class: `rarity-tag rar-${u.rarity}`, text: RARITY_INFO[u.rarity].name }),
+        h('div', { class: 'upnum', text: String(n) }),
+        h('div', { class: 'row', style: 'margin-top:2px' }, h('div', { style: 'flex:0 0 34px' }, iconEl(u.icon, 2)), h('div', {}, h('div', { class: 'amber', text: u.name }), h('div', { class: 'hint', text: u.cls ? CLASSES[u.cls].name : 'Geral' }))),
+        blocked ? h('div', { class: 'red', style: 'margin-top:3px', text: `Incompatível: ${blocked}` }) : u.fork ? h('div', { class: 'mag', style: 'margin-top:3px', text: 'Bifurcação' }) : null,
+        h('div', { class: 'up-short', text: shortDesc(u.desc) }),
         compareLine(u, have) ? h('div', { class: 'ok', text: compareLine(u, have) }) : null,
-        u.cap ? h('div', { class: 'hint', text: `Teto global de ${CAP_TEXT[u.cap]}: ${Math.round(UPGRADE_CAPS[u.cap] * 100)}%` }) : null,
-        h('div', { class: 'hint', text: `Acúmulos: ${have} → ${have + 1} (máx. ${u.maxStacks})` }),
-        chosen ? h('div', { class: locked ? 'ok' : 'amber', style: 'margin-top:2px', text: locked ? '✓ confirmada' : '› selecionada' }) : null,
+        chosen ? h('div', { class: locked ? 'ok' : 'amber', style: 'margin-top:2px', text: locked ? '✓ confirmada' : '› selecionada' }) : h('div', { class: 'hint', style: 'margin-top:2px', text: `${have}/${u.maxStacks} acúmulos` }),
       );
-      if (!locked && !blocked)
-        card.addEventListener('click', () => {
-          if (this.upSent) return;
-          audio.play('uiClick');
-          this.upSel = id;
-          this.renderUpgrades();
-        });
+      const pick = (): void => {
+        if (locked || blocked || this.upSent) return;
+        audio.play('uiClick');
+        this.upSel = id;
+        this.renderUpgrades();
+      };
+      card.addEventListener('mouseenter', () => showTip(id));
+      card.addEventListener('focus', () => showTip(id));
+      if (!locked && !blocked) card.addEventListener('click', pick);
+      cards.push([id, card, !locked && !blocked]);
       row.append(card);
     }
+    this.upPick = (i: number): boolean => {
+      const c = cards[i];
+      if (!c || !c[2]) return false;
+      c[1].click();
+      return true;
+    };
+    showTip(this.upSel ?? off.picked ?? cards[0]?.[0] ?? '');
     confirm.addEventListener('click', () => {
       const id = this.upSel;
       if (!id || locked || this.upSent) return;
@@ -935,11 +1041,11 @@ export class App {
     const timer = h('div', { class: 'hint', style: 'margin-top:5px' });
     const tick = (): void => {
       const tm = this.session.latest()?.w.tm ?? 0;
-      timer.textContent = `Prontos: ${off.readyCount}/${off.total} · ${Math.ceil(tm / 30)}s. A próxima onda começa quando todos confirmarem ou o tempo acabar (sem confirmação = primeira opção válida).`;
+      timer.textContent = `Prontos ${off.readyCount}/${off.total} · ${Math.ceil(tm / 30)}s · setas navegam · 1-${Math.max(1, off.options.length)} escolhe · Enter confirma · sem confirmar vale a 1ª opção`;
     };
     tick();
     this.upTimer = window.setInterval(tick, 250);
-    panel.append(row, confirm, timer);
+    panel.append(row, tip, confirm, timer);
     this.overlay.append(panel);
     // cartas fortes chamam atenção uma vez por oferta (sem pausar além do normal)
     const best = off.options.map((id) => UPGRADE_BY_ID.get(id)?.rarity).find((r) => r === 'legendary') ?? off.options.map((id) => UPGRADE_BY_ID.get(id)?.rarity).find((r) => r === 'rare');
@@ -1000,19 +1106,35 @@ export class App {
     const p = s.phase;
     const win = p.phase === 'victory';
     const tbl = h('table', {}, h('tr', {}, h('th', { text: 'Jogador' }), h('th', { text: 'Classe' }), h('th', { text: 'Abates' }), h('th', { text: 'Dano' }), h('th', { text: 'Quedas' }), h('th', { text: 'Reviveu' })));
+    // destaques da equipe (calculados só com os números já existentes)
+    const best = (key: 'kills' | 'damage' | 'revives'): { name: string; v: number } | null => {
+      let top: { name: string; v: number } | null = null;
+      for (const lp of s.lobby) {
+        const v = p.stats?.[lp.id]?.[key] ?? 0;
+        if (v > 0 && (!top || v > top.v)) top = { name: lp.name, v };
+      }
+      return top;
+    };
+    const mvp = h('div', { class: 'mvp' });
+    for (const [label, key] of [['Mais dano', 'damage'], ['Mais abates', 'kills'], ['Mais reviveu', 'revives']] as const) {
+      const b = best(key);
+      if (b) mvp.append(h('span', {}, `${label}: `, h('b', { text: `${b.name} (${b.v})` })));
+    }
+    let rowN = 0;
     for (const lp of s.lobby) {
       const st = p.stats?.[lp.id];
-      tbl.append(h('tr', {}, h('td', { text: lp.name, class: lp.id === s.myId ? 'amber' : '' }), h('td', { text: lp.cls ? CLASSES[lp.cls].name : '' }), h('td', { text: String(st?.kills ?? 0) }), h('td', { text: String(st?.damage ?? 0) }), h('td', { text: String(st?.downs ?? 0) }), h('td', { text: String(st?.revives ?? 0) })));
+      tbl.append(h('tr', { class: 'row-in', style: `animation-delay:${300 + 90 * rowN++}ms` }, h('td', { text: lp.name, class: lp.id === s.myId ? 'amber' : '' }), h('td', { text: lp.cls ? CLASSES[lp.cls].name : '' }), h('td', { text: String(st?.kills ?? 0) }), h('td', { text: String(st?.damage ?? 0) }), h('td', { text: String(st?.downs ?? 0) }), h('td', { text: String(st?.revives ?? 0) })));
     }
     const mm = Math.floor(p.time / 60);
     const ss = String(p.time % 60).padStart(2, '0');
     this.layer.append(
       h(
         'div',
-        { class: 'panel gold fade-in', style: 'left:120px;top:50px;width:400px' },
-        h('div', { class: 'title center', style: `color:${win ? '#f6c257' : '#ec6a5e'}`, text: win ? 'VITÓRIA' : 'DERROTA' }),
+        { class: 'panel gold fade-in scalable', style: 'left:120px;top:50px;width:400px' },
+        h('div', { class: 'title center title-pop', style: `color:${win ? '#f6c257' : '#ec6a5e'}`, text: win ? 'VITÓRIA' : 'DERROTA' }),
         h('div', { class: 'center hint', text: win ? `A fogueira resistiu às ${TOTAL_WAVES} ondas dos três capítulos.` : `A vigília caiu na onda ${p.wave}/${TOTAL_WAVES} (capítulo ${p.ch}).` }),
         h('div', { class: 'center', style: 'margin:4px 0', text: `Tempo de partida: ${mm}:${ss}` }),
+        mvp,
         tbl,
         h('div', { style: 'height:8px' }),
         s.isHost() ? h('button', { class: 'btn primary', onclick: () => s.send({ t: 'again' }) }, s.solo ? 'Jogar novamente' : 'Jogar novamente (voltar ao lobby)') : h('div', { class: 'hint', text: 'Aguardando o anfitrião decidir jogar novamente…' }),
@@ -1026,6 +1148,7 @@ export class App {
   private togglePause(): void {
     if (this.pauseOpen) {
       document.getElementById('pause')?.remove();
+      document.getElementById('pause-scrim')?.remove();
       this.pauseOpen = false;
       audio.bardPaused = false;
       this.input.enabled = true;
@@ -1039,14 +1162,19 @@ export class App {
     this.input.clear();
     if (this.session.solo) this.session.send({ t: 'pause', p: true });
     const host = this.session.isHost() && !this.session.solo;
+    const ph = this.session.phase;
+    const pauseInfo = `Capítulo ${ph.ch} · Onda ${ph.wave}/${TOTAL_WAVES} · ${this.checkpointWave > 0 ? `checkpoint: onda ${this.checkpointWave}` : 'sem checkpoint ainda'}`;
     this.overlay.append(
+      h('div', { id: 'pause-scrim', style: 'position:absolute;left:0;top:0;width:640px;height:360px;background:rgba(5,6,12,0.55);z-index:39;pointer-events:none' }),
       h(
         'div',
-        { id: 'pause', class: 'panel fade-in', style: 'left:240px;top:100px;width:160px;z-index:40' },
+        { id: 'pause', class: 'panel fade-in', style: 'left:225px;top:92px;width:190px;z-index:40' },
         h('h2', { text: this.session.solo ? 'Pausado' : 'Menu (o jogo continua!)' }),
+        h('div', { class: 'hint', style: 'margin-bottom:5px', text: pauseInfo }),
         h('button', { class: 'btn primary', onclick: () => this.togglePause() }, 'Continuar'),
         h('button', { class: 'btn', onclick: () => this.openSettings() }, 'Configurações'),
         h('button', { class: 'btn danger', onclick: () => void this.leave(true) }, host ? 'Encerrar sala para todos' : 'Sair para o menu'),
+        h('div', { class: 'foot-keys', text: 'Esc / Start: continuar · setas / D-pad: navegar · Enter / A: confirmar' }),
       ),
     );
   }
@@ -1250,6 +1378,46 @@ export class App {
       this.applySettings();
       void this.saveSettings();
     });
+    // acessibilidade
+    const toggle = (label: string, get: () => boolean, set: (v: boolean) => void): HTMLElement => {
+      const b = h('button', { class: 'btn' }, `${label}: ${get() ? 'ligado' : 'desligado'}`);
+      b.addEventListener('click', () => {
+        set(!get());
+        b.textContent = `${label}: ${get() ? 'ligado' : 'desligado'}`;
+        this.applySettings();
+        void this.saveSettings();
+      });
+      return b;
+    };
+    const SCALES = [1, 1.15, 1.3];
+    const scaleTxt = (): string => `Escala dos menus: ${Math.round(s.uiScale * 100)}%`;
+    const uiScaleBtn = h('button', { class: 'btn' }, scaleTxt());
+    uiScaleBtn.addEventListener('click', () => {
+      const i = SCALES.findIndex((v) => Math.abs(v - s.uiScale) < 0.01);
+      s.uiScale = SCALES[(i + 1) % SCALES.length] ?? 1;
+      uiScaleBtn.textContent = scaleTxt();
+      this.applySettings();
+      void this.saveSettings();
+    });
+    const resetHints = h('button', { class: 'btn' }, 'Rever dicas de início');
+    resetHints.addEventListener('click', () => {
+      s.hintsSeen = [];
+      this.hud.hintsSeen = new Set();
+      s.hints = true;
+      this.applySettings();
+      void this.saveSettings();
+      this.toast('As dicas vão aparecer de novo na próxima partida.');
+    });
+    const access = h(
+      'div',
+      { style: 'margin-bottom:6px' },
+      h('label', { text: 'Acessibilidade' }),
+      toggle('Alto contraste', () => s.highContrast, (v) => (s.highContrast = v)),
+      toggle('Reduzir movimento (sem tremor/pisca)', () => s.reduceMotion, (v) => (s.reduceMotion = v)),
+      toggle('Dicas contextuais', () => s.hints, (v) => (s.hints = v)),
+      uiScaleBtn,
+      resetHints,
+    );
     const keys = h('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:2px 8px' });
     const names: [keyof Keybinds, string][] = [
       ['up', 'Mover ↑'], ['down', 'Mover ↓'], ['left', 'Mover ←'], ['right', 'Mover →'], ['dodge', 'Esquiva'], ['q', 'Habilidade Q'],
@@ -1261,10 +1429,12 @@ export class App {
         const b = h('button', { class: 'btn inline', style: 'min-width:54px;text-align:center' }, keyLabel(s.keys[k]));
         b.addEventListener('click', () => {
           b.textContent = '…tecla?';
+          this.nav.suspended = true;
           const cap = (e: KeyboardEvent): void => {
             e.preventDefault();
             e.stopPropagation();
             window.removeEventListener('keydown', cap, true);
+            this.nav.suspended = false;
             if (e.code !== 'Escape') {
               // troca se já estiver em uso
               const other = (Object.keys(s.keys) as (keyof Keybinds)[]).find((x) => x !== k && s.keys[x] === e.code);
@@ -1310,7 +1480,7 @@ export class App {
           autoUp,
           h('button', { class: 'btn', onclick: () => { this.closeSettings(); void this.checkUpdateNow(); } }, 'Procurar agora'),
         ),
-        h('div', {}, h('label', { text: 'Controles (clique para trocar; Esc cancela)' }), keys, h('div', { class: 'hint', style: 'margin-top:3px', text: 'Mira: mouse · Ataque: botão esquerdo · Mover: botão direito (WASD cancela) · F1: habilidades · Esc: menu' }), h('button', { class: 'btn', style: 'margin-top:4px', onclick: () => { s.keys = { ...DEFAULT_KEYS }; void this.saveSettings(); renderKeys(); } }, 'Restaurar controles padrão')),
+        h('div', {}, access, h('label', { text: 'Controles (clique para trocar; Esc cancela)' }), keys, h('div', { class: 'hint', style: 'margin-top:3px', text: 'Mira: mouse · Ataque: botão esquerdo · Mover: botão direito (WASD cancela) · F1: habilidades · Esc: menu' }), h('button', { class: 'btn', style: 'margin-top:4px', onclick: () => { s.keys = { ...DEFAULT_KEYS }; void this.saveSettings(); renderKeys(); } }, 'Restaurar controles padrão')),
       ),
       h('div', { style: 'height:6px' }),
       h('button', { class: 'btn primary', onclick: () => this.closeSettings() }, 'Fechar'),

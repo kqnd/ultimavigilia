@@ -1,0 +1,56 @@
+/* UX: foco por teclado/gamepad, escala dos menus, alto contraste, movimento reduzido, transições e cartas. */
+
+/* Escala dos painéis de overlay/cartas (configuração "Escala dos menus"); não mexe nos layouts de tela cheia. */
+#ui { --uis: 1; }
+#ui .layer.passthrough > .panel:not(.skill-guide), #ui .scalable, #ui .toast { scale: var(--uis); }
+
+/* Painéis altos (cartas, rota, equipe) crescem menos para não vazar da tela de 360 px */
+#ui .layer.passthrough > .upgrades, #ui .layer.passthrough > .routevote, #ui .layer.passthrough > #tab { scale: min(var(--uis), 1.1); }
+
+/* Foco por teclado/gamepad: moldura âmbar bem visível (só depois de usar teclado/gamepad). */
+.kbd .btn:focus, .kbd input:focus, .kbd select:focus { outline: 2px solid var(--amber); outline-offset: 1px; }
+.kbd .classcard:focus, .kbd .upcard:focus { outline: 2px solid var(--amber); outline-offset: 1px; background-color: #28395f; }
+.classcard:focus, .upcard:focus { outline: none; }
+.kbd .btn:focus::before { content: '›'; position: absolute; left: -7px; color: var(--amber); }
+
+/* Transição entre telas: cortina que some em degraus */
+.screen-fade { position: absolute; inset: 0; z-index: 200; background: var(--ink); pointer-events: none !important; animation: sfade 0.3s steps(5) forwards; }
+@keyframes sfade { from { opacity: 1; } to { opacity: 0; } }
+.title-pop { animation: titlepop 0.45s steps(6) both; }
+@keyframes titlepop { 0% { opacity: 0; transform: scale(1.5); } 60% { opacity: 1; transform: scale(0.96); } 100% { opacity: 1; transform: none; } }
+.row-in { animation: fadein 0.2s steps(3) both; }
+
+/* Pausa: o véu escuro é um elemento (#pause-scrim) criado pelo app */
+.foot-keys { margin-top: 4px; padding-top: 3px; border-top: 1px solid var(--line); font-size: 9px; line-height: 11px; color: var(--dim); }
+
+/* Cartas de melhoria: faixa de raridade, descrição curta e tooltip detalhado */
+.upcard { display: flex; flex-direction: column; min-height: 104px; position: relative; }
+.rarity-tag { display: inline-block; align-self: flex-start; padding: 1px 4px 0; background: rgba(163, 169, 187, 0.18); }
+.rarity-tag.rar-uncommon { background: rgba(127, 196, 122, 0.2); }
+.rarity-tag.rar-rare { background: rgba(143, 211, 240, 0.2); }
+.rarity-tag.rar-legendary { background: rgba(246, 194, 87, 0.28); }
+.upcard .upnum { position: absolute; right: 4px; top: 3px; color: var(--dim); font-size: 9px; }
+.upcard.sel .upnum { color: var(--amber); }
+.up-short { margin-top: 4px; flex: 1; }
+.up-tip { margin-top: 5px; padding: 4px 6px; min-height: 52px; background: var(--bg0); box-shadow: inset 0 0 0 1px var(--line); font-size: 10px; line-height: 12px; }
+.up-tip .tipname { font-size: 11px; }
+
+/* Resultados: destaques da equipe */
+.mvp { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin: 2px 0 4px; }
+.mvp span { padding: 1px 5px; background: var(--bg2); box-shadow: inset 0 0 0 1px var(--line); }
+.mvp b { font-weight: normal; color: var(--amber); }
+
+/* Alto contraste: painéis opacos, textos claros, bordas fortes */
+body.hc { --dim: #d3d7e4; --line: #a9c0ee; --bg0: #04060d; --bg1: #090d1b; --bg2: #18265a; --text: #ffffff; --amber: #ffd770; }
+body.hc .panel { background: #04060d; }
+body.hc .btn { box-shadow: inset 0 0 0 2px #a9c0ee, inset 0 -2px 0 0 var(--bg0); }
+body.hc .btn:hover, body.hc .btn:focus-visible, body.hc .btn.sel { box-shadow: inset 0 0 0 2px #ffd770, inset 0 -2px 0 0 var(--bg0); }
+body.hc .btn[disabled] { color: #9aa0b8; }
+body.hc .classcard, body.hc .up-tip, body.hc .mono-box, body.hc input, body.hc select { box-shadow: inset 0 0 0 2px #a9c0ee; }
+body.hc .toast { background: #000; box-shadow: inset 0 0 0 2px #a9c0ee; }
+body.hc .hint, body.hc .subtitle { color: #d3d7e4; }
+body.hc .red { color: #ff8a80; }
+
+/* Reduzir movimento: sem animações/transições (estado final imediato) */
+body.rm *, body.rm *::before, body.rm *::after { animation: none !important; transition: none !important; }
+body.rm .screen-fade { display: none; }
