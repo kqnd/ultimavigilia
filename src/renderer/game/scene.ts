@@ -122,6 +122,9 @@ export class GameScene extends Phaser.Scene {
   private cameraFollowY = 0;
   private menuT = 0;
   private hitstopUntil = 0;
+  private hitstopCool = 0;
+  private pickupChain = 0;
+  private pickupLast = 0;
   rendered: RenderedPlayer[] = [];
   renderedEnemies: RenderEnemy[] = [];
   spectateId = 0;
@@ -275,6 +278,21 @@ export class GameScene extends Phaser.Scene {
     this.pings = [];
   }
 
+  /**
+   * Hit-stop: congela as animações das entidades por alguns ms (visual apenas; o servidor e a
+   * entrada continuam normais). Escala com a configuração de tremor, nunca encadeia golpes leves
+   * (um intervalo de respiro evita travar o jogo em combos) e tem teto de 180 ms.
+   */
+  private hitStop(ms: number): void {
+    const k = this.fx.impactScale;
+    if (k <= 0) return;
+    const now = performance.now();
+    const dur = Math.min(180, ms * k);
+    if (now < this.hitstopCool && dur < 80) return;
+    this.hitstopUntil = Math.max(this.hitstopUntil, now + dur);
+    this.hitstopCool = now + dur + 60;
+  }
+
   /** Reconciliação chamada a cada snapshot. */
   onSnapshot(s: Snapshot): void {
     if (this.mode !== 'match') return;
@@ -305,16 +323,34 @@ export class GameScene extends Phaser.Scene {
         case 'dmg': {
           if (ev.tg === 'e') {
             const v = this.enemies.get(ev.ti);
-            v?.hitFlash();
-            const col = ev.c === 'crit' ? 0xf6c257 : 0xeef1f7;
-            this.fx.number(ev.x + (Math.random() - 0.5) * 8, ev.y, String(ev.v), col, ev.c === 'crit' && ev.v >= 60);
+            const crit = ev.c === 'crit';
+            const mine = ev.s === myId;
+            // direção do golpe: de quem bateu para o alvo (recuo visual do inimigo)
+            const src = this.players.get(ev.s);
+            let kx = 0;
+            let ky = 0;
+            if (src && v) {
+              const d = Math.hypot(v.x - src.x, v.y - src.y) || 1;
+              kx = (v.x - src.x) / d;
+              ky = (v.y - src.y) / d;
+            }
+            // magnitude 0–1.5: dano absoluto e fração da vida do alvo
+            const mhp = v?.r?.mhp ?? 0;
+            const mag = Math.min(1.5, ev.v / 45 + (mhp > 0 ? (ev.v / mhp) * 0.8 : 0) + (crit ? 0.35 : 0));
+            v?.hitFlash({ dx: kx, dy: ky, mag, flash: this.fx.settings.flashes > 0 });
+            this.fx.damage(ev.x, ev.y, ev.v, crit);
             this.fx.burst('p_blood', ev.x, ev.y + 6, 3, 50, 0.35, { g: 180 });
             this.fx.particle('hit_0', ev.x, ev.y + 4, 0, 0, 0.06, { fade: false, depth: 99000 });
-            this.fx.glow(ev.x, ev.y + 4, ev.c === 'crit' ? 0xffd25a : 0xfff0e0, ev.c === 'crit' ? 0.5 : 0.3, { life: ev.c === 'crit' ? 0.18 : 0.1, grow: 1.5, alpha: 0.6, frame: ev.c === 'crit' ? 'glow_star' : 'glow_soft' });
-            if (ev.s === myId) {
-              this.hitstopUntil = performance.now() + (ev.v >= 30 ? 70 : 40);
-              audio.play('hit', ev.x, ev.y, 0.8);
-              if (ev.v >= 60) this.fx.shake(2, 80);
+            this.fx.glow(ev.x, ev.y + 4, crit ? 0xffd25a : 0xfff0e0, crit ? 0.5 : 0.3, { life: crit ? 0.18 : 0.1, grow: 1.5, alpha: 0.6, frame: crit ? 'glow_star' : 'glow_soft' });
+            if (mag > 0.5 || crit) this.fx.sparks(ev.x, ev.y + 4, 2 + Math.round(mag * 3), crit ? 0xffd25a : 0xffe6c0, 120 + mag * 40, 0.3, { dir: Math.atan2(ky, kx || 0.001), spread: 1.1 });
+            if (mine) {
+              // tiers: leve (golpe comum) / médio / pesado (crítico ou dano alto)
+              const heavy = crit || ev.v >= 60;
+              this.hitStop(heavy ? 90 : ev.v >= 30 ? 55 : 32);
+              if (crit) audio.play('critHit', ev.x, ev.y, 0.9, 1 + Math.min(0.2, ev.v / 400));
+              else audio.play('hit', ev.x, ev.y, 0.8, 1.12 - Math.min(0.3, ev.v / 150));
+              if (heavy) this.fx.shake(2.5 + Math.min(2, ev.v / 60), 110);
+              else if (ev.v >= 20) this.fx.shake(1, 70);
             }
           } else {
             const v = this.players.get(ev.ti);
@@ -328,12 +364,14 @@ export class GameScene extends Phaser.Scene {
             else if (ev.c === 'par') this.fx.number(ev.x, ev.y, 'APARO!', 0xf6c257);
             else {
               v?.hitFlash();
-              this.fx.number(ev.x, ev.y, String(ev.v), 0xec6a5e);
+              this.fx.damage(ev.x, ev.y, ev.v, false, 'player');
               this.fx.burst('p_blood', ev.x, ev.y + 8, 5, 60, 0.4, { g: 200 });
               if (ev.ti === myId) {
-                this.fx.shake(3, 110);
-                this.fx.flash(0xc83838, 0.22, 120);
-                audio.play('playerHit');
+                const big = ev.v >= 25;
+                this.fx.shake(big ? 4.5 : 3, big ? 150 : 110);
+                this.fx.flash(0xc83838, big ? 0.3 : 0.22, 120);
+                this.hitStop(big ? 70 : 45);
+                audio.play('playerHit', undefined, undefined, 1, big ? 0.85 : 1);
               }
             }
           }
@@ -357,7 +395,15 @@ export class GameScene extends Phaser.Scene {
           if (mini) this.fx.shake(4, 250);
           const view = this.enemies.get(ev.ei);
           if (view) this.corpse(view);
-          audio.play('enemyDie', ev.x, ev.y);
+          // morte: clarão + faíscas proporcionais; elite/chefe congelam o quadro (hit-stop) e
+          // ganham um baque grave por baixo do som comum
+          this.fx.flare(ev.x, ev.y - 10, big ? 0xd860ff : 0xff8a6a, big ? 1.4 : mini ? 0.9 : 0.5, big ? 0.4 : 0.22);
+          this.fx.sparks(ev.x, ev.y - 10, big ? 26 : mini ? 14 : 5, big ? 0xe07cff : 0xffc08a, big ? 190 : 130, 0.45);
+          if (big || mini) {
+            this.hitStop(big ? 170 : 110);
+            audio.play('eliteDie', ev.x, ev.y, big ? 1 : 0.8, big ? 0.8 : 1);
+          }
+          audio.play('enemyDie', ev.x, ev.y, 1, big ? 0.8 : mini ? 0.9 : 1);
           if (big) {
             this.fx.shake(8, 500);
             this.fx.flash(0xffffff, 0.5, 300);
@@ -422,8 +468,15 @@ export class GameScene extends Phaser.Scene {
           this.fx.burst('p_heal', ev.x, ev.y - 8, 10, 50, 0.6, { up: 40 });
           this.fx.ring(ev.x, ev.y - 6, 2, 16, 0x7fc47a, 0.3, 1);
           const p = this.players.get(ev.pi);
-          this.fx.number(p?.x ?? ev.x, (p?.y ?? ev.y) - 34, `+${ev.v}`, 0x7fc47a);
-          audio.play('pickup', ev.x, ev.y);
+          this.fx.number(p?.x ?? ev.x, (p?.y ?? ev.y) - 34, `+${ev.v}`, 0x7fc47a, false, { pop: true, scale: 1 + Math.min(0.5, ev.v / 80) });
+          // coletas em sequência sobem de tom (até uma oitava), reiniciando após 1,2 s de pausa
+          const nowMs = performance.now();
+          this.pickupChain = nowMs - this.pickupLast < 1200 ? Math.min(7, this.pickupChain + 1) : 0;
+          this.pickupLast = nowMs;
+          this.fx.flare(ev.x, ev.y - 8, 0x9fffa0, 0.45, 0.25);
+          this.fx.sparks(ev.x, ev.y - 8, 5, 0x9fffa0, 70, 0.4, { up: 40, g: -40 });
+          if (p && ev.pi === myId) p.pop(-0.14);
+          audio.play('pickup', ev.x, ev.y, 1, Math.pow(2, this.pickupChain / 7));
           break;
         }
         case 'boss':
@@ -441,6 +494,9 @@ export class GameScene extends Phaser.Scene {
 
   private corpse(v: EnemyView): void {
     const img = this.add.image(v.body.x, v.body.y, v.body.texture.key, v.body.frame.name).setOrigin(v.body.originX, v.body.originY).setFlipX(v.body.flipX).setDepth(v.body.depth).setTint(0x5a1470).setTintMode(Phaser.TintModes.FILL);
+    img.setScale(1, 1);
+    // achata no chão (squash) enquanto some
+    this.tweens.add({ targets: img, scaleX: 1.22, scaleY: 0.72, duration: 450, ease: 'Cubic.easeOut' });
     this.tweens.add({ targets: img, alpha: 0, y: img.y + 6, duration: 450, ease: 'Stepped', easeParams: [5], onComplete: () => img.destroy() });
   }
 

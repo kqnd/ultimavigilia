@@ -47,10 +47,15 @@ interface Transient {
 
 interface Floating {
   t: Phaser.GameObjects.BitmapText;
+  x: number;
   y?: number;
+  vx: number;
   vy: number;
   life: number;
   max: number;
+  /** Escala de repouso e se faz "pop" (nasce menor e passa do tamanho com overshoot). */
+  base: number;
+  pop: boolean;
 }
 
 /** Sprite de luz (aditivo) com vida, movimento e curva de escala/alfa. */
@@ -198,6 +203,9 @@ export class Effects {
   /** Brilhos de um quadro só (auras), reciclados a cada `beginFrame`. */
   private auraPool: Phaser.GameObjects.Image[] = [];
   private auraUsed = 0;
+  private shakeAmp = 0;
+  private shakeDur = 1;
+  private shakeEnd = 0;
   private lights: FxLight[] = [];
   readonly g: Phaser.GameObjects.Graphics;
   /** Camada aditiva acima da escuridão: bloom dos traços. */
@@ -423,13 +431,34 @@ export class Effects {
 
   // ---------------------------------------------------------------- textos
 
-  number(x: number, y: number, text: string, color: number, big = false): void {
+  number(x: number, y: number, text: string, color: number, big = false, o: { scale?: number; life?: number; vx?: number; vy?: number; pop?: boolean } = {}): void {
     if (!this.settings.damageNumbers && color !== 0x7fc47a) return;
     let t = this.floatPool.pop();
     if (!t) t = this.scene.add.bitmapText(0, 0, FONT, '', 11);
-    t.setText(text).setTint(color).setVisible(true).setAlpha(1).setDepth(158000).setScale(big ? 2 : 1);
-    placeText(t, x, y, 0.5, 1);
-    this.floats.push({ t, vy: -34 - Math.random() * 10, life: 0.8, max: 0.8 });
+    const base = o.scale ?? (big ? 2 : 1);
+    const life = o.life ?? 0.8;
+    t.setText(text).setTint(color).setVisible(true).setAlpha(1).setDepth(158000).setScale(base).setOrigin(0.5, 1);
+    t.setPosition(Math.round(x), Math.round(y));
+    this.floats.push({ t, x: Math.round(x), vx: o.vx ?? 0, vy: o.vy ?? -34 - Math.random() * 10, life, max: life, base, pop: o.pop ?? false });
+  }
+
+  /**
+   * Número de dano proporcional: cor e tamanho sobem com a magnitude; crítico ganha dourado, "!"
+   * e um "pop" com overshoot; os números se espalham na horizontal para não empilhar.
+   */
+  damage(x: number, y: number, v: number, crit: boolean, target: 'enemy' | 'player' = 'enemy'): void {
+    const tier = v >= 120 ? 4 : v >= 60 ? 3 : v >= 30 ? 2 : v >= 12 ? 1 : 0;
+    const palette = target === 'player' ? [0xec6a5e, 0xec6a5e, 0xff5a4a, 0xff3a3a, 0xff2a2a] : [0xd8dce6, 0xeef1f7, 0xffe0a0, 0xffb347, 0xff7a3a];
+    const color = crit ? (tier >= 3 ? 0xfff0ae : 0xf6c257) : (palette[tier] as number);
+    const scale = Math.min(2.5, 1 + tier * 0.3 + (crit ? 0.5 : 0));
+    const drift = (Math.random() - 0.5) * (30 + tier * 6);
+    this.number(x + (Math.random() - 0.5) * 8, y, crit ? `${v}!` : String(v), color, false, {
+      scale: Math.round(scale * 4) / 4,
+      life: 0.7 + tier * 0.08 + (crit ? 0.15 : 0),
+      vx: drift,
+      vy: -38 - Math.random() * 10 - tier * 4,
+      pop: tier >= 1 || crit,
+    });
   }
 
   /** Balão de fala pixelado que segue um alvo. */
@@ -463,10 +492,26 @@ export class Effects {
 
   // ---------------------------------------------------------------- câmera
 
+  /**
+   * Tremor da câmera (só o visual, nunca o corpo simulado). Um golpe fraco não interrompe um
+   * tremor forte em andamento, e um forte substitui o fraco (antes o Phaser ignorava o novo).
+   */
   shake(intensity: number, ms = 120): void {
     const s = this.settings.shake;
     if (s <= 0) return;
-    this.scene.cameras.main.shake(ms, (intensity / 360) * s);
+    const now = performance.now();
+    const left = now < this.shakeEnd ? this.shakeAmp * ((this.shakeEnd - now) / Math.max(1, this.shakeDur)) : 0;
+    if (intensity < left * 0.9) return;
+    const amp = Math.min(10, intensity + left * 0.35);
+    this.shakeAmp = amp;
+    this.shakeDur = ms;
+    this.shakeEnd = now + ms;
+    this.scene.cameras.main.shake(ms, (amp / 360) * s, true);
+  }
+
+  /** Escala de intensidade do "impacto" (tremor reduzido também reduz o hit-stop). */
+  get impactScale(): number {
+    return Math.max(0, Math.min(1, this.settings.shake));
   }
 
   flash(color: number, strength = 0.35, ms = 90): void {
@@ -549,8 +594,17 @@ export class Effects {
       const f = this.floats[i] as Floating;
       f.life -= s;
       f.y = (f.y ?? f.t.y) + f.vy * s;
+      f.x += f.vx * s;
+      f.t.x = Math.round(f.x);
       f.t.y = Math.round(f.y);
       f.vy *= 0.9;
+      f.vx *= 0.9;
+      if (f.pop) {
+        // ease-out-back: nasce a 40%, passa de 1 e assenta
+        const k = Math.min(1, (f.max - f.life) / 0.16);
+        const e = 1 + 2.70158 * Math.pow(k - 1, 3) + 1.70158 * Math.pow(k - 1, 2);
+        f.t.setScale(f.base * (0.4 + 0.6 * e));
+      }
       f.t.setAlpha(f.life < 0.3 ? Math.ceil((f.life / 0.3) * 3) / 3 : 1);
       if (f.life <= 0) {
         f.t.setVisible(false);

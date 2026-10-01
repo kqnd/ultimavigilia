@@ -867,6 +867,8 @@ export class App {
   private upSel: string | null = null;
   private upSent: string | null = null;
   private rareSoundFor = '';
+  /** Primeira renderização de uma oferta nova: as cartas entram com animação (não a cada clique). */
+  private cardsFresh = false;
   private upKey = '';
   private upTimer = 0;
 
@@ -878,6 +880,7 @@ export class App {
     const key = off.options.join(',');
     if (key !== this.upKey) {
       this.upKey = key;
+      this.cardsFresh = true;
       this.upSel = null;
       this.upSent = null;
     }
@@ -894,7 +897,9 @@ export class App {
     if (off.bonus) panel.append(h('div', { class: 'ok', style: 'margin:-3px 0 4px', text: `Carta extra nesta escolha: ${off.bonus}` }));
     const row = h('div', { class: 'row', style: 'align-items:stretch' });
     const confirm = h('button', { class: 'btn primary', style: 'margin-top:6px', disabled: locked || !this.upSel || !!this.upSent }, locked ? '✓ Escolha confirmada' : this.upSent ? 'Enviando…' : this.upSel ? `Confirmar escolha: ${UPGRADE_BY_ID.get(this.upSel)?.name ?? ''}` : 'Confirmar escolha');
-    for (const id of off.options) {
+    const fresh = this.cardsFresh;
+    this.cardsFresh = false;
+    for (const [idx, id] of off.options.entries()) {
       const u = UPGRADE_BY_ID.get(id);
       if (!u) continue;
       const have = off.mine[id] ?? 0;
@@ -905,7 +910,7 @@ export class App {
       const rivals = u.fork ? [...UPGRADE_BY_ID.values()].filter((o) => o.fork === u.fork && o.id !== id).map((o) => o.name) : [];
       const card = h(
         'div',
-        { class: `upcard rar-${u.rarity}${chosen ? ' sel' : dim ? ' dim' : ''}`, style: blocked ? 'cursor:not-allowed' : '' },
+        { class: `upcard rar-${u.rarity}${chosen ? ' sel' : dim ? ' dim' : ''}${fresh ? ' pop-in' : ''}`, style: `${blocked ? 'cursor:not-allowed;' : ''}${fresh ? `--d:${idx * 70}ms` : ''}` },
         h('div', { class: `rarity-tag rar-${u.rarity}`, text: `${RARITY_INFO[u.rarity].name} · ${KIND_INFO[u.kind]}` }),
         h('div', { class: 'row' }, h('div', { style: 'flex:0 0 34px' }, iconEl(u.icon, 2)), h('div', {}, h('div', { class: 'amber', text: u.name }), h('div', { class: 'hint', text: u.cls ? CLASSES[u.cls].name : 'Geral' }))),
         u.fork ? h('div', { class: blocked ? 'red' : 'mag', style: 'margin-top:3px', text: blocked ? `Incompatível: você seguiu ${blocked}` : `${forkName} — exclui ${rivals.join(', ')}` }) : null,
@@ -918,7 +923,8 @@ export class App {
       if (!locked && !blocked)
         card.addEventListener('click', () => {
           if (this.upSent) return;
-          audio.play('uiClick');
+          // tom sobe com a raridade: comum < incomum < rara < lendária
+          audio.play('uiClick', undefined, undefined, 1, 1 + ['common', 'uncommon', 'rare', 'legendary'].indexOf(u.rarity) * 0.12);
           this.upSel = id;
           this.renderUpgrades();
         });
@@ -927,7 +933,12 @@ export class App {
     confirm.addEventListener('click', () => {
       const id = this.upSel;
       if (!id || locked || this.upSent) return;
-      audio.play('upgrade');
+      const rar = UPGRADE_BY_ID.get(id)?.rarity;
+      const tier = ['common', 'uncommon', 'rare', 'legendary'].indexOf(rar ?? 'common');
+      audio.play('upgrade', undefined, undefined, 1, 1 + Math.max(0, tier) * 0.08);
+      // confirmação: clarão dourado curto e tremor leve nas raras/lendárias (respeitam as configurações)
+      this.game.fx.flash(0xf6c257, 0.1 + Math.max(0, tier) * 0.05, 160);
+      if (tier >= 2) this.game.fx.shake(1.5 + (tier - 2), 120);
       this.upSent = id;
       this.session.send({ t: 'upg', id });
       this.renderUpgrades();
@@ -1296,7 +1307,7 @@ export class App {
           slider('Brilho do mapa', () => s.brightness, (v) => (s.brightness = v)),
           h('div', { class: 'hint', style: 'max-width:190px;margin:2px 0 4px', text: 'Luz cinematográfica e reflexos nos pisos. Pode reduzir o desempenho em GPUs antigas.' }),
           shaderBtn,
-          slider('Tremor de câmera', () => s.shake, (v) => (s.shake = v)),
+          slider('Tremor e impacto (hit-stop)', () => s.shake, (v) => (s.shake = v)),
           slider('Intensidade de flashes', () => s.flashes, (v) => (s.flashes = v)),
           slider('Brilho das habilidades', () => s.skillGlow, (v) => (s.skillGlow = v)),
           h('label', { text: 'Tamanho da janela' }),

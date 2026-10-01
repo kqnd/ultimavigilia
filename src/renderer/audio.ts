@@ -34,6 +34,8 @@ export class Audio {
   private noiseBuf!: AudioBuffer;
   private voices = new Map<string, number[]>();
   private listener = { x: 0, y: 0 };
+  /** Multiplicador de tom aplicado às primitivas enquanto uma receita toca (variação de pitch). */
+  private pitchMul = 1;
   private vol = { master: 0.8, sfx: 0.9, amb: 0.6 };
   private ambStarted = false;
   private bardEl: HTMLAudioElement | null = null;
@@ -262,8 +264,9 @@ export class Audio {
     src.loop = true;
     const f = ctx.createBiquadFilter();
     f.type = o.type ?? 'bandpass';
-    f.frequency.setValueAtTime(o.f0, t);
-    if (o.f1 !== undefined) f.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1), t + dur);
+    const pm = this.pitchMul;
+    f.frequency.setValueAtTime(o.f0 * pm, t);
+    if (o.f1 !== undefined) f.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1 * pm), t + dur);
     f.Q.value = o.q ?? 1;
     const g = ctx.createGain();
     const a = o.attack ?? 0.003;
@@ -279,8 +282,9 @@ export class Audio {
     const ctx = this.ctx as AudioContext;
     const osc = ctx.createOscillator();
     osc.type = o.type ?? 'sine';
-    osc.frequency.setValueAtTime(o.f0, t);
-    if (o.f1 !== undefined) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1), t + dur);
+    const pm = this.pitchMul;
+    osc.frequency.setValueAtTime(o.f0 * pm, t);
+    if (o.f1 !== undefined) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1 * pm), t + dur);
     if (o.vib) {
       const lfo = ctx.createOscillator();
       const lg = ctx.createGain();
@@ -309,8 +313,12 @@ export class Audio {
 
   // ---------------------------------------------------------------- reprodução
 
-  /** Toca um som. x,y opcionais (mundo) para atenuação/pan pela distância do ouvinte. */
-  play(name: string, x?: number, y?: number, volume = 1): void {
+  /**
+   * Toca um som. x,y opcionais (mundo) para atenuação/pan pela distância do ouvinte.
+   * `pitch` (1 = original) desafina a receita; sons repetitivos ganham variação aleatória
+   * automática (±7%) para não soarem como metralhadora de samples.
+   */
+  play(name: string, x?: number, y?: number, volume = 1, pitch?: number): void {
     const ctx = this.ctx;
     if (!ctx || ctx.state !== 'running') return;
     const r = RECIPES[name];
@@ -339,7 +347,12 @@ export class Audio {
     const g = ctx.createGain();
     g.gain.value = v;
     g.connect(p).connect(bus);
-    r(this, now, g, v);
+    this.pitchMul = Math.max(0.5, Math.min(2, (pitch ?? 1) * (VARIED.has(name) ? 0.93 + Math.random() * 0.14 : 1)));
+    try {
+      r(this, now, g, v);
+    } finally {
+      this.pitchMul = 1;
+    }
     if (isAlert) this.duck();
   }
 
@@ -420,8 +433,10 @@ export class Audio {
   }
 }
 
-const DUR: Record<string, number> = { madness: 1.8, army: 1.1, chapter: 3, raise: 0.6, howl: 1.3, ruptureCharge: 1.2, waveStart: 2, victory: 2.5, defeat: 2.5, feast: 1, endScream: 0.7, transform: 2, bossWarn: 1.2 };
+const DUR: Record<string, number> = { eliteDie: 0.5, madness: 1.8, army: 1.1, chapter: 3, raise: 0.6, howl: 1.3, ruptureCharge: 1.2, waveStart: 2, victory: 2.5, defeat: 2.5, feast: 1, endScream: 0.7, transform: 2, bossWarn: 1.2 };
 const ALERTS = new Set(['bossWarn', 'waveStart', 'howl', 'transform', 'telegraph', 'down', 'deny', 'victory', 'defeat', 'lowHp']);
+/** Sons que se repetem muito: ganham variação de tom a cada disparo. */
+const VARIED = new Set(['hit', 'critHit', 'axeHit', 'swordHit', 'maceHit', 'clawHit', 'bite', 'heavyHit', 'swing', 'playerHit', 'enemyDie', 'pickup', 'essence', 'breakHit', 'break', 'dodge', 'crossbow', 'block', 'shieldBlock', 'guardianBlockPhysical', 'stagger', 'land']);
 const UI_SOUNDS = new Set(['uiClick', 'uiHover', 'uiBack', 'upgrade']);
 
 const RECIPES: Record<string, Recipe> = {
@@ -788,6 +803,18 @@ const RECIPES: Record<string, Recipe> = {
   heavyHit: (a, t, o) => {
     a.noise(t, 0.25, o, { type: 'lowpass', f0: 500, gain: 0.8 });
     a.tone(t, 0.25, o, { f0: 90, f1: 40, gain: 0.5 });
+  },
+  // golpe crítico: estalo agudo + corpo grave (camadas de impacto)
+  critHit: (a, t, o) => {
+    a.noise(t, 0.08, o, { type: 'bandpass', f0: 1500, q: 1.5, gain: 0.4 });
+    a.tone(t, 0.14, o, { type: 'triangle', f0: 1400, f1: 2400, gain: 0.12 });
+    a.tone(t, 0.18, o, { f0: 120, f1: 55, gain: 0.3 });
+  },
+  // morte de elite/chefe: baque grave com cauda
+  eliteDie: (a, t, o) => {
+    a.tone(t, 0.45, o, { f0: 95, f1: 32, gain: 0.5 });
+    a.noise(t, 0.3, o, { type: 'lowpass', f0: 900, f1: 120, gain: 0.35 });
+    a.noise(t + 0.02, 0.12, o, { type: 'highpass', f0: 2500, gain: 0.15 });
   },
   hit: (a, t, o) => a.noise(t, 0.06, o, { type: 'bandpass', f0: 1100, q: 1.5, gain: 0.35 }),
   death: (a, t, o) => a.tone(t, 0.8, o, { type: 'triangle', f0: 300, f1: 60, gain: 0.3 }),
