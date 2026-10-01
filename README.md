@@ -121,8 +121,8 @@ Ou seja: **para os jogadores receberem uma atualização, é preciso publicar um
 instalador anexado.** `npm run release` confere o que falta e imprime os comandos exatos:
 
 ```bash
-npm run release 1.5.0   # ajusta package.json e GAME_VERSION juntos
-npm run dist:win        # gera release/UltimaVigilia-1.5.0-Instalador.exe
+npm run release 1.6.0   # ajusta package.json e GAME_VERSION juntos
+npm run dist:win        # gera release/UltimaVigilia-1.6.0-Instalador.exe
 npm run release         # imprime os comandos de tag, push e gh release create
 ```
 

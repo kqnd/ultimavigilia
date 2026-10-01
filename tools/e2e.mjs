@@ -795,9 +795,12 @@ scenarios.graphics = async () => {
     }
     await page.keyboard.press('Escape');
     await clickText(page, 'Configurações');
-    await clickText(page, 'Qualidade gráfica: Média');
-    assert.equal(await page.evaluate(() => window.__app.game.postfx.quality), 'high');
-    await page.waitForFunction(async () => (await window.vigilia.settings.load()).graphicsQuality === 'high');
+    const order = ['low', 'medium', 'high'];
+    const prevQ = await page.evaluate(() => window.__app.game.postfx.quality);
+    const nextQ = order[(order.indexOf(prevQ) + 1) % order.length];
+    await page.locator('button').filter({ hasText: 'Qualidade gráfica' }).first().click();
+    assert.equal(await page.evaluate(() => window.__app.game.postfx.quality), nextQ);
+    await page.waitForFunction(async (q) => (await window.vigilia.settings.load()).graphicsQuality === q, nextQ);
     await clickText(page, 'Fechar');
     assert.ok(!logs.some((l) => l.includes('[pageerror]') || l.includes('[error]')), logs.join('\n'));
     fs.writeFileSync(path.join(out, 'logs-graphics.txt'), logs.join('\n'));
