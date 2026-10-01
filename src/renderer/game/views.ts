@@ -126,6 +126,13 @@ export class PlayerView {
   private readonly aura: Phaser.GameObjects.Graphics | null;
   private walkT = 0;
   private flashT = 0;
+  /** Mola de squash & stretch (golpe recebido, coleta) e estado do ataque básico. */
+  private popT = 1;
+  private popAmp = 0;
+  private sprung = false;
+  private atkPhase = 0;
+  private lungeT = 1;
+  private lungeA = 0;
   private ghostT = 0;
   private fallT = 0;
   private prevStatus = 0;
@@ -153,6 +160,14 @@ export class PlayerView {
 
   hitFlash(): void {
     this.flashT = 0.1;
+    this.popT = 0;
+    this.popAmp = 0.14;
+  }
+
+  /** Pequeno "pop" de escala (coleta, level-up): positivo achata, negativo estica. */
+  pop(amp = -0.12): void {
+    this.popT = 0;
+    this.popAmp = amp;
   }
 
   destroy(): void {
@@ -227,7 +242,52 @@ export class PlayerView {
     // Maycon flutua no tapete: sobe e desce devagar (mais alto no Voo Rasante)
     if (cls === 'maycon' && d.s === 0) lift = Math.round(4 + Math.sin(performance.now() / 280 + this.id) * 1.6 + (act === 'e' ? 3 : 0));
     this.body.setFlipX((spinFlip ?? flip) && d.s === 0);
-    this.body.setPosition(x, y - lift);
+    // Antecipação e follow-through do ataque básico: agacha na preparação, estica e avança
+    // um passo ao soltar o golpe, e assenta com mola (só o visual).
+    let sx = 1;
+    let sy = 1;
+    let lx = 0;
+    let ly = 0;
+    const basic = d.s === 0 && act.startsWith('basic') ? actionTiming(cls, act) : null;
+    if (basic && r.at < basic.wu) {
+      const k = Math.min(1, r.at / Math.max(1, basic.wu));
+      const ease = k * k;
+      sx = 1 + 0.07 * ease;
+      sy = 1 - 0.08 * ease;
+      this.atkPhase = 1;
+    } else if (basic) {
+      if (this.atkPhase === 1) {
+        this.lungeT = 0;
+        this.lungeA = aim;
+      }
+      this.atkPhase = 2;
+    } else this.atkPhase = 0;
+    if (!hitstop) this.lungeT += s;
+    if (this.lungeT < 0.22) {
+      const decay = Math.exp(-this.lungeT * 16);
+      const wob = decay * Math.cos(this.lungeT * 30);
+      sx *= 1 - 0.1 * wob;
+      sy *= 1 + 0.13 * wob;
+      const push = (this.cls === 'hunter' || this.cls === 'mage' || this.cls === 'necromancer' ? -1.5 : 3) * decay;
+      lx = Math.cos(this.lungeA) * push;
+      ly = Math.sin(this.lungeA) * push * 0.6;
+    }
+    // mola de dano/pop
+    if (!hitstop) this.popT += s;
+    if (this.popAmp !== 0 && this.popT < 0.4) {
+      const sq = this.popAmp * Math.exp(-this.popT * 14) * Math.cos(this.popT * 38);
+      sx *= 1 + sq;
+      sy *= 1 - sq;
+    }
+    const animating = sx !== 1 || sy !== 1;
+    if (animating) {
+      this.body.setScale(sx, sy);
+      this.sprung = true;
+    } else if (this.sprung) {
+      this.body.setScale(1, 1);
+      this.sprung = false;
+    }
+    this.body.setPosition(x + Math.round(lx), y - lift + Math.round(ly));
     this.body.setDepth(y);
     this.shadow.setPosition(x, y).setDepth(y - 40).setScale(lift ? Math.max(0.5, 1 - lift / 40) * (cls === 'maycon' ? 1.25 : 1) : 1);
 
@@ -590,6 +650,11 @@ export class EnemyView {
   private shieldImg: Phaser.GameObjects.Image | null = null;
   private walkT = Math.random() * 4;
   private flashT = 0;
+  private popT = 1;
+  private popAmp = 0;
+  private kbX = 0;
+  private kbY = 0;
+  private sprung = false;
   private veilA = 1;
   x = 0;
   y = 0;
@@ -615,8 +680,19 @@ export class EnemyView {
     this.bar = scene.add.graphics().setDepth(93000);
   }
 
-  hitFlash(): void {
-    this.flashT = 0.08;
+  /**
+   * Reação ao dano: flash branco, squash & stretch em mola e recuo visual (o corpo simulado
+   * não se move). `mag` 0–1.5 vem do dano; chefes quase não se deformam (têm "massa").
+   */
+  hitFlash(o: { dx?: number; dy?: number; mag?: number; flash?: boolean } = {}): void {
+    const mag = o.mag ?? 0.6;
+    const heavy = isBossType(this.type) ? 0.3 : ENEMIES[this.type].miniboss ? 0.6 : 1;
+    this.flashT = o.flash === false ? 0 : 0.05 + 0.04 * Math.min(1, mag);
+    this.popT = 0;
+    this.popAmp = Math.min(0.3, 0.1 + 0.14 * mag) * heavy;
+    const k = 5 * mag * heavy;
+    this.kbX = (o.dx ?? 0) * k;
+    this.kbY = (o.dy ?? 0) * k * 0.6;
   }
 
   destroy(): void {
@@ -685,13 +761,29 @@ export class EnemyView {
       shakeX = Math.floor(performance.now() / 220) % 2;
     }
     if (this.type === 'frostBride') lift = 4 + Math.round(Math.sin(performance.now() / 400) * 2);
-    this.body.setPosition(x + shakeX, y - lift);
+    // recuo + mola de squash & stretch (congelam durante o hit-stop para "segurar" o golpe)
+    if (!hitstop) this.popT += s;
+    const springing = this.popAmp > 0.004 && this.popT < 0.4;
+    let kbX = 0;
+    let kbY = 0;
+    if (springing) {
+      const decay = Math.exp(-this.popT * 14);
+      const sq = this.popAmp * decay * Math.cos(this.popT * 38);
+      this.body.setScale(1 + sq, 1 - sq);
+      kbX = this.kbX * decay;
+      kbY = this.kbY * decay;
+      this.sprung = true;
+    } else if (this.sprung) {
+      this.body.setScale(1, 1);
+      this.sprung = false;
+    }
+    this.body.setPosition(x + shakeX + Math.round(kbX), y - lift + Math.round(kbY));
     this.body.setDepth(y);
     this.shadow.setPosition(x, y).setDepth(y - 60).setScale(lift > 6 ? Math.max(0.5, 1 - lift / 120) : 1);
     // tintas de estado
     const now = performance.now();
     if (this.flashT > 0) {
-      this.flashT -= s;
+      if (!hitstop) this.flashT -= s;
       this.body.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
     } else if (r.state === 'spawn' && (isBoss || def.miniboss || this.type === 'werewolf' || this.type === 'father')) {
       // A silhueta dá lugar ao sprite real antes do cartão cinematográfico.
