@@ -721,6 +721,58 @@ scenarios.shaders = async () => {
   }
 };
 
+// Qualidade gráfica (pós-processamento): capturas baixa/média/alta, acessibilidade e saída sem erros de console.
+scenarios.graphics = async () => {
+  const { app, page, logs } = await launch('graphics-check');
+  const setQ = (q, rm = false, hc = false) => page.evaluate(([q, rm, hc]) => window.__app.game.setGraphicsQuality(q, rm, hc), [q, rm, hc]);
+  try {
+    await soloStart(page, 'hunter');
+    await dbg(page, 'god');
+    await dbg(page, 'spawn', 6, 'shambler');
+    await dbg(page, 'wave', 7);
+    await sleep(1600);
+    for (const q of ['low', 'medium', 'high']) {
+      await setQ(q);
+      await sleep(400);
+      await shot(page, `gfx-village-${q}`);
+    }
+    await setQ('high');
+    await page.evaluate(() => { const g = window.__app.game; g.postfx.ripple(320, 180, 0.5, 2, 4000); g.postfx.aberration(3, 4000); g.postfx.heatSource(200, 200, 0.3, 1.4); });
+    await sleep(500);
+    await shot(page, 'gfx-high-ripple-ca');
+    await page.evaluate(() => window.__app.game.hurtKick = 1);
+    await sleep(300);
+    await shot(page, 'gfx-high-hurt');
+    await page.evaluate(() => window.__app.game.hurtKick = 0);
+    await setQ('high', true, false);
+    await sleep(300);
+    await shot(page, 'gfx-high-reducemotion');
+    await setQ('high', false, true);
+    await sleep(300);
+    await shot(page, 'gfx-high-contrast');
+    await setQ('high');
+    for (const [wave, name] of [[18, 'winter'], [25, 'abyss'], [5, 'boss']]) {
+      await dbg(page, 'wave', wave);
+      await sleep(wave === 5 ? 6200 : 1800);
+      for (const q of ['low', 'high']) {
+        await setQ(q);
+        await sleep(300);
+        await shot(page, `gfx-${name}-${q}`);
+      }
+    }
+    await page.keyboard.press('Escape');
+    await clickText(page, 'Configurações');
+    await clickText(page, 'Qualidade gráfica: Média');
+    assert.equal(await page.evaluate(() => window.__app.game.postfx.quality), 'high');
+    await page.waitForFunction(async () => (await window.vigilia.settings.load()).graphicsQuality === 'high');
+    await clickText(page, 'Fechar');
+    assert.ok(!logs.some((l) => l.includes('[pageerror]') || l.includes('[error]')), logs.join('\n'));
+    fs.writeFileSync(path.join(out, 'logs-graphics.txt'), logs.join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
 scenarios.duo = async () => {
   const A = await launch('duoA', []);
   const B = await launch('duoB', []);
@@ -986,9 +1038,10 @@ scenarios.sizes = async () => {
 
 // Medição de renderização: ~100 inimigos ativos na tela e ao redor, FPS amostrado por 10 s.
 scenarios.perf = async () => {
-  const { app, page } = await launch('perf', []);
+  const { app, page } = await launch('perf', ['--disable-frame-rate-limit', '--disable-gpu-vsync']);
   await soloStart(page, 'tank');
   if (rest[0] === 'shaders') await page.evaluate(() => window.__app.game.setEnhancedLighting(true));
+  if (rest[1]) await page.evaluate((q) => window.__app.game.setGraphicsQuality(q, false, false), rest[1]);
   await dbg(page, 'god');
   for (const [n, t] of [[60, 'shambler'], [20, 'runner'], [8, 'acolyte'], [6, 'werewolf'], [6, 'father']]) await dbg(page, 'spawn', n, t);
   await sleep(1500);
@@ -1020,8 +1073,9 @@ scenarios.perf = async () => {
 // Uso: node tools/e2e.mjs perfcpu <saida> [classe]
 scenarios.perfcpu = async () => {
   const cls = rest[0] ?? 'mage';
-  const { app, page } = await launch('perfcpu', []);
+  const { app, page } = await launch('perfcpu', ['--disable-frame-rate-limit', '--disable-gpu-vsync']);
   await soloStart(page, cls);
+  if (rest[1]) await page.evaluate((q) => window.__app.game.setGraphicsQuality(q, false, false), rest[1]);
   await page.evaluate(() => {
     const gs = window.__app.game;
     window.__perf = { upd: [], frame: [] };

@@ -180,6 +180,32 @@ rota, cinemática e chegada ao novo mapa), `wave <onda> <classe>` (mapas, evento
 (cadáveres, servos e exército), `sizes` (resoluções), `perf` (~100 inimigos). Com `E2E_EXE=<executável>` o cenário
 roda contra o app **empacotado**. Os comandos de depuração usados nas capturas só funcionam com `UV_DEBUG=1`.
 
+### Gráficos (shaders de pós-processamento)
+
+Phaser 4 não tem pipelines/FX do Phaser 3: o pós-processamento é feito por **Filters** na câmera.
+`src/renderer/game/shaders.ts` registra um RenderNode próprio (`FilterVigil`, baseado em `BaseFilterShader`)
+e o liga em `camera.filters.external`. É **uma única passada** de tela cheia que faz:
+
+- *color grading* por clima/capítulo (noite, inverno, cinzas: tinta, saturação e contraste sutis) e vinheta suave;
+- bloom barato (4 amostras diagonais, só em Alta) que dá brilho às fogueiras, tochas e habilidades;
+- aberração cromática curtíssima (1 a 3 texels nas bordas) em acertos pesados, dano recebido, supremas e morte de chefe;
+- onda de choque (distorção em anel) nas supremas e na morte de chefe;
+- calor ondulante sobre zonas de fogo (erupção, cachaça em chamas; só em Alta);
+- tela de dano: bordas vermelhas e dessaturação por dano recente e vida abaixo de 30%.
+
+Identidade pixel art: todo deslocamento de UV é arredondado para texels da tela lógica 640×360 e a
+amostragem cai sempre no centro do texel, então os sprites não borram (`pixelArt`/`antialias` continuam como estavam).
+
+**Configurações > Qualidade gráfica:** Baixa (shader desligado, igual às versões anteriores), Média (padrão: grading,
+vinheta, impactos, ondas e tela de dano) e Alta (+ bloom e calor). *Reduzir movimento* desliga aberração, ondas, calor,
+oscilação do shader e pulso da tela de dano; *Alto contraste* desliga grading, vinheta, bloom e todos os efeitos de distorção.
+O botão "Shaders ambientais" (reflexos e luz) continua independente.
+
+Segurança: o fragment shader é compilado em separado antes de ser registrado; se falhar (ou se o render lançar erro),
+o filtro é desligado em silêncio, sem erro de console, e o jogo segue sem ele. O cenário `graphics` do e2e
+(`node tools/e2e.mjs graphics <pasta>`) captura baixa/média/alta, acessibilidade e chefe; `perfcpu <pasta> <classe> <low|medium|high>`
+e `perf <pasta> x <low|medium|high>` medem o custo (sem limite de quadros).
+
 ### Estrutura
 
 ```

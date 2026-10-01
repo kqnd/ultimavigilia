@@ -19,6 +19,7 @@ import type { TravelScene } from '../game/cinematic.js';
 import type { HudScene } from '../game/hud.js';
 import { type InputCapture, keyLabel } from '../game/input.js';
 import type { GameScene } from '../game/scene.js';
+import { GRAPHICS_QUALITIES, GRAPHICS_QUALITY_LABEL } from '../game/shaders.js';
 import { tf } from '../game/textures.js';
 import type { Session } from '../session.js';
 import { classSprite, h, iconEl, stars } from './dom.js';
@@ -163,6 +164,7 @@ export class App {
     this.game.fx.settings = { shake: s.reduceMotion ? 0 : s.shake, flashes: s.reduceMotion ? Math.min(s.flashes, 0.3) : s.flashes, damageNumbers: s.damageNumbers, glow: s.skillGlow };
     this.game.brightness = s.brightness;
     this.game.setEnhancedLighting(s.enhancedLighting);
+    this.game.setGraphicsQuality(s.graphicsQuality, s.reduceMotion, s.highContrast);
     this.input.binds = s.keys;
     // acessibilidade (HUD em Phaser + menus em DOM)
     this.hud.highContrast = s.highContrast;
@@ -1479,6 +1481,14 @@ export class App {
       this.applySettings();
       void this.saveSettings();
     });
+    const gfxLbl = (): string => `Qualidade gráfica: ${GRAPHICS_QUALITY_LABEL[s.graphicsQuality]}`;
+    const gfxBtn = h('button', { class: 'btn' }, gfxLbl());
+    gfxBtn.addEventListener('click', () => {
+      s.graphicsQuality = GRAPHICS_QUALITIES[(GRAPHICS_QUALITIES.indexOf(s.graphicsQuality) + 1) % GRAPHICS_QUALITIES.length] ?? 'medium';
+      gfxBtn.textContent = gfxLbl();
+      this.applySettings();
+      void this.saveSettings();
+    });
     // acessibilidade
     const toggle = (label: string, get: () => boolean, set: (v: boolean) => void): HTMLElement => {
       const b = h('button', { class: 'btn' }, `${label}: ${get() ? 'ligado' : 'desligado'}`);
@@ -1567,6 +1577,7 @@ export class App {
           slider('Brilho do mapa', () => s.brightness, (v) => (s.brightness = v)),
           h('div', { class: 'hint', style: 'max-width:190px;margin:2px 0 4px', text: 'Luz cinematográfica e reflexos nos pisos. Pode reduzir o desempenho em GPUs antigas.' }),
           shaderBtn,
+          gfxBtn,
           slider('Tremor e impacto (hit-stop)', () => s.shake, (v) => (s.shake = v)),
           slider('Intensidade de flashes', () => s.flashes, (v) => (s.flashes = v)),
           slider('Brilho das habilidades', () => s.skillGlow, (v) => (s.skillGlow = v)),

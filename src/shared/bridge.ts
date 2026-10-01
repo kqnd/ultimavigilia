@@ -72,6 +72,8 @@ export interface Settings {
   brightness: number;
   /** Filtros WebGL de ambientação e reflexos em pisos apropriados. */
   enhancedLighting: boolean;
+  /** Pós-processamento (shader de cena): baixa = desligado, média = grading/vinheta/impactos, alta = + bloom e calor. */
+  graphicsQuality: 'low' | 'medium' | 'high';
   /** 'integer': ampliação inteira com letterbox (pixels perfeitos); 'fit': preenche a janela (fator fracionário). */
   pixelScale: 'integer' | 'fit';
   /** Procurar atualizações no GitHub ao abrir o jogo. */
@@ -118,6 +120,7 @@ export const DEFAULT_SETTINGS: Settings = {
   damageNumbers: true,
   brightness: 0,
   enhancedLighting: false,
+  graphicsQuality: 'medium',
   pixelScale: 'integer',
   autoUpdate: true,
   uiScale: 1,
@@ -150,6 +153,7 @@ export function normalizeSettings(raw: unknown): Settings {
   s.damageNumbers = r.damageNumbers !== false;
   s.brightness = num(r.brightness, 0, 1, 0);
   s.enhancedLighting = r.enhancedLighting === true;
+  s.graphicsQuality = r.graphicsQuality === 'low' || r.graphicsQuality === 'high' ? r.graphicsQuality : 'medium';
   s.pixelScale = r.pixelScale === 'fit' ? 'fit' : 'integer';
   s.autoUpdate = r.autoUpdate !== false;
   s.uiScale = num(r.uiScale, 1, 1.3, 1);

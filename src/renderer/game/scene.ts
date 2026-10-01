@@ -21,6 +21,7 @@ import { LIGHT, projectileGlow, skillLight } from './lightfx.js';
 import { reflectionAlpha } from './graphics-quality.js';
 import type { InputCapture } from './input.js';
 import { Predictor } from './predict.js';
+import { type GraphicsQuality, PostFx } from './shaders.js';
 import { drawMarchBeams, drawTelegraph, drawWoundLink, drawZone } from './telegraphs.js';
 import { ensureFloor, ensureTextures, pixelOrigin, tf } from './textures.js';
 import { affixOf, enemyAttackName, enemyStateName, EnemyView, isBossType, MinionView, PlayerView, type RenderEnemy } from './views.js';
@@ -93,6 +94,9 @@ export class GameScene extends Phaser.Scene {
   private storm = 0;
   brightness = 0;
   enhancedLighting = false;
+  /** Pós-processamento em shader (grading, vinheta, bloom, aberração, ondas, calor, dano). */
+  postfx!: PostFx;
+  private hurtKick = 0;
   private moodFilter: Phaser.Filters.ColorMatrix | null = null;
   private vignetteFilter: Phaser.Filters.Vignette | null = null;
   private reflectionG!: Phaser.GameObjects.Graphics;
@@ -152,6 +156,7 @@ export class GameScene extends Phaser.Scene {
     this.debugG = this.add.graphics().setDepth(160000);
     this.dark = this.add.renderTexture(0, 0, 640, 360).setOrigin(0, 0).setScrollFactor(0).setDepth(150000);
     this.fx = new Effects(this);
+    this.postfx = new PostFx(this);
     this.setMap('village', true);
     this.camX = this.map.campfire.x - 320;
     this.camY = this.map.campfire.y - 180;
@@ -174,6 +179,17 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  setGraphicsQuality(q: GraphicsQuality, reduceMotion: boolean, highContrast: boolean): void {
+    this.postfx.configure(q, reduceMotion, highContrast);
+    this.postfx.setClimate(this.map.climate);
+  }
+
+  /** Ponto do mundo na tela lógica 640×360 (zoom da câmera em torno do centro). */
+  private toScreen(x: number, y: number): { x: number; y: number } {
+    const cam = this.cameras.main;
+    return { x: (x - cam.scrollX - 320) * cam.zoom + 320, y: (y - cam.scrollY - 180) * cam.zoom + 180 };
+  }
+
   get climate(): Climate {
     return this.map.climate;
   }
@@ -184,6 +200,7 @@ export class GameScene extends Phaser.Scene {
     this.moveTarget = null;
     this.moveClick = null;
     this.mapId = id;
+    this.postfx?.setClimate(getMap(id).climate);
     this.map = cloneMap(getMap(id));
     this.predictor.map = this.map;
     for (const img of this.mapImages) img.destroy();
@@ -354,6 +371,7 @@ export class GameScene extends Phaser.Scene {
               this.hitStop(heavy ? 90 : ev.v >= 30 ? 55 : 32);
               if (crit) audio.play('critHit', ev.x, ev.y, 0.9, 1 + Math.min(0.2, ev.v / 400));
               else audio.play('hit', ev.x, ev.y, 0.8, 1.12 - Math.min(0.3, ev.v / 150));
+              if (heavy) this.postfx.aberration(crit ? 1.6 : 1.2, 110);
               if (heavy) this.fx.shake(2.5 + Math.min(2, ev.v / 60), 110);
               else if (ev.v >= 20) this.fx.shake(1, 70);
             }
@@ -376,6 +394,8 @@ export class GameScene extends Phaser.Scene {
                 this.fx.shake(big ? 4.5 : 3, big ? 150 : 110);
                 this.fx.flash(0xc83838, big ? 0.3 : 0.22, 120);
                 this.hitStop(big ? 70 : 45);
+                this.hurtKick = big ? 0.75 : 0.5;
+                this.postfx.aberration(big ? 2.2 : 1.4, 150);
                 audio.play('playerHit', undefined, undefined, 1, big ? 0.85 : 1);
               }
             }
@@ -413,6 +433,9 @@ export class GameScene extends Phaser.Scene {
             this.fx.shake(8, 500);
             this.fx.flash(0xffffff, 0.5, 300);
             audio.play('explosion');
+            const sp = this.toScreen(ev.x, ev.y);
+            this.postfx.ripple(sp.x, sp.y, 0.7, 3, 700);
+            this.postfx.aberration(2.4, 260);
           }
           break;
         }
@@ -461,6 +484,11 @@ export class GameScene extends Phaser.Scene {
             this.fx.light(p.x, p.y, 160, 1, 0.6);
           }
           audio.play('ult', p?.x, p?.y);
+          if (p) {
+            const sp = this.toScreen(p.x, p.y - 10);
+            this.postfx.ripple(sp.x, sp.y, 0.5, 2, 520);
+            if (ev.pi === myId) this.postfx.aberration(1.8, 200);
+          }
           if (ev.pi === myId) this.fx.shake(2, 150);
           break;
         }
@@ -1257,6 +1285,7 @@ export class GameScene extends Phaser.Scene {
     this.ambientParticles(dt);
     this.updateLighting();
     this.drawLightReflections();
+    this.updatePostFx(dt);
     const cam = this.cameras.main;
     this.fog.tilePositionX = cam.scrollX * 1 + performance.now() / 90;
     this.fog.tilePositionY = cam.scrollY * 1 + performance.now() / 260;
@@ -1639,6 +1668,10 @@ export class GameScene extends Phaser.Scene {
         continue;
       }
       drawZone(this.zoneG, z as ZoneTuple, now);
+      if (kind === 'eruption' || kind === 'brew' || (kind === 'choke' && z[7])) {
+        const sp = this.toScreen(z[2], z[3]);
+        this.postfx.heatSource(sp.x, sp.y, Math.max(0.12, (z[4] * 1.4 * this.cameras.main.zoom) / 360), kind === 'choke' ? 0.9 : 1.4);
+      }
       this.zoneGlow(z as ZoneTuple, now);
     }
     for (const [id, img] of this.traps) {
@@ -1974,6 +2007,18 @@ export class GameScene extends Phaser.Scene {
       image.setPosition(Math.round(p.x), Math.round(p.y + 3)).setDepth(Math.round(p.y) - 1).setFlipX(view.body.flipX).setScale(1, 0.45).setAlpha(alpha).setVisible(true);
       image.setTint(this.map.climate === 'winter' ? 0xaed9ed : this.map.climate === 'ash' ? 0xc4a3a0 : 0xe0b892);
     }
+  }
+
+  /** Baixa vida/dano recente do jogador local alimenta a tela de dano do shader. */
+  private updatePostFx(dt: number): void {
+    this.hurtKick = Math.max(0, this.hurtKick - dt / 1000 / 0.9);
+    let low = 0;
+    if (this.mode === 'match') {
+      const me = this.rendered.find((p) => p.id === this.session.myId);
+      if (me && me.data.mhp > 0) low = Math.max(0, (0.3 - me.data.hp / me.data.mhp) / 0.3);
+    }
+    this.postfx.setHurt(Math.max(low * 0.85, this.hurtKick));
+    this.postfx.update(dt);
   }
 
   /** Riscos de luz em pedra úmida/gelo/mármore, quantizados em pixels e limitados à câmera. */

@@ -152,5 +152,9 @@ describe('configurações salvas', () => {
     expect(normalizeSettings('lixo').enhancedLighting).toBe(false);
     expect(normalizeSettings({ enhancedLighting: true }).enhancedLighting).toBe(true);
     expect(normalizeSettings({ enhancedLighting: 'true' }).enhancedLighting).toBe(false);
+    expect(normalizeSettings(null).graphicsQuality).toBe('medium');
+    expect(normalizeSettings({ graphicsQuality: 'high' }).graphicsQuality).toBe('high');
+    expect(normalizeSettings({ graphicsQuality: 'low' }).graphicsQuality).toBe('low');
+    expect(normalizeSettings({ graphicsQuality: 'ultra' }).graphicsQuality).toBe('medium');
   });
 });
