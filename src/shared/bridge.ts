@@ -76,6 +76,16 @@ export interface Settings {
   pixelScale: 'integer' | 'fit';
   /** Procurar atualizações no GitHub ao abrir o jogo. */
   autoUpdate: boolean;
+  /** Escala dos painéis de menu/cartas (1 = padrão). */
+  uiScale: number;
+  /** Alto contraste: painéis opacos, textos claros e bordas fortes. */
+  highContrast: boolean;
+  /** Reduz movimento: sem tremor, sem piscar e sem animações de transição. */
+  reduceMotion: boolean;
+  /** Dicas contextuais (aparecem uma vez cada). */
+  hints: boolean;
+  /** Ids das dicas já mostradas. */
+  hintsSeen: string[];
   keys: Keybinds;
 }
 
@@ -110,6 +120,11 @@ export const DEFAULT_SETTINGS: Settings = {
   enhancedLighting: false,
   pixelScale: 'integer',
   autoUpdate: true,
+  uiScale: 1,
+  highContrast: false,
+  reduceMotion: false,
+  hints: true,
+  hintsSeen: [],
   keys: { ...DEFAULT_KEYS },
 };
 
@@ -137,6 +152,11 @@ export function normalizeSettings(raw: unknown): Settings {
   s.enhancedLighting = r.enhancedLighting === true;
   s.pixelScale = r.pixelScale === 'fit' ? 'fit' : 'integer';
   s.autoUpdate = r.autoUpdate !== false;
+  s.uiScale = num(r.uiScale, 1, 1.3, 1);
+  s.highContrast = r.highContrast === true;
+  s.reduceMotion = r.reduceMotion === true;
+  s.hints = r.hints !== false;
+  s.hintsSeen = Array.isArray(r.hintsSeen) ? r.hintsSeen.filter((x): x is string => typeof x === 'string' && /^[a-z0-9_]{1,24}$/.test(x)).slice(0, 40) : [];
   if (typeof r.keys === 'object' && r.keys !== null) {
     const k = r.keys as Record<string, unknown>;
     for (const key of Object.keys(DEFAULT_KEYS) as (keyof Keybinds)[]) {

@@ -138,6 +138,15 @@ describe('configurações salvas', () => {
     expect(s.keys.q).toBe('KeyZ');
     expect(s.keys.e).toBe(DEFAULT_KEYS.e);
     expect(normalizeSettings({ pixelScale: 'qualquer' }).pixelScale).toBe('integer');
+    // acessibilidade e dicas: padrões seguros e valores validados
+    const acc = normalizeSettings({ uiScale: 9, highContrast: true, reduceMotion: true, hints: false, hintsSeen: ['atk', 'x y', 5, 'ult'] });
+    expect(acc.uiScale).toBe(1.3);
+    expect(acc.highContrast).toBe(true);
+    expect(acc.reduceMotion).toBe(true);
+    expect(acc.hints).toBe(false);
+    expect(acc.hintsSeen).toEqual(['atk', 'ult']);
+    const def = normalizeSettings(null);
+    expect([def.uiScale, def.highContrast, def.reduceMotion, def.hints, def.hintsSeen]).toEqual([1, false, false, true, []]);
     expect(normalizeSettings('lixo').port).toBe(7777);
     expect(normalizeSettings('lixo').brightness).toBe(0);
     expect(normalizeSettings('lixo').enhancedLighting).toBe(false);

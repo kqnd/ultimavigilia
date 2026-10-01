@@ -1056,6 +1056,114 @@ scenarios.perfcpu = async () => {
   await app.close();
 };
 
+// UX: foco por teclado nos menus, HUD (recarga radial, suprema, vida baixa), dicas, avisos de
+// onda/chefe/checkpoint, cartas com tooltip, pausa, configurações (alto contraste) e resultados.
+scenarios.ux = async () => {
+  const { app, page, logs } = await launch('ux');
+  try {
+    await sleep(1500);
+    // o perfil guarda as configurações entre execuções: parte sempre do padrão
+    await page.evaluate(() => { const a = window.__app.app; Object.assign(a.settings, { highContrast: false, reduceMotion: false, hints: true, hintsSeen: [], uiScale: 1 }); a.hud.hintsSeen = new Set(); a.applySettings(); });
+    await shot(page, 'ux-01-menu');
+    await page.locator('input[placeholder="Seu apelido"]').fill('Álex');
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('ArrowDown');
+    await sleep(300);
+    await shot(page, 'ux-02-menu-teclado');
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('Enter'); // Jogar sozinho, só com teclado
+    await page.waitForSelector('.classcard', { timeout: 15000 });
+    await sleep(600);
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await sleep(300);
+    await shot(page, 'ux-03-selecao-classe');
+    await page.evaluate(() => window.__app.session.send({ t: 'cls', cls: 'mage' }));
+    await sleep(500);
+    await clickText(page, 'Começar');
+    await sleep(3500);
+    await shot(page, 'ux-04-onda1-dica');
+    await sleep(6500);
+    await page.mouse.move(900, 400);
+    await page.keyboard.press('KeyE');
+    await sleep(250);
+    await shot(page, 'ux-05-recarga-radial');
+    await sleep(3500);
+    await dbg(page, 'ult');
+    await dbg(page, 'hp', 22);
+    await sleep(500);
+    await shot(page, 'ux-06-suprema-vida-baixa');
+    await dbg(page, 'god');
+    await dbg(page, 'wave', 5);
+    await sleep(900);
+    await shot(page, 'ux-07-aviso-chefe');
+    // espera o aviso de onda passar e injeta os eventos do servidor (checkpoint salvo / volta ao checkpoint)
+    await sleep(3200);
+    await page.evaluate(() => window.__app.app.onLocalEvent({ k: 'msg', txt: 'CHECKPOINT SALVO — onda 5', c: 'good' }));
+    await sleep(900);
+    await shot(page, 'ux-08-checkpoint-salvo');
+    await sleep(3800);
+    await page.evaluate(() => window.__app.app.onLocalEvent({ k: 'msg', txt: 'De volta ao checkpoint (onda 6). -10% de vida máxima, 2 melhorias perdidas.', c: 'bad' }));
+    await sleep(900);
+    await shot(page, 'ux-08b-volta-checkpoint');
+    await sleep(4500);
+    // oferta de melhorias (injetada) com raridades variadas
+    await page.evaluate(() => {
+      const { app, session } = window.__app;
+      session.phase = { ...session.phase, phase: 'intermission' };
+      session.offer = { options: ['g_vigor', 'g_fury', 'h_ricochet', 'l_endless'], picked: null, mine: { g_vigor: 1 }, readyCount: 0, total: 1, bonus: null };
+      app.renderUpgrades();
+    });
+    await sleep(600);
+    await shot(page, 'ux-09-cartas');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Digit2');
+    await sleep(500);
+    await shot(page, 'ux-10-carta-selecionada');
+    await page.evaluate(() => { window.__app.session.offer = null; window.__app.app.renderUpgrades(); window.__app.session.phase = { ...window.__app.session.phase, phase: 'wave' }; });
+    await sleep(300);
+    await page.keyboard.press('Escape');
+    await sleep(400);
+    await shot(page, 'ux-11-pausa');
+    await clickText(page, 'Configurações');
+    await sleep(300);
+    await page.locator('button', { hasText: 'Alto contraste' }).click();
+    await sleep(300);
+    await shot(page, 'ux-12-config-alto-contraste');
+    await page.keyboard.press('Escape');
+    await sleep(300);
+    await shot(page, 'ux-13-pausa-alto-contraste');
+    await page.evaluate(() => { const a = window.__app.app; Object.assign(a.settings, { highContrast: false, uiScale: 1.3 }); a.applySettings(); });
+    await sleep(300);
+    await shot(page, 'ux-13b-pausa-escala-130');
+    await page.evaluate(() => { const a = window.__app.app; a.settings.uiScale = 1; a.applySettings(); void a.saveSettings(); });
+    const errors = logs.filter((l) => l.includes('[pageerror]') || l.includes('[error]'));
+    console.log('erros de console:', errors.length);
+    if (errors.length) console.log(errors.join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
+scenarios.uxresults = async () => {
+  const { app, page, logs } = await launch('uxres');
+  try {
+    await soloStart(page, 'hunter');
+    await page.evaluate(() => {
+      const a = window.__app.app;
+      const s = window.__app.session;
+      s.phase = { ...s.phase, phase: 'victory', wave: 30, ch: 3, time: 1834, stats: { [s.myId]: { kills: 212, damage: 18340, downs: 1, revives: 2 } } };
+      a.go('results');
+    });
+    await sleep(1500);
+    await shot(page, 'ux-14-resultados');
+    const errors = logs.filter((l) => l.includes('[pageerror]'));
+    if (errors.length) console.log(errors.join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
 const fn = scenarios[scenario];
 if (!fn) {
   console.error('cenário desconhecido');
