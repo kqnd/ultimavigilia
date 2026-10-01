@@ -976,7 +976,7 @@ export class App {
       const other = Object.keys(off.mine).find((k) => k !== id && (off.mine[k] ?? 0) > 0 && UPGRADE_BY_ID.get(k)?.fork === u.fork);
       return other ? (UPGRADE_BY_ID.get(other)?.name ?? other) : null;
     };
-    const panel = h('div', { class: 'panel gold upgrades fade-in', style: `left:${off.options.length > 3 ? 70 : 110}px;top:40px;width:${off.options.length > 3 ? 500 : 420}px` });
+    const panel = h('div', { class: 'panel gold upgrades fade-in', style: `left:${off.options.length > 3 ? 70 : 110}px;top:8px;width:${off.options.length > 3 ? 500 : 420}px` });
     panel.append(h('h2', { text: locked ? 'Melhoria confirmada — aguardando a equipe' : 'Escolha uma melhoria e confirme' }));
     if (off.bonus) panel.append(h('div', { class: 'ok', style: 'margin:-3px 0 4px', text: `Carta extra nesta escolha: ${off.bonus}` }));
     const row = h('div', { class: 'row', style: 'align-items:stretch' });
@@ -1072,7 +1072,7 @@ export class App {
       this.upSel = null;
       this.session.send({ t: 'reroll' });
     });
-    panel.append(row, tip, confirm, reroll, this.buildSummary(off.mine), timer);
+    panel.append(row, tip, h('div', { style: 'display:grid;grid-template-columns:2fr 1fr;gap:6px' }, confirm, reroll), this.buildSummary(off.mine), timer);
     this.overlay.append(panel);
     // cartas fortes chamam atenção uma vez por oferta (sem pausar além do normal)
     const best = off.options.map((id) => UPGRADE_BY_ID.get(id)?.rarity).find((r) => r === 'legendary') ?? off.options.map((id) => UPGRADE_BY_ID.get(id)?.rarity).find((r) => r === 'rare');

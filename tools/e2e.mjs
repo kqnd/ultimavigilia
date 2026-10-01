@@ -1111,7 +1111,7 @@ scenarios.ux = async () => {
     await page.evaluate(() => {
       const { app, session } = window.__app;
       session.phase = { ...session.phase, phase: 'intermission' };
-      session.offer = { options: ['g_vigor', 'g_fury', 'h_ricochet', 'l_endless'], picked: null, mine: { g_vigor: 1 }, readyCount: 0, total: 1, bonus: null };
+      session.offer = { options: ['g_vigor', 'g_fury', 'h_ricochet', 'l_endless'], picked: null, mine: { g_vigor: 1 }, readyCount: 0, total: 1, bonus: null, rr: 2, bn: 2 };
       app.renderUpgrades();
     });
     await sleep(600);
