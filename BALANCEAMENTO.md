@@ -476,3 +476,21 @@ Somadas **dentro** das famílias com teto global (UPGRADE_CAPS): nunca furam o t
 
 ### Estatísticas da tela final
 Dano recebido, chefes abatidos, ondas, cartas, rerolls/banimentos usados, tags e sinergias do build e Lembranças ganhas.
+
+## v1.6 (c) — IA
+
+Código: `src/server/world/ai/{threat,steer,utility,context}.ts`; números em `src/shared/config/enemyAI.ts`. Princípio: a IA decide melhor, mas **não reage mais rápido** (windup, recuperação, alcance e dano em `ATK` não mudaram).
+
+**Ameaça (todos os inimigos).** Tabela jogador -> ameaça: dano válido (x1,3 se de longe, >170 px; servos x0,5), cura aliada (0,6/HP em inimigos a 360 px), provocação (sobe ao topo +0,5) e semente de spawn (0,15 no mais próximo). Decai exponencialmente (comum 5 s, elite 6, minichefe/chefe 8). Normalizada pela vida do inimigo (satura em 1,5x/0,8x/0,2x/0,15x da vida máx. por categoria).
+
+**Escolha de alvo.** Utilidade = pesos por papel x (distância de caminho exp(-d/320), ameaça, afinidade de papel, prioridade). Brutamontes: tanque/mais perto. Atiradores: frágil, curandeiro, no alcance e com visão. Velocistas: isolados/à distância. Enxame: distribui a carga entre jogadores. Chefes: ameaça pesa mais. Prioridade extra a quem cura ou reza (reviver), só se estiver a <260 px. Caído nunca é alvo.
+Histerese: reavalia a cada ~14 ticks (0,5 s); alvo atual +0,3 (chefe +0,4); margem 0,1 (chefe 0,18); permanência mínima 1,2 s (chefe 3 s), rompida só se a ameaça do outro for >=0,55 maior. Trava de provocação: 1 s depois (chefe 6 s). Substitui o retarget fixo de 14 s dos chefes.
+
+**Locomoção (modos por utilidade, permanência 18 ticks).** aproximar (com cerco lateral por lado do inimigo), flanquear (arco; velocistas/lobos), manter distância (Acólito 130-220, Noiva 100-190), recuar ferido (uma vez por vida, 2,4 s: Acólito <30%, Sombrio <40%, Caçador <25%), reagrupar (isolado e longe). Steering: separação, coesão leve, desvio de zonas perigosas dos jogadores (armadilha, gelo, chuva...), sonda de parede (rotaciona até 1,9 rad) e detecção de travamento (troca de lado por 22 ticks).
+
+**Chefes/minichefes.** Ataque escolhido por utilidade (distância, jogadores no alcance, kite/"calor", cooldown) com penalidade de recência (x0,5 repetir o último, x0,78 penúltimo) e ruído determinístico; nota mínima 0,28, senão só se posiciona. Reação a kite: alvo longe ou dano de longe aquece o chefe e favorece salto/investida/estilhaços. Reta final (<25% vida): +20% ritmo de recarga e reavaliação de alvo.
+
+**Justiça.** Respiro entre ataques de chefe: 14-26 ticks (fase 2: 9-18; reta final x0,65), janela para punir. No máx. 5 comuns/elites corpo a corpo preparando golpe no mesmo jogador. Lobo/Pai só usam bote/chinelada contra alvo de longe ou em kite nas ondas iniciais (`aiSkill` = (onda-1)/29 libera mais cerco/flanco/bote em ondas altas; nunca encurta janelas). Mira dos projéteis comuns sem antecipação nova.
+
+Testes: `tests/v16-ai.test.ts`. Dois testes de v13 ajustados à nova permanência/semente.
+

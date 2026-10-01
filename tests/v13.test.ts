@@ -189,12 +189,12 @@ describe('chefes/minichefes: ameaça de dano na escolha de alvo', () => {
     const w = mkWorld(['hunter']);
     const p = me(w);
     const boss = spawn(w, 'patriarch', p.x + 40, p.y);
-    expect(boss.threat.size).toBe(0);
+    boss.threat.clear(); // ignora a ameaça-semente do spawn (v1.6)
     w.hitEnemy(p, boss, 50, { poise: 0, kb: 0, fromX: p.x, fromY: p.y, kind: 'melee' });
     expect(boss.threat.get(p.id)).toBeGreaterThan(0);
   });
 
-  it('não troca de alvo travado antes de retargetSeconds, mesmo com muita ameaça no outro jogador', () => {
+  it('(v1.6) mantém o alvo no tempo mínimo de permanência com ameaça modesta no outro jogador', () => {
     const w = mkWorld(['hunter', 'hunter']);
     w.god = true;
     const [p1, p2] = [w.players.get(1) as Player, w.players.get(2) as Player];
@@ -202,9 +202,11 @@ describe('chefes/minichefes: ameaça de dano na escolha de alvo', () => {
     p2.move.y = p1.y;
     const boss = spawn(w, 'patriarch', p1.x + 120, p1.y);
     expect(w.targetOf(boss)?.id).toBe(p1.id); // mesma distância/classe: fica com o primeiro
-    boss.threat.set(p2.id, 100000);
-    run(w, sec(BOSS_AI.retargetSeconds) - 20);
-    expect(w.targetOf(boss)?.id).toBe(p1.id); // ainda dentro da janela: continua travado
+    boss.threat.set(p2.id, boss.maxHp * 0.15 * 0.3); // 30% da saturação: abaixo do salto que rompe a permanência
+    for (let i = 0; i < 60; i++) {
+      run(w, 1);
+      expect(w.targetOf(boss)?.id).toBe(p1.id);
+    } // dentro da janela mínima: continua travado
   });
 
   it('reavalia após retargetSeconds e passa para quem acumulou muito mais ameaça', () => {

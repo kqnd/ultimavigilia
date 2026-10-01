@@ -14,6 +14,7 @@ import { COMBAT_HEAL, HEAL_RULES, type HealSource, PLAYER_CC, PLAYER_SHIELD } fr
 import { ATK } from '../../shared/config/enemies.js';
 import { UPGRADE_CAPS } from '../../shared/config/upgrades.js';
 import { DT, sec, TICK_RATE } from '../../shared/constants.js';
+import { onHeal } from './ai/threat.js';
 import type { Enemy, Player, PlayerTelemetry } from './types.js';
 import type { World } from './world.js';
 
@@ -69,6 +70,7 @@ export function healPlayer(w: World, p: Player, amount: number, src: HealSource,
   p.tele.heal[src] = (p.tele.heal[src] ?? 0) + got;
   p.tele.wasted += a - got;
   p.recentHeal += got;
+  if (src !== 'pickup' && src !== 'reward') onHeal(w, p, got);
   if (got >= 1) w.emit({ k: 'dmg', tg: 'p', ti: p.id, v: Math.round(got), x: p.x, y: p.y - 18, c: 'heal', s: 0 });
   return got;
 }
