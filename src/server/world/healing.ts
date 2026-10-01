@@ -48,7 +48,7 @@ export interface HealUse {
 export function healPlayer(w: World, p: Player, amount: number, src: HealSource, use?: HealUse): number {
   if (p.status !== 0 || !(amount > 0)) return 0;
   let a = amount;
-  if (src === 'pickup') a *= 1 + Math.min(UPGRADE_CAPS.healBonus, w.mod(p, 'g_pickup'));
+  if (src === 'pickup') a *= 1 + Math.min(UPGRADE_CAPS.healBonus, w.mod(p, 'g_pickup') + p.syn.healBonus);
   const wm = woundMul(p);
   if (wm < 1) {
     p.tele.woundCut += a * (1 - wm);

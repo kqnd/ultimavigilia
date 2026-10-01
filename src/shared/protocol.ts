@@ -142,6 +142,10 @@ export type ClientMessage =
   | { t: 'in'; i: InputTuple[] }
   /** Confirma a melhoria escolhida (a seleção acontece só na interface). */
   | { t: 'upg'; id: string }
+  /** v1.6: troca a oferta inteira / bane uma carta (limitados por partida) / perks de meta-progressão. */
+  | { t: 'reroll' }
+  | { t: 'banish'; id: string }
+  | { t: 'perks'; ids: string[] }
   /** Voto de rota entre capítulos. */
   | { t: 'vote'; r: 'risk' | 'safe' }
   | { t: 'ping'; x: number; y: number }
@@ -203,6 +207,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     }
     case 'upg':
       return isStr(m.id, 32) ? { t: 'upg', id: m.id } : null;
+    case 'reroll':
+      return { t: 'reroll' };
+    case 'banish':
+      return isStr(m.id, 32) ? { t: 'banish', id: m.id } : null;
+    case 'perks':
+      return Array.isArray(m.ids) && m.ids.length <= 16 && m.ids.every((x) => isStr(x, 24)) ? { t: 'perks', ids: m.ids as string[] } : null;
     case 'vote':
       return m.r === 'risk' || m.r === 'safe' ? { t: 'vote', r: m.r } : null;
     case 'ping':
@@ -386,6 +396,12 @@ export interface MatchStats {
   revives: number;
   /** Vida sacrificada (Lapanha), separada do dano recebido. */
   sac?: number;
+  /** v1.6: dano recebido, rerolls e banimentos usados, chefes abatidos pela equipe e Lembranças ganhas. */
+  taken?: number;
+  rr?: number;
+  bn?: number;
+  bosses?: number;
+  mem?: number;
 }
 
 export type ServerMessage =
@@ -410,7 +426,7 @@ export type ServerMessage =
       w: WaveInfo;
       full: boolean;
     }
-  | { t: 'upgOffer'; options: string[]; picked: string | null; mine: Record<string, number>; readyCount: number; total: number; bonus: string }
+  | { t: 'upgOffer'; options: string[]; picked: string | null; mine: Record<string, number>; readyCount: number; total: number; bonus: string; rr?: number; bn?: number }
   | { t: 'hb'; ts: number }
   | { t: 'closing'; reason: string }
   | { t: 'notice'; text: string; kind: 'info' | 'warn' }

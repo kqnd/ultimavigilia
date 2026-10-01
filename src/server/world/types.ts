@@ -2,6 +2,7 @@ import type { ClassBase, ClassId, HealSource } from '../../shared/config/classes
 import type { AffixId } from '../../shared/config/affixes.js';
 import type { EnemyDef, EnemyType } from '../../shared/config/enemies.js';
 import type { InputFrame, MoveState } from '../../shared/movement.js';
+import type { SynergyTotals } from '../../shared/config/synergies.js';
 import type { ActionName, EnemyAttackName, EnemyStateName, MatchStats, MinionKind, MinionState, ProjectileKind, ZoneKind } from '../../shared/protocol.js';
 
 export type Slot = 'basic' | 'q' | 'e' | 'r';
@@ -116,6 +117,12 @@ export interface Player {
   lastPing: number;
   lastDodgeTick: number;
   stats: MatchStats;
+  /** v1.6: perks de meta-progressão (validados), reroll/banir restantes, cartas banidas e sinergias em cache. */
+  perks: string[];
+  rerolls: number;
+  banishes: number;
+  banished: string[];
+  syn: SynergyTotals;
   inBastion: boolean;
   bastionHeal: number;
   /** Ferida Profana: ticks restantes, ticks de bloqueio total e Acólito de origem. */

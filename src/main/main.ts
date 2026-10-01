@@ -10,6 +10,7 @@ import { startHost, stopHost } from './hostManager.js';
 import { isValidHost, listIPv4 } from './interfaces.js';
 import { NetClient } from './netClient.js';
 import { loadSettings, saveSettings } from './settings.js';
+import { awardRun, buyProfilePerk, loadProfile } from './profile.js';
 import { buildCommit, checkForUpdate, currentStatus, downloadUpdate, installUpdate, onUpdateStatus, openUpdatePage } from './updater.js';
 
 // Perfis separados (duas instâncias no mesmo PC): --profile=nome
@@ -161,6 +162,9 @@ function registerIpc(): void {
 
   handle('settings:load', () => loadSettings());
   handle('settings:save', (raw: unknown) => saveSettings(raw));
+  handle('profile:load', () => loadProfile());
+  handle('profile:award', (raw: unknown) => awardRun(raw));
+  handle('profile:buy', (id: unknown) => buyProfilePerk(String(id)));
 
   handle('sys:copy', (text: unknown) => {
     const t = str(text, 64);

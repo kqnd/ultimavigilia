@@ -31,6 +31,11 @@ const api: VigiliaBridge = {
     load: () => ipcRenderer.invoke('settings:load'),
     save: (s) => ipcRenderer.invoke('settings:save', s),
   },
+  profile: {
+    load: () => ipcRenderer.invoke('profile:load'),
+    award: (r) => ipcRenderer.invoke('profile:award', r),
+    buy: (id) => ipcRenderer.invoke('profile:buy', String(id)),
+  },
   sys: {
     copy: (t) => ipcRenderer.invoke('sys:copy', String(t)),
     setFullscreen: (on) => ipcRenderer.invoke('sys:fullscreen', on === true),

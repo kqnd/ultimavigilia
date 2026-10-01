@@ -59,8 +59,12 @@ function fallbackOrder(r: Rarity): Rarity[] {
   return [r, ...down, ...up];
 }
 
-export function rollUpgrades(rng: Rng, p: Player, count = 3, recent: readonly string[] = []): string[] {
-  const avail = availableUpgrades(p);
+/**
+ * `exclude`: cartas banidas (e, ao substituir uma, as que já estão na oferta) — nunca sorteadas.
+ * Com `count` 1 (troca de uma carta banida) não força "uma de classe e uma geral".
+ */
+export function rollUpgrades(rng: Rng, p: Player, count = 3, recent: readonly string[] = [], exclude: readonly string[] = []): string[] {
+  const avail = availableUpgrades(p).filter((u) => !exclude.includes(u.id));
   const out: UpgradeDef[] = [];
   const groups = new Set<string>();
   let legendaryInOffer = false;
@@ -82,8 +86,10 @@ export function rollUpgrades(rng: Rng, p: Player, count = 3, recent: readonly st
     return false;
   };
   // pelo menos uma de classe e uma geral quando possível
-  take('class');
-  take('general');
+  if (count >= 2) {
+    take('class');
+    take('general');
+  }
   let guard = 0;
   while (out.length < count && guard++ < 12) {
     if (!take(rng.chance(0.5) ? 'class' : 'general')) take('any');

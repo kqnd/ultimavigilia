@@ -424,7 +424,7 @@ emite luz aditiva por cima dela (clarões, ondas de choque, faíscas, raios, col
 luminoso nos arcos de golpe e luz dinâmica que recorta a noite). Ajustável em **Configurações →
 Brilho das habilidades** (0 = só pixels).
 
-## v1.6 — Variedade procedural das ondas (`waveVariety.ts`)
+## v1.6 (a) — Variedade procedural das ondas (`waveVariety.ts`)
 
 As 30 ondas continuam sendo a espinha da campanha (`WAVES`), mas cada partida agora **reinclina**
 a mistura das ondas comuns. Tudo sai de um `Rng` próprio semeado por `(semente da partida, onda)`:
@@ -453,3 +453,26 @@ o orçamento; o último sorteio pode estourar até o custo do maior inimigo, 8).
 sementes por onda: a fila fica em `[orçamento − 0,5, orçamento + 8)` e a **média do custo difere
 menos de 6%** da fila sem variedade. A contagem de inimigos varia (horda: mais e mais fracos;
 elites: menos e mais fortes), o orçamento não.
+
+## v1.6 (b) — Sinergias, reroll/banir, Lembranças e estatísticas
+
+Código: `src/shared/config/synergies.ts`, `meta.ts`; servidor em `world.ts`/`upgrades.ts`; perfil em `src/main/profile.ts`.
+
+### Sinergias entre cartas
+Somadas **dentro** das famílias com teto global (UPGRADE_CAPS): nunca furam o teto.
+- **Tags de build** (cada acúmulo = 1 ponto): Ferro (ofensivas gerais), Muralha (defesa), Vento (mobilidade/recarga), Fôlego (stamina), Ofício (toda carta de classe).
+- **Bônus de conjunto** (3 pontos / 6 pontos, o nível maior substitui o menor): Ferro +3% / +6% dano; Muralha -2% / -4% dano recebido; Vento -3% recarga / -5% recarga e +2% velocidade; Fôlego +2% / +4% vel. de ataque; Ofício +2% dano / +4% dano e -2% recarga.
+- **Combinações** (as duas cartas com >= 1 acúmulo): Carrasco (Lâmina Ungida + Primeiro Sangue) +4% dano; Muralha Viva (Couro Curtido + Defesa Improvisada) -3% dano recebido e +10 no escudo; Compasso Sombrio (Foco Sombrio + Mãos Rápidas) -3% recarga; Passo Fantasma (Retirada Tática + Passos Leves) +3% velocidade; Sobrevivente Nato (Vigor de Sobrevivente + Vigor da Vigília) +5% cura de itens; uma por classe (par comum + bifurcação, ex.: Trilha de Ferro do Caçador) +4% dano (Cão e Matilha Ressonante: -3% recarga).
+- Melhor build possível por classe: no máximo +20% de dano e +13% de recarga vindos de sinergias, ainda sob os tetos de 30% e 25%.
+- A carta oferecida mostra suas tags e avisa "Sinergia: ..." quando completa uma combinação; o painel mostra pontos por tag e sinergias ativas.
+
+### Reroll e banir (por jogador, por partida)
+- 2 rerolls (sorteia a oferta inteira de novo, evitando repetir a anterior) e 2 banimentos (remove a carta para o resto da partida e a substitui). Só antes de confirmar a escolha; não são devolvidos em checkpoint. Perks somam +1 cada.
+
+### Lembranças (meta-progressão)
+- Ganho por partida: 2 por onda concluída, 4 por minichefe, 8 por chefe, +30 na vitória; teto de 150 por partida (+10% com Memória Vívida). Uma partida completa vencida rende cerca de 100 a 150.
+- Perks permanentes (compra única): Segunda Chance (+1 reroll, 40), Esquecimento (+1 banimento, 60), Memória Vívida (+10% Lembranças, 80), Dote do Veterano (começa com 1 carta comum da classe, 120). Nenhum dá vida, dano ou resistência diretos; o Dote vale o mesmo que uma carta comum (4 a 8%).
+- Persistência: `userData/profile.json` (escrita atômica), validada no processo principal; o servidor só aceita ids de perk conhecidos e só no lobby. Menu principal: botão Lembranças.
+
+### Estatísticas da tela final
+Dano recebido, chefes abatidos, ondas, cartas, rerolls/banimentos usados, tags e sinergias do build e Lembranças ganhas.

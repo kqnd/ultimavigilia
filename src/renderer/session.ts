@@ -4,6 +4,7 @@
  */
 import type { ConnectOptions, NetStatus } from '../shared/bridge.js';
 import type { ClassId } from '../shared/config/classes.js';
+import { normalizeProfile, type Profile } from '../shared/config/meta.js';
 import { TICK_MS } from '../shared/constants.js';
 import type { GameEvent, LobbyPlayer, MatchStats, Phase, ServerMessage } from '../shared/protocol.js';
 import { getBridge } from './bridge.js';
@@ -43,6 +44,9 @@ export interface Offer {
   total: number;
   /** Por que há cartas extras neste intervalo (texto do servidor; vazio se nenhuma). */
   bonus: string;
+  /** Rerolls e banimentos restantes nesta partida. */
+  rr: number;
+  bn: number;
 }
 
 /** Votação de rota entre capítulos (espelho do servidor). */
@@ -73,6 +77,9 @@ export class Session {
   hasPassword = false;
   phase: PhaseInfo = { phase: 'lobby', wave: 0, title: '', tm: 0, stats: null, time: 0, ch: 1, map: 0, route: 0 };
   offer: Offer | null = null;
+  /** Perfil persistente (Lembranças e perks), carregado pelo app; os perks são enviados ao servidor no lobby. */
+  profile: Profile = normalizeProfile(null);
+  private awardedKey = '';
   route: RouteVote | null = null;
   /** Acúmulos de melhorias do jogador local (confirmados pelo servidor). */
   mods: Record<string, number> = {};
@@ -142,6 +149,34 @@ export class Session {
     this.bridge.net.send(m);
   }
 
+  async loadProfile(): Promise<void> {
+    try {
+      this.profile = await this.bridge.profile.load();
+    } catch {
+      /* perfil indisponível: segue sem meta-progressão */
+    }
+  }
+
+  /** Informa ao servidor os perks comprados (o servidor valida os ids). */
+  sendPerks(): void {
+    if (this.profile.perks.length) this.send({ t: 'perks', ids: this.profile.perks });
+  }
+
+  /** Soma as Lembranças da partida que acabou ao perfil (uma vez por partida). Devolve o ganho. */
+  async awardMatch(): Promise<number> {
+    const st = this.phase.stats?.[this.myId];
+    const key = `${this.phase.phase}:${this.phase.time}:${this.phase.wave}`;
+    if (!st || this.awardedKey === key || (this.phase.phase !== 'victory' && this.phase.phase !== 'defeat')) return st?.mem ?? 0;
+    this.awardedKey = key;
+    const mem = st.mem ?? 0;
+    try {
+      this.profile = await this.bridge.profile.award({ memories: mem, wave: this.phase.wave, victory: this.phase.phase === 'victory', cls: this.me()?.cls ?? null });
+    } catch {
+      /* sem perfil: ignora */
+    }
+    return mem;
+  }
+
   me(): LobbyPlayer | undefined {
     return this.lobby.find((p) => p.id === this.myId);
   }
@@ -169,6 +204,7 @@ export class Session {
         this.hasPassword = m.pw;
         this.connected = true;
         if (this.lastConnect) this.lastConnect.token = m.token;
+        this.sendPerks();
         this.onWelcome.emit(m.reconnect);
         break;
       case 'reject':
@@ -212,7 +248,7 @@ export class Session {
         break;
       }
       case 'upgOffer':
-        this.offer = { options: m.options, picked: m.picked, mine: m.mine, readyCount: m.readyCount, total: m.total, bonus: m.bonus };
+        this.offer = { options: m.options, picked: m.picked, mine: m.mine, readyCount: m.readyCount, total: m.total, bonus: m.bonus, rr: m.rr ?? 0, bn: m.bn ?? 0 };
         this.onOffer.emit(this.offer);
         break;
       case 'route':
