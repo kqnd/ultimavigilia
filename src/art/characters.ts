@@ -586,6 +586,115 @@ const LAP_PAL: Record<string, Color> = {
   p: 0x8f5b3d, P: 0x6f4330, q: 0x6f4330, d: 0x4a3322,
 };
 
+// Jota: vibecoder de moletom com capuz. Rosto na sombra com dois olhos verde-água acesos, o brilho
+// da tela no queixo, cordões brancos, bolso canguru e tênis branco.
+const JOTA_DOWN = mirror([
+  '........',
+  '.....hhh',
+  '....hhhh',
+  '...hhhhH',
+  '..hhhhHH',
+  '..hhhHHH',
+  '.hhhHSSS',
+  '.hhhHSSS',
+  '.hhhHSeS',
+  '.hhhHSSS',
+  '.hhhhHgg',
+  '..hhcwcc',
+  '.hcccwcc',
+  '.ccccwcC',
+  'sccccCCC',
+  'sccCCCCC',
+  '.ccCCCCC',
+  '.cccCCCC',
+  '..ccCCCC',
+  '..cccccc',
+]);
+
+const JOTA_SIDE = [
+  '................',
+  '.......hhhh.....',
+  '.....hhhhhhh....',
+  '....hhhhhhhhh...',
+  '...hhhhhhhhHH...',
+  '...hhhhhhhHHH...',
+  '...hhhhhhHSSSS..',
+  '...hhhhhhHSSeS..',
+  '...hhhhhhHSSSS..',
+  '....hhhhhHSSgg..',
+  '....hhhhhhhggh..',
+  '....hcccchwccc..',
+  '...hccccccwcccc.',
+  '...cccccccwccCs.',
+  '...ccccccccCCCs.',
+  '...cccccccCCCC..',
+  '...cccccccCCCC..',
+  '....ccccccCCC...',
+  '....cccccccc....',
+  '....cccccccc....',
+];
+
+const JOTA_PAL: Record<string, Color> = {
+  h: 0x353e58, H: 0x4d5974, S: 0x070910, e: 0x7dffd0, g: 0x58d6a8,
+  c: 0x44506e, C: 0x2d3650, w: 0xdfe6f2, s: 0xd9a888,
+  // jeans escuro e tênis branco
+  p: 0x2a3550, P: 0x1f2840, q: 0x1f2840, b: 0xe6ebf5, d: 0xb9c0d0,
+};
+
+// Batman (paródia): capuz com orelhas, capa que envolve o corpo, cinto amarelo. A silhueta de
+// morcego é o que importa: orelhas pontudas no topo e capa em leque dos lados.
+const BAT_DOWN = mirror([
+  '..h.....',
+  '..hh....',
+  '..hhh...',
+  '..hhhhhh',
+  '..hhhhHH',
+  '..hhHHHH',
+  '..hhHeeH',
+  '..hhhHHH',
+  '..hhhsss',
+  '...hhSss',
+  'kkkcccHH',
+  'kkkkcccc',
+  'kkKkccYc',
+  'kkKkccYY',
+  'kKkGcccc',
+  'kkKGccgg',
+  'kkkcyyyy',
+  'kkKkCCcc',
+  'kKkkCCcc',
+  '.kkkkCCc',
+]);
+
+const BAT_SIDE = [
+  '................',
+  '.......hh.......',
+  '......hhhh......',
+  '.....hhhhhh.....',
+  '....hhhhhhhhh...',
+  '....hhhhhhHHH...',
+  '....hhhhhHeeH...',
+  '....hhhhhhHHH...',
+  '.....hhhhhsss...',
+  '.....hhhhsSs....',
+  'kkk..hhhccccc...',
+  'kkkkkcccccccc...',
+  'kkKkkcccYcccG...',
+  'kkKkkcccYYccG...',
+  'KkkkkcccccccG...',
+  'kKkkkcccyyyc....',
+  'kkKkkkCCcccc....',
+  'kkkKkkCCcccc....',
+  '.kkkkkCCcccc....',
+  '..kkkkCCcccc....',
+];
+
+const BAT_PAL: Record<string, Color> = {
+  h: 0x2c3552, H: 0x434d72, e: 0xf4f6ff, s: 0xdcb596, S: 0x9c6f58,
+  k: 0x252b45, K: 0x3d4670, c: 0x5a647c, C: 0x434b62, Y: 0x2a3050, g: 0xe8c040, y: 0xe8c040, G: 0x101320,
+  p: 0x434b62, P: 0x343b50, q: 0x343b50, b: 0x14172a, d: 0x0c0e1a,
+};
+
 const ARTS: Record<ClassId, ClassArt> = {
   hunter: {
     pal: { h: P.grn4, H: P.grn2, s: P.skin2, S: P.skin1, e: P.ink, a: P.red3, c: P.brn3, C: P.brn2, t: P.brn1, g: P.sil1, p: P.gray2, P: P.gray1, q: P.gray1, b: P.brn2, d: P.brn1 },
@@ -660,7 +769,44 @@ const ARTS: Record<ClassId, ClassArt> = {
     legs: 'carpet',
     noShade: 'ecg',
   },
+  jota: {
+    pal: JOTA_PAL,
+    down: JOTA_DOWN,
+    side: JOTA_SIDE,
+    up: back(JOTA_DOWN, 11, { S: 'h', e: 'h', g: 'h', H: 'h' }),
+    legs: 'adult',
+    noShade: 'eg',
+  },
 };
+
+/** Jota transformado (Modo Batman): usa o prefixo `jotabat` na folha da classe. */
+const BAT_ART: ClassArt = {
+  pal: BAT_PAL,
+  down: BAT_DOWN,
+  side: BAT_SIDE,
+  up: BAT_DOWN.map((r, i) => (i < 8 ? [...r].map((ch) => (ch === 'e' || ch === 'H' ? 'h' : ch)).join('') : i < 10 ? r.replace(/[sS]/g, 'h') : r.replace(/[cCYgyGH]/g, 'k'))).map((r, i) => (i >= 11 && i % 3 === 2 ? r.slice(0, 7) + 'KK' + r.slice(9) : r)),
+  legs: 'adult',
+  noShade: 'ey',
+};
+
+/** Recolore o desenho inteiro com uma cor chapada (clarão da transformação), mantendo o contorno. */
+function silhouette(src: PixelCanvas, color: Color): PixelCanvas {
+  const c = new PixelCanvas(src.w, src.h);
+  for (let y = 0; y < src.h; y++) for (let x = 0; x < src.w; x++) if (src.alpha(x, y) > 0) c.set(x, y, color);
+  c.outline(P.outline);
+  return c;
+}
+
+/** Quadros da transformação: o Jota vira silhueta branca, depois o Batman, e o clarão se dissolve. */
+function jotaExtras(sb: SheetBuilder): void {
+  const jota = composeArt(ARTS.jota, { dir: 'down', leg: 0, dx: 0, dy: -1, cast: true }, 'jota');
+  const bat = composeArt(BAT_ART, { dir: 'down', leg: 0, dx: 0, dy: -1 }, 'jota');
+  sb.add('jota_morph_0', silhouette(jota, 0xe8fff6));
+  sb.add('jota_morph_1', silhouette(bat, 0xe8fff6));
+  sb.add('jota_morph_2', silhouette(bat, 0x7dffd0));
+  // pose de pouso do Batman (agachado, capa aberta) para o fim da transformação
+  sb.add('jotabat_land', composeArt(BAT_ART, { dir: 'down', leg: 2, dx: 0, dy: 2 }, 'jota'));
+}
 
 /** Quadros extras do Maycon: virar a garrafa (Rodada da Casa) e comemorar no tapete. */
 function mayconExtras(sb: SheetBuilder): void {
@@ -777,7 +923,7 @@ export function composeArt(art: ClassArt, o: FrameOpts, cls: ClassId | null = nu
   autoShade(c, skip);
   if (o.cast) {
     // brilho nas mãos (habilidade)
-    const glow = o.glow ?? (cls === 'mage' ? P.arc3 : cls === 'dog' ? P.mag2 : cls === 'vampire' ? P.red5 : cls === 'hunter' ? P.sil2 : cls === 'necromancer' ? 0xa8d05a : cls === 'berserker' ? P.red5 : cls === 'lapanha' ? 0xff7a6a : cls === 'maycon' ? 0xf0b54a : P.amb4);
+    const glow = o.glow ?? (cls === 'jota' ? 0x7dffd0 : cls === 'mage' ? P.arc3 : cls === 'dog' ? P.mag2 : cls === 'vampire' ? P.red5 : cls === 'hunter' ? P.sil2 : cls === 'necromancer' ? 0xa8d05a : cls === 'berserker' ? P.red5 : cls === 'lapanha' ? 0xff7a6a : cls === 'maycon' ? 0xf0b54a : P.amb4);
     const hy = upperY + o.dy + (kid ? 9 : 12);
     if (o.dir === 'side') {
       c.set(8 + o.dx + 14, hy, glow);
@@ -793,35 +939,44 @@ export function composeArt(art: ClassArt, o: FrameOpts, cls: ClassId | null = nu
   return c;
 }
 
-/** Folha de sprites completa de uma classe. */
-export function buildClassSheet(cls: ClassId): SheetBuilder {
-  const sb = new SheetBuilder();
+/** Quadros de movimento de um desenho (prefixo `p`): idle, walk, atk, cast, hurt, dash e queda. */
+function addFrames(sb: SheetBuilder, cls: string, compose: (o: FrameOpts) => PixelCanvas, dog: boolean): void {
   for (const dir of DIRS) {
     const fwd = dir === 'side' ? 1 : 0;
     const fwdY = dir === 'down' ? 1 : dir === 'up' ? -1 : 0;
-    sb.add(`${cls}_idle_${dir}_0`, compose(cls, { dir, leg: 0, dx: 0, dy: 0 }));
-    sb.add(`${cls}_idle_${dir}_1`, compose(cls, { dir, leg: 0, dx: 0, dy: 1 }));
-    for (let i = 0; i < 4; i++) sb.add(`${cls}_walk_${dir}_${i}`, compose(cls, { dir, leg: i, dx: 0, dy: i % 2 === 1 ? -1 : 0 }));
-    sb.add(`${cls}_atk_${dir}_0`, compose(cls, { dir, leg: 0, dx: -fwd, dy: -fwdY, shout: false }));
-    sb.add(`${cls}_atk_${dir}_1`, compose(cls, { dir, leg: dir === 'side' ? 0 : 1, dx: fwd * 2, dy: fwdY, shout: cls === 'dog' }));
-    sb.add(`${cls}_cast_${dir}`, compose(cls, { dir, leg: 0, dx: 0, dy: -1, cast: true, shout: cls === 'dog' }));
-    sb.add(`${cls}_hurt_${dir}`, compose(cls, { dir, leg: 2, dx: -fwd, dy: 1 }));
-    sb.add(`${cls}_dash_${dir}`, compose(cls, { dir, leg: dir === 'side' ? 0 : 1, dx: fwd * 2, dy: fwdY }));
+    sb.add(`${cls}_idle_${dir}_0`, compose({ dir, leg: 0, dx: 0, dy: 0 }));
+    sb.add(`${cls}_idle_${dir}_1`, compose({ dir, leg: 0, dx: 0, dy: 1 }));
+    for (let i = 0; i < 4; i++) sb.add(`${cls}_walk_${dir}_${i}`, compose({ dir, leg: i, dx: 0, dy: i % 2 === 1 ? -1 : 0 }));
+    sb.add(`${cls}_atk_${dir}_0`, compose({ dir, leg: 0, dx: -fwd, dy: -fwdY, shout: false }));
+    sb.add(`${cls}_atk_${dir}_1`, compose({ dir, leg: dir === 'side' ? 0 : 1, dx: fwd * 2, dy: fwdY, shout: dog }));
+    sb.add(`${cls}_cast_${dir}`, compose({ dir, leg: 0, dx: 0, dy: -1, cast: true, shout: dog }));
+    sb.add(`${cls}_hurt_${dir}`, compose({ dir, leg: 2, dx: -fwd, dy: 1 }));
+    sb.add(`${cls}_dash_${dir}`, compose({ dir, leg: dir === 'side' ? 0 : 1, dx: fwd * 2, dy: fwdY }));
   }
   // queda: joelhos cedem (tronco afunda sobre as pernas) → tomba de lado → caído
-  sb.add(`${cls}_fall_0`, compose(cls, { dir: 'down', leg: 2, dx: 0, dy: 3 }));
-  const tilt = compose(cls, { dir: 'side', leg: 2, dx: 1, dy: 5 });
+  sb.add(`${cls}_fall_0`, compose({ dir: 'down', leg: 2, dx: 0, dy: 3 }));
+  const tilt = compose({ dir: 'side', leg: 2, dx: 1, dy: 5 });
   const fall1 = new PixelCanvas(CHAR_FRAME, CHAR_FRAME);
   // inclina o quadro lateral em degraus de 2 linhas (cisalhamento pixel a pixel, sem reamostragem)
   for (let yy = 0; yy < CHAR_FRAME; yy++) fall1.blit(tilt, Math.floor((CHAR_FRAME - yy) / 5) - 2, yy, false, 0, yy, CHAR_FRAME, 1);
   sb.add(`${cls}_fall_1`, fall1);
   // caído: vista frontal girada
-  const lying = compose(cls, { dir: 'down', leg: 0, dx: 0, dy: 0 }).rot90();
+  const lying = compose({ dir: 'down', leg: 0, dx: 0, dy: 0 }).rot90();
   const down = new PixelCanvas(CHAR_FRAME, CHAR_FRAME);
   down.blit(lying, 0, 6);
   sb.add(`${cls}_down`, down);
+}
+
+/** Folha de sprites completa de uma classe. */
+export function buildClassSheet(cls: ClassId): SheetBuilder {
+  const sb = new SheetBuilder();
+  addFrames(sb, cls, (o) => compose(cls, o), cls === 'dog');
   if (cls === 'lapanha') lapanhaExtras(sb);
   if (cls === 'maycon') mayconExtras(sb);
+  if (cls === 'jota') {
+    addFrames(sb, 'jotabat', (o) => composeArt(BAT_ART, o, 'jota'), false);
+    jotaExtras(sb);
+  }
   return sb;
 }
 
@@ -849,6 +1004,8 @@ export function buildWeapons(): SheetBuilder {
   // melancias na mão do Lapanha: pequena (básico) e crescendo na carga do Q (4 tamanhos, rachada no máximo)
   const melonPal = { G: 0x4fb04a, g: 0x24602a, k: 0x7a1f1f, w: P.amb5 };
   // garrafa do Maycon (deitada, gargalo à direita)
+  // terminal flutuante do Jota (janela de código com texto verde-água, apontando para a mira)
+  w('terminal', ['kkkkkkkkkkkk', 'kRYGkkkkkkkk', 'kkkkkkkkkkkk', 'kgggkggkkkkk', 'kkkkkkkkkkkk', 'kgkgggkgggkk', 'kkkkkkkkkkkk', 'kkkkkkkkkkkk'], { k: 0x0c1a22, R: 0xe05a5a, Y: 0xe8c040, G: 0x58d6a8, g: 0x7dffd0 });
   w('bottleHeld', ['.gGGGg...', 'gGwGGGggc', 'gGGGGGggc', '.gGGGg...'], { g: 0x1f5a2a, G: 0x3f9a3a, w: 0xd8f6c8, c: 0xb08262 });
   w('melonHeld', ['.gGgG.', 'gGgGgG', 'GgGgGg', 'gGgGgG', '.gGgG.'], melonPal);
   w('melonQ_0', ['..gGgG..', '.gGgGgG.', 'gGgGgGgG', 'GgGgGgGg', 'gGgGgGgG', '.gGgGgG.', '..gGgG..'], melonPal);
@@ -859,6 +1016,7 @@ export function buildWeapons(): SheetBuilder {
 }
 
 export const CLASS_WEAPON: Record<ClassId, string | null> = {
+  jota: 'terminal',
   hunter: 'crossbow',
   mage: 'staff',
   tank: 'mace',

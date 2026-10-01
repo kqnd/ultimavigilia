@@ -148,8 +148,28 @@ export interface Player {
   charge: number;
   /** Penalidade de vida máxima acumulada por voltar ao checkpoint (fração da vida base). */
   hpPenalty: number;
+  /** Jota: Contexto, Compactar, Modo Batman, marcas do Patch e histórico do Rewind. */
+  jota: JotaState;
   /** Telemetria de balanceamento (não vai para os clientes). */
   tele: PlayerTelemetry;
+}
+
+/** Estado do Jota (só usado por ele; os demais jogadores carregam o estado vazio). */
+export interface JotaState {
+  /** Contexto 0–100 e ticks desde o último ganho. */
+  ctx: number;
+  ctxIdle: number;
+  /** Compactar: ticks restantes de +dano/+velocidade de ataque. */
+  hotT: number;
+  /** Modo Batman: ticks restantes e total (barra do HUD). */
+  batT: number;
+  batMax: number;
+  /** Patch: id do inimigo → tick em que a marca expira. */
+  marks: Map<number, number>;
+  /** Rewind: amostras (a cada 3 ticks) dos últimos 3 s. */
+  hist: { x: number; y: number; hp: number }[];
+  /** Sombra do Rewind (zona que segue a posição de 3 s atrás). */
+  ghost: Zone | null;
 }
 
 export interface PlayerTelemetry {

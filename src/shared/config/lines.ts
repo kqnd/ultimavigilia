@@ -11,6 +11,8 @@
  * - Necromante: solene e formal; é educado com os mortos e frio com os vivos.
  * - Lapanha: alegre, corajoso, bem-humorado e natural — expressões regionais com moderação,
  *   sem sotaque fonético forçado.
+ * - Jota: vibecoder de moletom; só mais um prompt, funcionou na minha máquina, rodei em prod,
+ *   a IA alucinou — e, de capa, o Batman da branch main.
  * - Maycon: gamer bonachão; vive citando Hunt: Showdown (Bounty, Dark Sight, extração, Choke,
  *   Lawson, Bayou...) e trata a noite como uma partida ranqueada.
  */
@@ -20,7 +22,9 @@ export type LineKind =
   | 'select' | 'matchStart' | 'waveStart' | 'fullQ' | 'slip' | 'ult' | 'lowHp' | 'heal'
   | 'minibossDown' | 'bossDown' | 'reviveAlly' | 'revived' | 'victory' | 'defeat'
   /** A equipe caiu e voltou ao último checkpoint. */
-  | 'checkpoint';
+  | 'checkpoint'
+  /** Jota: Contexto estourou (/compact) e voltou no tempo (/rewind). */
+  | 'compact' | 'rewind';
 
 export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly string[]>>>> = {
   hunter: {
@@ -152,6 +156,23 @@ export const LINES: Partial<Record<ClassId, Partial<Record<LineKind, readonly st
     victory: ['EXTRAÍMOS! GG, time!', 'Amanheceu e a Bounty é nossa!'],
     defeat: ['Wipe... igual quando o Assassino pula de dois.', 'Fomos pro lobby, rapaziada...'],
     checkpoint: ['Wipe, mas a Bounty ainda tá no mapa!', 'Respawn no Bayou. Agora é tryhard.'],
+  },
+  jota: {
+    select: ['Só mais um prompt e eu resolvo tudo.', 'Funcionou na minha máquina. Vai funcionar aqui também.', 'Deixa que a IA escreve, eu só aprovo.'],
+    matchStart: ['Abri o terminal. Boa sorte pra todo mundo.', 'Sem testes, sem medo.', 'Vou vibecodar essa noite inteira.'],
+    waveStart: ['Isso aí é bug ou feature?', 'Mais um ticket urgente!', 'Chegou issue nova, galera.', 'Deploy na sexta e eu aqui...'],
+    ult: ['Eu sou a branch main.'],
+    lowHp: ['Tô com 2% de bateria e 3% de vida!', 'Alguém dá um git revert nisso!', 'Isso aqui não tinha no changelog!'],
+    heal: ['Rodou sem erro. Milagre.', 'Cache limpo, vida nova.'],
+    minibossDown: ['Fechei o ticket.', 'Resolvido. Não encosta no código.'],
+    bossDown: ['Rodei em prod e deu certo!? Anotem a data.', 'Merge feito. Sem conflito, pela primeira vez.'],
+    reviveAlly: ['Levanta! Eu faço rollback de você!', 'Calma, que eu dou um git revert nessa morte.'],
+    revived: ['Valeu! Salvei antes de morrer, ufa.', 'Voltei. Alguém aprovou o PR da minha vida.'],
+    checkpoint: ['Segue o jogo: git reset --hard e bora de novo.', 'Fizemos rollback. Ninguém viu nada.', 'A IA alucinou a onda inteira. Recomeçando.'],
+    compact: ['Contexto cheio. /compact!', 'Compactei! Perdi uns detalhes, mas tudo bem.', 'Limite de tokens? Nem senti.'],
+    rewind: ['/rewind! Isso nunca aconteceu.', 'Ctrl+Z na vida real.', 'git revert nisso aí!'],
+    victory: ['Funcionou na minha máquina. E na de vocês também!', 'Deploy concluído. Sem rollback, dessa vez.'],
+    defeat: ['A IA alucinou e eu aprovei sem ler...', 'Rodei em prod. Era sexta.'],
   },
 };
 

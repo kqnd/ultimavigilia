@@ -72,8 +72,9 @@ describe('protocolo', () => {
 });
 
 describe('conteúdo', () => {
-  it('7 classes (sem Guerreiro), 30 ondas com chefes em 10/20/30, ≥3 melhorias por classe', () => {
-    expect(CLASS_IDS.length).toBe(9);
+  it('10 classes (sem Guerreiro), 30 ondas com chefes em 10/20/30, ≥3 melhorias por classe', () => {
+    expect(CLASS_IDS.length).toBe(10);
+    expect(CLASS_IDS).toContain('jota');
     expect(CLASS_IDS).toContain('maycon');
     expect(CLASS_IDS).toContain('lapanha');
     expect(CLASS_IDS).toContain('berserker');

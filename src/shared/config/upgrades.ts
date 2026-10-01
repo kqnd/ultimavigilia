@@ -92,9 +92,10 @@ export const FORKS: Record<string, { name: string }> = {
   necro_path: { name: 'Caminho dos Mortos' },
   lapanha_path: { name: 'Caminho da Feira' },
   maycon_path: { name: 'Caminho do Caçador de Recompensas' },
+  jota_path: { name: 'Caminho do Vibecoder' },
 };
 
-const SHOOTERS: readonly ClassId[] = ['hunter', 'mage', 'necromancer', 'lapanha', 'maycon'];
+const SHOOTERS: readonly ClassId[] = ['hunter', 'mage', 'necromancer', 'lapanha', 'maycon', 'jota'];
 
 export const UPGRADES: readonly UpgradeDef[] = [
   // ================================================================ GERAIS — comuns
@@ -196,6 +197,15 @@ export const UPGRADES: readonly UpgradeDef[] = [
   U('y_sight', 'Olho de Caçador', 'maycon', 'rare', 'fork', 1, 0.08, 'eyeDark', 'BIFURCAÇÃO: marcados pela Visão Sombria recebem +8% de dano a mais e ficam marcados +1s.', { fork: 'maycon_path' }),
   U('y_hellfire', 'Fumaça Incendiária', 'maycon', 'rare', 'fork', 1, 6, 'smoke', 'BIFURCAÇÃO: a Bomba de Fumaça também queima: +6 de dano por pulso e a nuvem dura +1s.', { fork: 'maycon_path' }),
   U('y_vitality', 'Vitality da Roça', 'maycon', 'legendary', 'transform', 1, 1, 'brew', 'A Rodada da Casa também dá escudo de 15 a cada aliado dentro do anel ao ser lançada e o dobro de cura.'),
+  // ================================================================ Jota
+  U('j_prompt', 'Prompt Detalhado', 'jota', 'common', 'numeric', 3, 0.1, 'prompt', '+10% de dano do Prompt e dos batarangues.', { show: pct('Dano do Prompt') }),
+  U('j_context', 'Janela de Contexto', 'jota', 'common', 'numeric', 2, 0.25, 'context', '+25% de Contexto ganho por acerto (Compactar vem mais cedo).', { show: pct('Contexto por acerto') }),
+  U('j_patch', 'Patch Estendido', 'jota', 'common', 'numeric', 2, 30, 'patch', 'O feixe do Patch alcança +30px e recarrega 0,5s mais rápido.', { show: { label: 'Alcance do Patch', unit: 'px', sign: '+' } }),
+  U('j_cache', 'Cache Quente', 'jota', 'uncommon', 'numeric', 2, 1.5, 'rewind', 'O Rewind recarrega 1,5s mais rápido.', { show: { label: 'Recarga do Rewind', unit: 's', sign: '-' } }),
+  U('j_compact', 'Compactação Agressiva', 'jota', 'uncommon', 'numeric', 2, 0.2, 'context', 'O Compactar causa +20% de dano e tem +20% de raio.', { show: pct('Dano e raio do Compactar') }),
+  U('j_rebound', 'Prompt Recursivo', 'jota', 'rare', 'fork', 1, 0.4, 'ricochet', 'BIFURCAÇÃO: cada Prompt ricocheteia 1 vez para outro inimigo a até 95px com 40% do dano.', { fork: 'jota_path' }),
+  U('j_revert', 'Git Revert', 'jota', 'rare', 'fork', 1, 26, 'rewind', 'BIFURCAÇÃO: o Rewind explode o ponto de onde você saiu: +30 de dano, +26px de raio e empurrão maior.', { fork: 'jota_path' }),
+  U('j_main', 'Push na Main (--force)', 'jota', 'legendary', 'transform', 1, 1, 'bat', 'O Modo Batman dura +4s, cura 35% da vida máxima ao se transformar e os batarangues ricocheteiam 1 vez.'),
 ];
 
 export const UPGRADE_BY_ID: ReadonlyMap<string, UpgradeDef> = new Map(UPGRADES.map((u) => [u.id, u]));

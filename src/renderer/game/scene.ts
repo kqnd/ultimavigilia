@@ -1054,6 +1054,74 @@ export class GameScene extends Phaser.Scene {
       case 'brewEnd':
         f.burst('p_smoke', ev.x, ev.y, 14, 60, 0.7, { up: 20 });
         break;
+      // ---- Jota
+      case 'patchCharge':
+        f.burst('p_code', ev.x + Math.cos(ev.a) * 8, ev.y - 14, 5, 40, 0.35, { up: 20 });
+        break;
+      case 'patchBeam':
+        f.line(ev.x, ev.y, ev.x + Math.cos(ev.a) * ev.r, ev.y + Math.sin(ev.a) * ev.r, 0x58d6a8, 0.3, 4);
+        f.line(ev.x, ev.y, ev.x + Math.cos(ev.a) * ev.r, ev.y + Math.sin(ev.a) * ev.r, 0xe8fff6, 0.2, 1);
+        for (let i = 1; i <= 6; i++) f.burst('p_code', ev.x + Math.cos(ev.a) * ev.r * (i / 6.5), ev.y + Math.sin(ev.a) * ev.r * (i / 6.5), 2, 50, 0.4, { dir: ev.a + Math.PI / 2, spread: 3 });
+        break;
+      case 'patchHit':
+        f.burst('p_code', ev.x, ev.y, 8, 100, 0.4, { dir: ev.a, spread: 1.2 });
+        f.burst('p_codeDim', ev.x, ev.y, 6, 70, 0.4, { g: 120 });
+        break;
+      case 'compact':
+        f.ring(ev.x, ev.y, 6, ev.r, 0x7dffd0, 0.4, 3);
+        f.ring(ev.x, ev.y, 4, ev.r * 0.6, 0xe8fff6, 0.3, 2);
+        f.burst('p_code', ev.x, ev.y - 8, 34, 160, 0.6, { up: 30 });
+        f.burst('p_codeDim', ev.x, ev.y - 6, 18, 100, 0.6, { g: 80 });
+        f.number(ev.x, ev.y - 34, '/COMPACT', 0x7dffd0, true);
+        f.flash(0x58d6a8, 0.14, 160);
+        f.shake(4, 200);
+        break;
+      case 'rewindOut':
+        f.ring(ev.x, ev.y, 4, ev.r, 0x7dffd0, 0.35, 2);
+        f.burst('p_code', ev.x, ev.y - 8, 20, 130, 0.5, { up: 30 });
+        f.burst('p_codeDim', ev.x, ev.y - 6, 12, 90, 0.5);
+        f.shake(3, 140);
+        break;
+      case 'rewindIn':
+        f.burst('p_code', ev.x, ev.y - 8, 16, 90, 0.5, { up: 40 });
+        f.number(ev.x, ev.y - 34, '/rewind', 0x9affe0);
+        f.flash(0x7dffd0, 0.12, 140);
+        break;
+      case 'batStart':
+        f.burst('p_cape', ev.x, ev.y - 6, 16, 60, 0.6, { up: 20 });
+        f.burst('p_code', ev.x, ev.y - 10, 12, 50, 0.6, { up: 30 });
+        break;
+      case 'batTransform':
+        f.ring(ev.x, ev.y, 6, ev.r * 1.6, 0x8a9cff, 0.55, 3);
+        f.ring(ev.x, ev.y, 4, ev.r, 0x7dffd0, 0.4, 2);
+        f.burst('p_cape', ev.x, ev.y - 10, 30, 150, 0.9, { up: 40, g: 60 });
+        f.burst('p_fearDark', ev.x, ev.y - 6, 18, 90, 1, { up: 20 });
+        f.burst('p_code', ev.x, ev.y - 12, 36, 200, 0.8, { up: 40 });
+        f.number(ev.x, ev.y - 44, 'MODO BATMAN', 0xb8c4ff, true);
+        f.flash(0x8a9cff, 0.3, 320);
+        f.shake(6, 320);
+        break;
+      case 'batEnd':
+        f.burst('p_code', ev.x, ev.y - 10, 18, 80, 0.7, { up: 30 });
+        f.burst('p_cape', ev.x, ev.y - 8, 10, 50, 0.7, { up: 10 });
+        break;
+      case 'fearBurst':
+        f.burst('p_fear', ev.x, ev.y - 4, 26, 110, 0.9, { up: 10 });
+        f.burst('p_fearDark', ev.x, ev.y - 2, 14, 70, 1.1, { up: 6 });
+        f.shake(3, 140);
+        break;
+      case 'fearEnd':
+        f.burst('p_fear', ev.x, ev.y, 10, 50, 0.7, { up: 10 });
+        break;
+      case 'grappleDash':
+        f.burst('p_cape', ev.x, ev.y - 6, 8, 80, 0.4, { dir: ev.a + Math.PI, spread: 1.2 });
+        break;
+      case 'grappleTrail':
+        f.particle('p_cape', ev.x + (Math.random() - 0.5) * 14, ev.y - 6, 0, 16, 0.4, { depth: ev.y });
+        break;
+      case 'grappleHit':
+        f.burst('p_dust', ev.x, ev.y, 4, 50, 0.3);
+        break;
       case 'checkpoint':
         f.number(ev.x, ev.y - 60, 'CHECKPOINT', 0xffd25a, true);
         f.flash(0xffd25a, 0.18, 300);
@@ -1101,6 +1169,7 @@ export class GameScene extends Phaser.Scene {
         f.aura(x, y, LIGHT.maycon, (r * 2.1) / 64, 0.2 * fade, 'glow_soft', 1);
         break;
       }
+      case 'fear': disc(LIGHT.fear, 0.16); ring(LIGHT.fear, 0.2); break;
       case 'rune':
       case 'eruption':
       case 'nova':
@@ -1499,6 +1568,8 @@ export class GameScene extends Phaser.Scene {
         if (Math.random() < 0.5) this.fx.glow(x, visualY, halo.c, halo.s * 0.55, { life: 0.22, grow: 0.4, alpha: 0.6, frame: 'glow_core' });
       }
       if (kind === 'slipper') img.setRotation(performance.now() / 50);
+      else if (kind === 'prompt') img.setTexture(...tf(`proj_prompt_${Math.floor(performance.now() / 90) % 2}`)).setRotation(Math.atan2(p1[5], p1[4]));
+      else if (kind === 'batarang') img.setTexture(...tf(`proj_batarang_${Math.floor(performance.now() / 90) % 2}`)).setRotation(performance.now() / 45 + id);
       else if (kind === 'bolt' || kind === 'pierceBolt' || kind === 'bone') img.setRotation(Math.atan2(p1[5], p1[4]));
       else if (kind === 'iceShard') {
         img.setTexture(...tf(`proj_iceShard_${Math.floor(performance.now() / 100) % 2}`)).setRotation(Math.atan2(p1[5], p1[4]));
@@ -1507,7 +1578,7 @@ export class GameScene extends Phaser.Scene {
         img.setTexture(tex, fr);
       }
       if (Math.random() < 0.35) {
-        const trail = kind === 'missile' || kind === 'empMissile' ? 'p_arc' : kind === 'orb' || kind === 'abyssOrb' ? 'p_abyss' : kind === 'pierceBolt' ? 'p_silver' : kind === 'bone' ? 'p_soul' : kind === 'iceShard' ? 'p_frost' : null;
+        const trail = kind === 'missile' || kind === 'empMissile' ? 'p_arc' : kind === 'orb' || kind === 'abyssOrb' ? 'p_abyss' : kind === 'pierceBolt' ? 'p_silver' : kind === 'bone' ? 'p_soul' : kind === 'iceShard' ? 'p_frost' : kind === 'prompt' ? 'p_code' : kind === 'batarang' ? 'p_cape' : kind === 'fearBomb' ? 'p_fear' : null;
         if (trail) this.fx.particle(trail, x, visualY, 0, 0, 0.25, { depth: y });
         else if (kind === 'bigMelon' || kind === 'woundBolt') this.fx.particle(kind === 'bigMelon' ? 'p_pulpLight' : 'p_wound', x, visualY, 0, 0, 0.25, { depth: y });
       }
@@ -1555,6 +1626,23 @@ export class GameScene extends Phaser.Scene {
           img.setTexture(...tf(ready && Math.floor(now / 500) % 3 === 0 ? 'peel_ready' : 'peel'));
           img.setAlpha(z[5] < 45 && Math.floor(now / 120) % 2 ? 0.45 : 1);
         } else img.setAlpha(Math.min(1, z[5] / 20) * 0.9);
+        continue;
+      }
+      if (kind === 'rewind') {
+        // sombra azul no ponto para onde o Rewind volta (só o dono vê forte; aliados veem de leve)
+        seenT.add(z[0]);
+        const mine = z[6] === sess.myId;
+        let img = this.traps.get(z[0]);
+        if (!img) {
+          img = this.add.image(z[2], z[3], ...tf('jota_idle_down_0')).setOrigin(0.5, 30 / 32);
+          this.traps.set(z[0], img);
+        }
+        const st = z[7];
+        const bob = Math.round(Math.sin(now / 260) * 1.2);
+        img.setPosition(Math.round(z[2]), Math.round(z[3]) + bob).setDepth(z[3] - 1);
+        img.setTint(st === 2 ? 0x566a84 : 0x7fe8ff).setTintMode(Phaser.TintModes.FILL);
+        img.setAlpha(st === 0 ? 0 : (mine ? (st === 2 ? 0.16 : 0.32) : 0.1) * (0.8 + Math.sin(now / 140) * 0.2));
+        if (st === 1 && mine) this.fx.aura(z[2], z[3] - 12, LIGHT.jota, 0.4, 0.2 + Math.sin(now / 200) * 0.06, 'glow_ring', 0.7);
         continue;
       }
       drawZone(this.zoneG, z as ZoneTuple, now);

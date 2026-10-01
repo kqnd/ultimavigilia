@@ -24,6 +24,7 @@ export const LIGHT = {
   necro: 0xb4f05a, necroHi: 0xe8ffc0, necroDark: 0xa060ff,
   lapanha: 0xff5a5a, lapanhaLeaf: 0x8fe070,
   maycon: 0xffb43a, mayconFlame: 0xff6a1a, glass: 0xb8ff9a, smoke: 0x9aa6c0,
+  jota: 0x58d6a8, jotaHi: 0xb8ffe6, bat: 0x8a9cff, batHi: 0xe4eaff, fear: 0x9a6aff,
   abyss: 0xd860ff, gold: 0xffd25a, white: 0xffffff,
 } as const;
 
@@ -422,6 +423,96 @@ export function skillLight(f: Effects, ev: FxEvent, ctx: LightCtx): void {
       f.sparks(x, y, 14, L.mayconFlame, 140, 0.5, { up: 30 });
       break;
 
+    // ================================================================ JOTA — código verde-água; Batman azul-gelo
+    case 'patchCharge':
+      f.swirl(x + cx * 8, y - 14, 7, L.jota, 24, 0.3, true, 0.7);
+      f.glow(x + cx * 8, y - 14, L.jotaHi, 0.5, { life: 0.3, grow: 1.5, alpha: 0.6, fadeIn: 0.5, follow: ctx.follow(ev.o) });
+      break;
+    case 'patchBeam': {
+      // o feixe do Patch: linha de luz cortando a noite, com bits de código pelo caminho
+      const mx = x + cx * r * 0.5;
+      const my = y + cy * r * 0.5;
+      f.streak(mx, my, a, L.jotaHi, r, 0.2, 1.1);
+      f.streak(mx, my, a, L.jota, r, 0.45, 3);
+      f.flare(x, y, L.jotaHi, 0.7, 0.2);
+      for (let i = 1; i <= 5; i++) f.sparks(x + cx * r * (i / 5.5), y + cy * r * (i / 5.5), 3, L.jota, 90, 0.4, { dir: a + Math.PI / 2, spread: 3 });
+      f.light(mx, my, 112, 0.85, 0.3);
+      break;
+    }
+    case 'patchHit':
+      f.flare(x, y, L.jotaHi, 0.65, 0.2);
+      f.sparks(x, y, 7, L.jota, 160, 0.35, { dir: a, spread: 1.2 });
+      break;
+    case 'compact':
+      // /compact: o contexto é espremido e explode numa nova de bits
+      f.swirl(x, y - 10, 12, L.jota, r * 0.9, 0.3, true, 0.6);
+      f.flare(x, y - 8, L.jotaHi, 1.6, 0.35);
+      f.shock(x, y, r, L.jota, 0.5, 1, 0.8);
+      f.shock(x, y, r * 0.6, L.jotaHi, 0.35, 0.8, 0.8);
+      f.rays(x, y - 8, 12, L.jota, r, 0.35);
+      f.sparks(x, y - 8, 22, L.jotaHi, 230, 0.55, { up: 30 });
+      f.light(x, y, 112, 1, 0.5);
+      break;
+    case 'rewindOut':
+      // o ponto de partida "desfaz": estouro e glitch
+      f.flare(x, y - 8, L.jotaHi, 1, 0.25);
+      f.shock(x, y, r, L.jota, 0.4, 0.9, 0.7);
+      f.sparks(x, y - 8, 16, L.jota, 200, 0.45, { up: 20 });
+      f.rays(x, y - 8, 8, L.jota, r * 0.9, 0.25);
+      f.light(x, y, 72, 0.9, 0.3);
+      break;
+    case 'rewindIn':
+      f.streak(x - cx * r * 0.5, y - 8 - cy * r * 0.5, a, L.jota, Math.min(r, 220), 0.4, 1.4);
+      f.pillar(x, y, L.jota, 90, 0.9, 0.5);
+      f.shock(x, y, 26, L.jotaHi, 0.35, 0.9, 0.7);
+      f.swirl(x, y - 10, 10, L.jota, 30, 0.45, false, 0.6);
+      f.light(x, y, 72, 0.9, 0.4);
+      break;
+    case 'batStart':
+      // o capuz some e a noite se fecha em volta: espiral de sombra com brilho gelado
+      f.swirl(x, y - 12, 18, L.bat, 52, 0.55, true, 0.6);
+      f.swirl(x, y - 10, 10, L.jota, 30, 0.5, true, 0.6);
+      f.glow(x, y - 12, L.batHi, 1.1, { life: 0.55, grow: 1.5, alpha: 0.5, fadeIn: 0.7, follow: ctx.follow(ev.o) });
+      break;
+    case 'batTransform':
+      // a transformação: coluna de luz fria, onda de choque e uma chuva de código se desfazendo
+      f.flare(x, y - 12, L.batHi, 2.4, 0.5);
+      f.pillar(x, y, L.bat, 200, 2, 0.9);
+      f.pillar(x, y, L.jotaHi, 140, 0.9, 0.6);
+      f.shock(x, y, r, L.bat, 0.6, 1, 0.8);
+      f.shock(x, y, r * 0.6, L.jota, 0.5, 0.9, 0.8);
+      f.rays(x, y - 12, 16, L.batHi, r * 1.2, 0.5);
+      f.sparks(x, y - 12, 34, L.jota, 260, 0.75, { up: 50 });
+      f.sparks(x, y - 12, 18, L.batHi, 200, 0.6, { up: 20 });
+      f.light(x, y, 160, 1, 1);
+      break;
+    case 'batEnd':
+      f.shock(x, y, r, L.bat, 0.5, 0.7, 0.8);
+      f.sparks(x, y - 10, 16, L.jota, 120, 0.6, { up: 30, g: 60 });
+      f.light(x, y, 72, 0.8, 0.3);
+      break;
+    case 'fearBurst':
+      f.flare(x, y - 4, L.fear, 0.9, 0.22);
+      f.shock(x, y, r, L.fear, 0.45, 0.6, 0.7);
+      f.sparks(x, y - 4, 10, L.batHi, 180, 0.3, { up: 20 });
+      f.light(x, y, 72, 0.8, 0.25);
+      break;
+    case 'fearEnd':
+      f.shock(x, y, r, L.fear, 0.5, 0.35, 0.7);
+      break;
+    case 'grappleDash':
+      f.streak(x + cx * r * 0.5, y - 8 + cy * r * 0.5, a, L.bat, r * 1.2, 0.35, 0.9);
+      f.flare(x, y - 8, L.batHi, 0.8, 0.2);
+      f.sparks(x, y - 8, 8, L.batHi, 180, 0.35, { dir: a + Math.PI, spread: 1.2 });
+      break;
+    case 'grappleTrail':
+      f.glow(x, y - 8, L.bat, 0.6, { life: 0.35, grow: 1.6, alpha: 0.4, sy: 0.7 });
+      break;
+    case 'grappleHit':
+      f.flare(x, y, L.batHi, 0.55, 0.18);
+      f.sparks(x, y, 5, L.bat, 160, 0.3, { dir: a, spread: 1 });
+      break;
+
     // ================================================================ gerais
     case 'parry':
       f.flare(x, y, L.gold, 1.1, 0.25);
@@ -499,6 +590,9 @@ export function projectileGlow(kind: string): { c: number; s: number } | null {
     case 'woundBolt': return { c: 0xb07aff, s: 0.45 };
     case 'bottle': return { c: LIGHT.glass, s: 0.3 };
     case 'chokeBomb': return { c: LIGHT.mayconFlame, s: 0.3 };
+    case 'prompt': return { c: LIGHT.jota, s: 0.36 };
+    case 'batarang': return { c: LIGHT.bat, s: 0.3 };
+    case 'fearBomb': return { c: LIGHT.fear, s: 0.3 };
     case 'slipper': return { c: 0xffa13a, s: 0.28 };
     default: return null;
   }

@@ -5,8 +5,9 @@ pixel art. Uma campanha de **30 ondas em três capítulos** — a vila amaldiço
 congelado e a mansão no deserto de cinzas — com uma fogueira que precisa continuar acesa.
 
 - 1 a 6 jogadores; um deles hospeda a partida no próprio PC (LAN ou **Radmin VPN**).
-- Nove classes (uma por jogador): **Caçador, Mago, Guardião (Tank), Vampiro, Berserker, Dog, Necromante,
-  Lapanha e Maycon** (controle de área num tapete voador, citando Hunt: Showdown).
+- Dez classes (uma por jogador): **Caçador, Mago, Guardião (Tank), Vampiro, Berserker, Dog, Necromante,
+  Lapanha, Maycon** (controle de área num tapete voador, citando Hunt: Showdown) **e Jota** (vibecoder de
+  capuz, glass cannon de dano à distância: Prompt, Patch, Rewind e a suprema Modo Batman).
 - **Checkpoints por chefe**: vencer um chefe ou minichefe salva o progresso. Se a equipe cair depois,
   volta para a onda seguinte ao checkpoint — perdendo as melhorias tomadas desde então e 10% da vida
   máxima por volta (acumula até 50%).
