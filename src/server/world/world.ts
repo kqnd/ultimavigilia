@@ -23,6 +23,9 @@ import {
   type ZoneKind, type ZoneTuple,
 } from '../../shared/protocol.js';
 import { brainFor } from './ai/brains.js';
+import { choosePlayer, decayThreat, onDamage, seedThreat } from './ai/threat.js';
+import { rememberAttack, thinkTicks } from './ai/utility.js';
+import { FAIR } from '../../shared/config/enemyAI.js';
 import { Director } from './director.js';
 import { kitFor } from './kits/index.js';
 import { chargeFrac, slideBump } from './kits/lapanha.js';
@@ -1530,9 +1533,7 @@ export class World {
     // canalizações contra objetivos são interrompidas por qualquer golpe de jogador
     if (p && e.atk === 'siege' && e.state === 'windup') this.objectives.breakSiege(e);
     this.emit({ k: 'dmg', tg: 'e', ti: e.id, v: dmg, x: e.x, y: e.y - e.r - 6, c: mul >= 1.3 ? 'crit' : 'n', s: p?.id ?? 0 });
-    if (p && (e.def.tier === 'boss' || e.def.miniboss) && valid > 0) {
-      e.threat.set(p.id, (e.threat.get(p.id) ?? 0) + valid);
-    }
+    if (p && valid > 0) onDamage(this, p, e, valid, !!o.fromMinion);
     if (p) {
       p.stats.damage += dmg;
       if (!o.noUlt && (!e.def.objective || e.type === 'funeralCart' || e.type === 'ritualist')) this.addUlt(p, dmg * p.base.ultPerDamage * (o.fromMinion ? NECRO.minionUltMul : 1));
@@ -2253,7 +2254,20 @@ export class World {
       aimPid: 0,
       lastCastTick: -9999,
       markStaggerCd: 0,
+      aiMode: 'approach',
+      aiModeT: 0,
+      aiSide: 1,
+      aiLastX: x,
+      aiLastY: y,
+      aiUnstickT: 0,
+      retreated: false,
+      retreatT: 0,
+      thinkT: 0,
+      recent: [],
+      heatT: 0,
+      desperate: false,
     };
+    e.aiSide = e.id % 2 === 0 ? 1 : -1;
     // afixos: minichefes têm o afixo do tipo garantido; elites comuns sorteiam
     const options = affixesFor(type);
     if (options.length) {
@@ -2267,6 +2281,7 @@ export class World {
     this.enemies.set(e.id, e);
     this.tele.onSpawn(type);
     if (!def.objective) this.objectives.assignRole(e);
+    seedThreat(this, e);
     if (boss) {
       this.bossId = e.id;
       spawnBossObjectives(this, e);
@@ -2278,8 +2293,8 @@ export class World {
   targetOf(e: Enemy): Target | null {
     if (e.def.tier === 'boss' || e.def.miniboss) return this.bossTarget(e);
     if (e.tauntT > 0) {
-      const t = this.players.get(e.tauntBy);
-      if (t && t.status === 0) return t;
+      const t = choosePlayer(this, e);
+      if (t && t.id === e.tauntBy) return t;
     }
     // funções táticas em missões (ocupar fogueira/altar, caçar o sobrevivente)
     if (e.role !== 'none') {
@@ -2291,40 +2306,17 @@ export class World {
       if (m && m.state !== 'dead' && e.targetT > 0) return m;
       e.minionTarget = 0;
     }
-    let cur = this.players.get(e.targetId);
-    if (cur && cur.status !== 0) cur = undefined;
-    if (!cur || e.targetT <= 0) {
-      let best: Player | null = null;
-      let bestD = Infinity;
-      let bestRaw = Infinity;
-      const currentId = cur?.id ?? 0;
-      for (const p of this.players.values()) {
-        if (p.status !== 0) continue;
-        const f = this.fields.get(p.id);
-        const fd = f ? f.at(e.x, e.y) : 0xffff;
-        const pathCost = fd === 0xffff ? dist(e.x, e.y, p.x, p.y) / 3.2 + 500 : fd;
-        // Pressiona quem está vulnerável ou ocupado revivendo, com peso limitado para
-        // não trocar de alvo a cada tick nem produzir perseguições inevitáveis.
-        const healthPressure = Math.max(0, 1 - p.hp / Math.max(1, p.maxHp)) * 45;
-        const revivePressure = p.revivingId ? 55 : 0;
-        const sticky = p.id === currentId ? -18 : 0;
-        const score = pathCost - healthPressure - revivePressure + sticky;
-        if (score < bestD) {
-          bestD = score;
-          best = p;
-          bestRaw = dist(e.x, e.y, p.x, p.y);
-        }
-      }
-      e.targetId = best?.id ?? 0;
-      e.targetT = 20 + (e.id % 10);
-      const m = minionAggro(this, e, bestRaw);
+    // alvo por ameaça + utilidade de papel, com histerese (ai/threat.ts)
+    const fresh = e.targetT <= 0;
+    const best = choosePlayer(this, e);
+    if (fresh) {
+      const m = minionAggro(this, e, best ? dist(e.x, e.y, best.x, best.y) : Infinity);
       if (m) {
         e.minionTarget = m.id;
         return m;
       }
-      return best;
     }
-    return cur;
+    return best;
   }
 
   /** Direção de perseguição usando campo de fluxo; linha reta quando há visão e está perto. */
@@ -2346,68 +2338,19 @@ export class World {
   }
 
   /**
-   * Pontuação de alvo de chefe/minichefe: alcance da classe, penalidade por distância de
-   * caminho e ameaça recente (dano real causado, com decaimento — ver BOSS_AI.threatWindow).
-   * A ameaça garante que quem está de fato lutando de perto puxa a atenção de volta, em vez
-   * do chefe fixar para sempre em quem calhou de estar mais perto/à distância na primeira vez.
-   */
-  private bossTargetScore(e: Enemy, p: Player): number {
-    const f = this.fields.get(p.id);
-    const fd = f ? f.at(e.x, e.y) : 0xffff;
-    const path = fd === 0xffff ? dist(e.x, e.y, p.x, p.y) * 1.5 : fd * (TILE / 10);
-    const threat = e.threat.get(p.id) ?? 0;
-    return BOSS_AI.rangePriority[CLASS_RANGE[p.cls]] - path * BOSS_AI.distanceWeight + threat * BOSS_AI.threatWeight;
-  }
-
-  /**
-   * Chefes e minichefes: escolhem o alvo mais valioso (alcance, distância, ameaça) e ficam
-   * travados nele por `BOSS_AI.retargetSeconds`, quando então reavaliam do zero. A provocação
-   * transfere a trava para o provocador por `BOSS_AI.tauntLock` segundos e reinicia a janela.
-   * Servos não desviam a atenção de chefes.
+   * Chefes e minichefes: mesma tabela de ameaça + utilidade dos demais (ai/threat.ts), com pesos
+   * de chefe (ameaça manda; quem fustiga de longe não é ignorado), permanência mínima de
+   * `TARGETING.minHold.boss` s, troca antecipada por salto grande de ameaça e trava de provocação
+   * de `BOSS_AI.tauntLock` s. Servos não desviam a atenção de chefes. Conta o tempo longe do
+   * alvo (`farT`) para a perseguição acelerada.
    */
   private bossTarget(e: Enemy): Player | null {
-    if (e.tauntT > 0) {
-      const t = this.players.get(e.tauntBy);
-      if (t && t.status === 0) {
-        e.lockedId = t.id;
-        e.targetId = t.id;
-        e.targetT = Math.max(e.targetT, sec(BOSS_AI.tauntLock));
-        e.farT = 0;
-        e.lockedSince = this.tick;
-        return t;
-      }
-    }
-    let cur = this.players.get(e.lockedId);
-    if (!cur || cur.status !== 0 || !cur.connected) cur = undefined;
-    const lockedSeconds = (this.tick - e.lockedSince) / TICK_RATE;
-    // Reavalia do zero quando o alvo travado sumiu OU quando já se passou tempo suficiente
-    // sem provocação — sem isso, com vários jogadores de longo alcance o chefe pode travar
-    // no primeiro para sempre e nunca reagir a quem de fato está batendo nele.
-    if (!cur || lockedSeconds >= BOSS_AI.retargetSeconds) {
-      let best: Player | null = null;
-      let bestScore = -Infinity;
-      for (const p of this.players.values()) {
-        if (p.status !== 0 || !p.connected) continue;
-        const score = this.bossTargetScore(e, p);
-        if (score > bestScore) {
-          bestScore = score;
-          best = p;
-        }
-      }
-      // Já havia um alvo travado e vivo: só troca se o novo vencer por margem real, para não
-      // alternar entre alvos parecidos a cada reavaliação.
-      if (cur && best && best.id !== cur.id && bestScore < this.bossTargetScore(e, cur) + BOSS_AI.switchMargin) best = cur;
-      if ((best?.id ?? 0) !== e.lockedId) e.farT = 0;
-      e.lockedId = best?.id ?? 0;
-      e.lockedSince = this.tick;
-      cur = best ?? undefined;
-    }
-    e.targetId = cur?.id ?? 0;
+    const cur = choosePlayer(this, e);
     if (cur) {
       if (dist(e.x, e.y, cur.x, cur.y) > BOSS_AI.pursuitDistance) e.farT++;
       else e.farT = 0;
     }
-    return cur ?? null;
+    return cur;
   }
 
   private enemySpeedMul(e: Enemy): number {
@@ -2457,12 +2400,20 @@ export class World {
       if (e.exposedT > 0 && e.type !== 'moonDevourer') e.exposedT--;
       if (this.tick % 15 === 0 && e.poise > 0) e.poise = Math.max(0, e.poise - e.def.poise * 0.15);
       if (e.def.tier === 'boss') tickBossObjectives(this, e);
-      if ((e.def.tier === 'boss' || e.def.miniboss) && e.threat.size) {
-        const decay = Math.exp(-DT / BOSS_AI.threatWindow);
-        for (const [pid, v] of e.threat) {
-          const nv = v * decay;
-          if (nv < 0.5) e.threat.delete(pid);
-          else e.threat.set(pid, nv);
+      decayThreat(e);
+      if (e.heatT > 0) e.heatT--;
+      if (e.def.tier === 'boss' || e.def.miniboss) {
+        // reta final ("desespero"): ritmo maior e reavaliação imediata do alvo; telegraphs intactos
+        if (!e.desperate && e.hp <= e.maxHp * FAIR.desperationHp) {
+          e.desperate = true;
+          e.targetT = 0;
+          e.lockedSince = 0;
+        }
+        if (e.desperate && this.tick % FAIR.desperationCdEvery === 0) {
+          for (const k in e.cds) {
+            const key = k as EnemyAttackName;
+            if ((e.cds[key] ?? 0) > 0) e.cds[key] = (e.cds[key] ?? 0) - 1;
+          }
         }
       }
 
@@ -2588,9 +2539,12 @@ export class World {
     e.ty = ty;
     e.facing = Math.atan2(ty - e.y, tx - e.x);
     e.hitBy.clear();
+    if (e.def.tier === 'boss' || e.def.miniboss) rememberAttack(e, atk);
   }
 
   setEnemyState(e: Enemy, s: EnemyStateName): void {
+    // respiro de chefe/minichefe entre ataques: janela para reagir e punir
+    if (s === 'move' && e.state !== 'move' && e.state !== 'stagger' && (e.def.tier === 'boss' || e.def.miniboss)) e.thinkT = thinkTicks(this, e);
     e.state = s;
     e.stateT = 0;
   }

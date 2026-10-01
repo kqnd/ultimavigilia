@@ -4,7 +4,7 @@
  * derivados de estado + ataque + alvo (tx,ty) enviados nos snapshots.
  */
 import { AFFIX_RULES } from '../../../shared/config/affixes.js';
-import { ATK, brainType, type EnemyType, FATHER_LINES } from '../../../shared/config/enemies.js';
+import { ATK, BOSS_AI, brainType, type EnemyType, FATHER_LINES } from '../../../shared/config/enemies.js';
 import { CLASS_RANGE } from '../../../shared/config/classes.js';
 import { DT, sec } from '../../../shared/constants.js';
 import { circleFree, lineOfSight, sweepFree } from '../../../shared/collision.js';
@@ -12,6 +12,10 @@ import { angleDiff, dist } from '../../../shared/math.js';
 import { countObjectives } from '../objectives.js';
 import type { Enemy, Player, Target } from '../types.js';
 import type { World } from '../world.js';
+import { aiSkill } from '../../../shared/config/enemyAI.js';
+import { claimAttack } from './context.js';
+import { approachDir, locomote, steer } from './steer.js';
+import { type AttackOption, kiteHeat, pickOption, ramp, window4 } from './utility.js';
 
 export interface Brain {
   tick(w: World, e: Enemy): [number, number];
@@ -19,41 +23,37 @@ export interface Brain {
 
 const STILL: [number, number] = [0, 0];
 
+/** Aproximação com separação, desvio de paredes/zonas e cerco (ai/steer.ts). */
 function chase(w: World, e: Enemy, t: Target, speed: number): [number, number] {
-  let [dx, dy] = w.chaseDir(e, t);
   const d = dist(e.x, e.y, t.x, t.y);
-  // Aproximação em ângulos diferentes evita filas e faz a horda fechar espaço.
-  if (d > 42 && d < 150 && !t.isMinion && !t.isPoint) {
-    const side = e.id % 2 === 0 ? 1 : -1;
-    const tangentX = (-(t.y - e.y) / d) * side;
-    const tangentY = ((t.x - e.x) / d) * side;
-    const weight = Math.max(0, 1 - Math.abs(d - 92) / 58) * 0.42;
-    dx += tangentX * weight;
-    dy += tangentY * weight;
-  }
-  // Separação suave quando aliados se amontoam, mantendo a direção do alvo.
-  let sx = 0;
-  let sy = 0;
-  for (const other of w.enemiesInCircle(e.x, e.y, e.r * 2.8)) {
-    if (other.id === e.id || other.state === 'air' || other.def.stationary) continue;
-    const ox = e.x - other.x;
-    const oy = e.y - other.y;
-    const od = Math.hypot(ox, oy) || 0.01;
-    const reach = e.r + other.r + 10;
-    if (od < reach) {
-      const push = (reach - od) / reach;
-      sx += (ox / od) * push;
-      sy += (oy / od) * push;
-    }
-  }
-  dx += sx * 0.75;
-  dy += sy * 0.75;
-  const len = Math.hypot(dx, dy) || 1;
-  dx /= len;
-  dy /= len;
-  if (dx !== 0 || dy !== 0) e.facing = Math.atan2(dy, dx);
-  return [dx * speed, dy * speed];
+  return steer(w, e, approachDir(w, e, t), speed, { closeToTarget: d < 70 });
 }
+
+/** Locomoção por arquétipo (aproximar, flanquear, manter distância, recuar, reagrupar). */
+const move = locomote;
+
+/** Respiro de chefe/minichefe entre ataques: enquanto > 0 só se posiciona. */
+function thinking(e: Enemy): boolean {
+  if (e.thinkT > 0) {
+    e.thinkT--;
+    return true;
+  }
+  return false;
+}
+
+const isPlayer = (t: Target): boolean => !t.isMinion && !t.isPoint;
+/** Ficha de ataque: no máximo `FAIR.maxAttackers` golpeadores simultâneos por jogador. */
+const mayStrike = (w: World, e: Enemy, t: Target): boolean => claimAttack(w, e, t.id, isPlayer(t));
+const targetClass = (t: Target, w: World): 'ranged' | 'mid' | 'melee' => {
+  const p = isPlayer(t) ? w.players.get(t.id) : undefined;
+  return p ? CLASS_RANGE[p.cls] : 'melee';
+};
+const playersWithin = (w: World, x: number, y: number, r: number): number => {
+  let n = 0;
+  for (const p of w.alivePlayers()) if (dist(p.x, p.y, x, y) <= r) n++;
+  return n;
+};
+
 
 function faceTo(e: Enemy, x: number, y: number): void {
   e.facing = Math.atan2(y - e.y, x - e.x);
@@ -131,12 +131,12 @@ const shambler: Brain = {
     const t = w.targetOf(e);
     if (!t) return STILL;
     const d = dist(e.x, e.y, t.x, t.y);
-    if (d < s.range + e.r + t.r && ready(e, 'swipe')) {
+    if (d < s.range + e.r + t.r && ready(e, 'swipe') && mayStrike(w, e, t)) {
       w.startEnemyAttack(e, 'swipe', t.x, t.y);
       return STILL;
     }
     // cambaleio: pequena oscilação lateral
-    const [vx, vy] = chase(w, e, t, e.def.speed);
+    const [vx, vy] = move(w, e, t, e.def.speed);
     const wob = Math.sin((w.tick + e.id * 17) * 0.12) * 0.35;
     return [vx - vy * wob, vy + vx * wob];
   },
@@ -173,24 +173,12 @@ const runner: Brain = {
     const t = w.targetOf(e);
     if (!t) return STILL;
     const d = dist(e.x, e.y, t.x, t.y);
-    if (d < s.triggerRange && ready(e, 'lunge') && lineOfSight(w.map, e.x, e.y, t.x, t.y)) {
+    if (d < s.triggerRange && ready(e, 'lunge') && lineOfSight(w.map, e.x, e.y, t.x, t.y) && mayStrike(w, e, t)) {
       w.startEnemyAttack(e, 'lunge', t.x, t.y);
       return STILL;
     }
-    // Corredores abrem ângulos diferentes antes do bote, em vez de formar uma fila única.
-    if (d > 65 && d < 190 && lineOfSight(w.map, e.x, e.y, t.x, t.y)) {
-      const side = e.id % 2 === 0 ? 1 : -1;
-      const dx = (t.x - e.x) / d;
-      const dy = (t.y - e.y) / d;
-      const fx = dx - dy * side * 0.42;
-      const fy = dy + dx * side * 0.42;
-      const len = Math.hypot(fx, fy);
-      if (circleFree(w.map, e.x + fx * 12, e.y + fy * 12, e.r)) {
-        e.facing = Math.atan2(dy, dx);
-        return [fx / len * e.def.speed, fy / len * e.def.speed];
-      }
-    }
-    return chase(w, e, t, e.def.speed);
+    // Corredores flanqueiam em arco (lado próprio) antes do bote, em vez de formar uma fila única.
+    return move(w, e, t, e.def.speed);
   },
 };
 
@@ -237,16 +225,24 @@ const werewolf: Brain = {
     const t = w.targetOf(e);
     if (!t) return STILL;
     const d = dist(e.x, e.y, t.x, t.y);
-    if (d < C.range + e.r + t.r && ready(e, 'claw')) {
+    if (thinking(e)) return move(w, e, t, e.def.speed);
+    if (d < C.range + e.r + t.r && ready(e, 'claw') && mayStrike(w, e, t)) {
       w.startEnemyAttack(e, 'claw', t.x, t.y);
       return STILL;
     }
     if (d > P.minRange && d < P.maxRange && ready(e, 'pounce') && lineOfSight(w.map, e.x, e.y, t.x, t.y)) {
-      const lp = landingPoint(w, e, t.x, t.y, P.maxRange);
-      w.startEnemyAttack(e, 'pounce', lp.x, lp.y);
-      return STILL;
+      // utilidade: o bote é para quem foge/atira de longe; contra corpo a corpo prefere a garra
+      const rc = targetClass(t, w);
+      const heat = kiteHeat(e, BOSS_AI.pursuitDistance, d);
+      const u = window4(d, P.minRange, P.minRange + 35, P.maxRange - 50, P.maxRange) * (0.26 + (rc === 'ranged' ? 0.3 : rc === 'mid' ? 0.15 : 0) + 0.4 * heat + 0.2 * aiSkill(w.wave));
+      const pick = pickOption(w, e, [{ atk: 'pounce', ready: true, score: u }]);
+      if (pick && mayStrike(w, e, t)) {
+        const lp = landingPoint(w, e, t.x, t.y, P.maxRange);
+        w.startEnemyAttack(e, 'pounce', lp.x, lp.y);
+        return STILL;
+      }
     }
-    return chase(w, e, t, e.def.speed);
+    return move(w, e, t, e.def.speed);
   },
 };
 
@@ -302,33 +298,33 @@ const acolyte: Brain = {
     if (!t) return STILL;
     const d = dist(e.x, e.y, t.x, t.y);
     const los = lineOfSight(w.map, e.x, e.y, t.x, t.y);
-    if (los && d < R.maxRange && ready(e, 'rune') && e.counter % 3 === 2) {
-      w.startEnemyAttack(e, 'rune', t.x, t.y);
-      const z = w.addZone({ kind: 'rune', x: t.x, y: t.y, r: R.radius * (e.type === 'highAcolyte' ? 1.4 : 1), ttl: R.windup, owner: -e.id, b: R.damage * w.edm(e) });
-      z.extra = R.windup;
-      e.counter++;
-      return STILL;
-    }
-    if (los && d < O.range - 40 && ready(e, 'orb')) {
-      w.startEnemyAttack(e, 'orb', t.x, t.y);
-      e.counter++;
-      return STILL;
-    }
     const sp = e.def.speed;
-    if (d < ATK.acolyte.keepMin && los) {
-      // recua mantendo distância
-      const ax = (e.x - t.x) / (d || 1);
-      const ay = (e.y - t.y) / (d || 1);
-      faceTo(e, t.x, t.y);
-      return [ax * sp, ay * sp];
+    if (!thinking(e) && los) {
+      const tp = isPlayer(t) ? w.players.get(t.id) : undefined;
+      // utilidade: runa pune quem está parado/curando/rezando ou agrupado; orbe é o tiro padrão
+      const stay = tp ? ramp(tp.stillT, 0, sec(1)) : 0.5;
+      const busy = tp && (tp.revivingId || tp.recentHeal > 8) ? 1 : 0;
+      const grouped = playersWithin(w, t.x, t.y, R.radius * 1.6) >= 2 ? 1 : 0;
+      const opts: AttackOption[] = [
+        { atk: 'rune', ready: d < R.maxRange && ready(e, 'rune'), score: 0.18 + 0.3 * stay + 0.25 * busy + 0.2 * grouped + (e.counter % 3 === 2 ? 0.2 : 0) },
+        { atk: 'orb', ready: d < O.range - 40 && ready(e, 'orb'), score: 0.5 },
+      ];
+      const pick = pickOption(w, e, opts);
+      if (pick?.atk === 'rune') {
+        w.startEnemyAttack(e, 'rune', t.x, t.y);
+        const z = w.addZone({ kind: 'rune', x: t.x, y: t.y, r: R.radius * (e.type === 'highAcolyte' ? 1.4 : 1), ttl: R.windup, owner: -e.id, b: R.damage * w.edm(e) });
+        z.extra = R.windup;
+        e.counter++;
+        return STILL;
+      }
+      if (pick?.atk === 'orb') {
+        w.startEnemyAttack(e, 'orb', t.x, t.y);
+        e.counter++;
+        return STILL;
+      }
     }
-    if (d > ATK.acolyte.keepMax || !los) return chase(w, e, t, sp);
-    // circula o alvo
-    faceTo(e, t.x, t.y);
-    const side = e.id % 2 === 0 ? 1 : -1;
-    const px = (-(t.y - e.y) / d) * side;
-    const py = ((t.x - e.x) / d) * side;
-    return [px * sp * 0.6, py * sp * 0.6];
+    // mantém distância (faixa do arquétipo), recua ferido, reagrupa com o bando
+    return move(w, e, t, sp);
   },
 };
 
@@ -372,20 +368,27 @@ const father: Brain = {
         e.shoutCd = sec(ATK.father.shoutCooldown);
       }
     };
-    if (d < S.range + e.r + t.r - 4 && ready(e, 'slam')) {
+    if (thinking(e)) return move(w, e, t, e.def.speed);
+    if (d < S.range + e.r + t.r - 4 && ready(e, 'slam') && mayStrike(w, e, t)) {
       w.startEnemyAttack(e, 'slam', t.x, t.y);
       shout();
       return STILL;
     }
     if (d > 90 && d < L.maxRange + 40 && ready(e, 'slipper') && lineOfSight(w.map, e.x, e.y, t.x, t.y)) {
-      const dd = Math.min(L.maxRange, d + 20);
-      const tx = e.x + ((t.x - e.x) / d) * dd;
-      const ty = e.y + ((t.y - e.y) / d) * dd;
-      w.startEnemyAttack(e, 'slipper', tx, ty);
-      shout();
-      return STILL;
+      // utilidade: chinelada para quem mantém distância/foge; de perto prefere fechar e socar
+      const rc = targetClass(t, w);
+      const heat = kiteHeat(e, BOSS_AI.pursuitDistance, d);
+      const u = window4(d, 90, 130, L.maxRange - 20, L.maxRange + 40) * (0.22 + (rc === 'ranged' ? 0.3 : rc === 'mid' ? 0.15 : 0) + 0.4 * heat + 0.15 * aiSkill(w.wave));
+      if (pickOption(w, e, [{ atk: 'slipper', ready: true, score: u }])) {
+        const dd = Math.min(L.maxRange, d + 20);
+        const tx = e.x + ((t.x - e.x) / d) * dd;
+        const ty = e.y + ((t.y - e.y) / d) * dd;
+        w.startEnemyAttack(e, 'slipper', tx, ty);
+        shout();
+        return STILL;
+      }
     }
-    return chase(w, e, t, e.def.speed);
+    return move(w, e, t, e.def.speed);
   },
 };
 
@@ -513,20 +516,31 @@ const moonDevourer: Brain = {
     const t = w.targetOf(e);
     if (!t) return STILL;
     const d = dist(e.x, e.y, t.x, t.y);
-    if (phase2 && d < A.crescent.radius + 10 && ready(e, 'crescent')) {
+    if (thinking(e)) return move(w, e, t, speed);
+    // utilidade por distância, quantos jogadores no alcance, reação ao kite e variedade (recência)
+    const heat = kiteHeat(e, BOSS_AI.pursuitDistance, d);
+    const nearC = playersWithin(w, e.x, e.y, A.crescent.radius + 10);
+    const closeness = ramp(A.claws.range + 10 - d, -30, 30);
+    const opts: AttackOption[] = [
+      { atk: 'crescent', ready: phase2 && ready(e, 'crescent'), score: d < A.crescent.radius + 10 ? 0.62 + 0.12 * Math.min(3, nearC) : 0 },
+      { atk: 'claws', ready: ready(e, 'claws'), score: d < A.claws.range + 10 ? 0.7 + 0.2 * closeness : 0 },
+      { atk: 'leap', ready: ready(e, 'leap'), score: Math.min(1, Math.max(ramp(d, 100, 260) * 0.72, e.progressT > 60 ? 0.7 : 0) + 0.3 * heat + (e.desperate ? 0.1 : 0)) },
+    ];
+    const pick = pickOption(w, e, opts);
+    if (pick?.atk === 'crescent') {
       w.startEnemyAttack(e, 'crescent', e.x, e.y);
       return STILL;
     }
-    if (d < A.claws.range + 10 && ready(e, 'claws')) {
+    if (pick?.atk === 'claws') {
       w.startEnemyAttack(e, 'claws', t.x, t.y);
       return STILL;
     }
-    if ((d > 120 || e.progressT > 60) && ready(e, 'leap')) {
+    if (pick?.atk === 'leap') {
       e.counter = phase2 ? A.phase2Leaps : 1;
       startLeap(w, e, t);
       return STILL;
     }
-    return chase(w, e, t, speed);
+    return move(w, e, t, speed);
   },
 };
 
@@ -663,28 +677,27 @@ const patriarch: Brain = {
     const t = w.targetOf(e);
     if (!t) return STILL;
     const d = dist(e.x, e.y, t.x, t.y);
+    const spd = e.def.speed * (phase2 ? 1.2 : 1);
+    if (thinking(e)) return move(w, e, t, spd);
     const minions = [...w.enemies.values()].filter((o) => o.state !== 'dead' && o.def.tier !== 'boss').length;
-    if (d < A.sweep.range && ready(e, 'sweep')) {
-      w.startEnemyAttack(e, 'sweep', t.x, t.y);
+    const heat = kiteHeat(e, BOSS_AI.pursuitDistance, d);
+    const others = Math.min(3, w.alivePlayers().length - 1);
+    const opts: AttackOption[] = [
+      { atk: 'sweep', ready: ready(e, 'sweep'), score: d < A.sweep.range ? 0.8 + 0.15 * ramp(A.sweep.range - d, 0, 40) : 0 },
+      // gap-closer: cresce quando o alvo foge ou fustiga de longe
+      { atk: 'dash', ready: phase2 && ready(e, 'dash'), score: window4(d, 90, 150, 230, 300) * (0.5 + 0.45 * heat) },
+      // anel de orbes: melhor com jogadores espalhados à média distância
+      { atk: 'burst', ready: phase2 && ready(e, 'burst'), score: 0.3 + 0.35 * window4(d, 80, 140, 300, 420) + 0.1 * others },
+      { atk: 'eruption', ready: ready(e, 'eruption'), score: 0.5 + 0.2 * ramp(d, 60, 200) + 0.08 * others + 0.12 * heat },
+      { atk: 'summon', ready: e.summonsLeft > 0 && minions < A.summon.maxAlive && ready(e, 'summon'), score: 0.45 + 0.35 * ramp(d, 90, 200) },
+    ];
+    const pick = pickOption(w, e, opts);
+    if (pick) {
+      const self = pick.atk === 'burst' || pick.atk === 'summon';
+      w.startEnemyAttack(e, pick.atk as 'sweep', self ? e.x : t.x, self ? e.y : t.y);
       return STILL;
     }
-    if (phase2 && ready(e, 'dash') && d > 90 && d < 300) {
-      w.startEnemyAttack(e, 'dash', t.x, t.y);
-      return STILL;
-    }
-    if (phase2 && ready(e, 'burst')) {
-      w.startEnemyAttack(e, 'burst', e.x, e.y);
-      return STILL;
-    }
-    if (ready(e, 'eruption')) {
-      w.startEnemyAttack(e, 'eruption', t.x, t.y);
-      return STILL;
-    }
-    if (e.summonsLeft > 0 && minions < A.summon.maxAlive && ready(e, 'summon')) {
-      w.startEnemyAttack(e, 'summon', e.x, e.y);
-      return STILL;
-    }
-    return chase(w, e, t, e.def.speed * (phase2 ? 1.2 : 1));
+    return move(w, e, t, spd);
   },
 };
 
@@ -780,13 +793,25 @@ const frostBride: Brain = {
     if (!t) return STILL;
     const d = dist(e.x, e.y, t.x, t.y);
     const minions = [...w.enemies.values()].filter((o) => o.state !== 'dead' && o.def.tier !== 'boss' && !o.def.objective).length;
-    if (d < A.nova.radius && ready(e, 'nova')) {
+    const spd = e.def.speed * (phase2 ? A.phase2Speed : 1);
+    if (thinking(e)) return move(w, e, t, spd);
+    const los = lineOfSight(w.map, e.x, e.y, t.x, t.y);
+    const heat = kiteHeat(e, BOSS_AI.pursuitDistance, d);
+    const opts: AttackOption[] = [
+      { atk: 'nova', ready: ready(e, 'nova'), score: d < A.nova.radius ? 0.9 : 0 },
+      { atk: 'spikes', ready: ready(e, 'spikes') && d < A.spikes.length, score: 0.4 + 0.35 * window4(d, 40, 100, 220, 260) },
+      { atk: 'frostSummon', ready: phase2 && ready(e, 'frostSummon') && minions < A.summon.maxAlive, score: 0.5 + 0.3 * ramp(d, 80, 160) },
+      // projétil: resposta a quem fica longe/fustiga de fora
+      { atk: 'shards', ready: ready(e, 'shards') && d < A.shards.range && los, score: 0.42 + 0.18 * ramp(d, 90, 200) + 0.35 * heat },
+    ];
+    const pick = pickOption(w, e, opts);
+    if (pick?.atk === 'nova') {
       w.startEnemyAttack(e, 'nova', e.x, e.y);
       const z = w.addZone({ kind: 'nova', x: e.x, y: e.y, r: A.nova.radius, ttl: A.nova.windup, owner: -e.id, b: A.nova.damage * w.edm(e) });
       z.extra = A.nova.windup;
       return STILL;
     }
-    if (ready(e, 'spikes') && d < A.spikes.length) {
+    if (pick?.atk === 'spikes') {
       // linha de espinhos: segmentos telegrafados até o alvo (e além)
       w.startEnemyAttack(e, 'spikes', t.x, t.y);
       const a = Math.atan2(t.y - e.y, t.x - e.x);
@@ -800,22 +825,16 @@ const frostBride: Brain = {
       }
       return STILL;
     }
-    if (phase2 && ready(e, 'frostSummon') && minions < A.summon.maxAlive) {
+    if (pick?.atk === 'frostSummon') {
       w.startEnemyAttack(e, 'frostSummon', e.x, e.y);
       return STILL;
     }
-    if (ready(e, 'shards') && d < A.shards.range && lineOfSight(w.map, e.x, e.y, t.x, t.y)) {
+    if (pick?.atk === 'shards') {
       w.startEnemyAttack(e, 'shards', t.x, t.y);
       return STILL;
     }
-    // flutua mantendo distância média
-    if (d < 90) {
-      const ax = (e.x - t.x) / (d || 1);
-      const ay = (e.y - t.y) / (d || 1);
-      faceTo(e, t.x, t.y);
-      return [ax * e.def.speed, ay * e.def.speed];
-    }
-    return chase(w, e, t, e.def.speed * (phase2 ? A.phase2Speed : 1));
+    // flutua mantendo distância média (faixa do arquétipo)
+    return move(w, e, t, spd);
   },
 };
 
@@ -1228,7 +1247,7 @@ const mistStalkerMove = (w: World, e: Enemy): [number, number] => {
       w.startEnemyAttack(e, 'claw', m.x, m.y);
       return STILL;
     }
-    if (d < C.range + e.r + t.r && ready(e, 'claw')) {
+    if (d < C.range + e.r + t.r && ready(e, 'claw') && mayStrike(w, e, t)) {
       w.startEnemyAttack(e, 'claw', t.x, t.y);
       return STILL;
     }
@@ -1319,7 +1338,7 @@ const ossuaryBearer: Brain = {
     const t = w.targetOf(e);
     if (!t) return STILL;
     const d = dist(e.x, e.y, t.x, t.y);
-    if (d < B.range + e.r + t.r && ready(e, 'bash')) {
+    if (d < B.range + e.r + t.r && ready(e, 'bash') && mayStrike(w, e, t)) {
       w.startEnemyAttack(e, 'bash', t.x, t.y);
       return STILL;
     }

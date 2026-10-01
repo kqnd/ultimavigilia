@@ -1,6 +1,7 @@
 import type { ClassBase, ClassId, HealSource } from '../../shared/config/classes.js';
 import type { AffixId } from '../../shared/config/affixes.js';
 import type { EnemyDef, EnemyType } from '../../shared/config/enemies.js';
+import type { AIMode } from '../../shared/config/enemyAI.js';
 import type { InputFrame, MoveState } from '../../shared/movement.js';
 import type { SynergyTotals } from '../../shared/config/synergies.js';
 import type { ActionName, EnemyAttackName, EnemyStateName, MatchStats, MinionKind, MinionState, ProjectileKind, ZoneKind } from '../../shared/protocol.js';
@@ -287,6 +288,24 @@ export interface Enemy {
   lastCastTick: number;
   /** Combo Marca de Ossos: cooldown (ticks) antes de gerar Essência de novo por atordoar este alvo. */
   markStaggerCd: number;
+  /** IA v1.6: modo de locomoção, ticks de permanência e lado preferido (+1/-1) de flanco/contorno. */
+  aiMode: AIMode;
+  aiModeT: number;
+  aiSide: 1 | -1;
+  /** IA: amostra de posição para detectar travamento e ticks restantes do desvio. */
+  aiLastX: number;
+  aiLastY: number;
+  aiUnstickT: number;
+  /** IA: já recuou ferido nesta vida; ticks restantes do recuo. */
+  retreated: boolean;
+  retreatT: number;
+  /** Chefes: respiro (ticks) antes de escolher o próximo ataque e histórico dos últimos ataques. */
+  thinkT: number;
+  recent: string[];
+  /** Chefes: ticks restantes de "calor" de kite (levou dano de longe / alvo fugindo). */
+  heatT: number;
+  /** Chefes: reta final (desespero) já ativada. */
+  desperate: boolean;
 }
 
 /** Servos do Necromante e aliados não jogadores (sobrevivente). */
