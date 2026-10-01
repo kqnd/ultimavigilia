@@ -1016,6 +1016,46 @@ scenarios.perf = async () => {
   await app.close();
 };
 
+// Medição de CPU do cliente: tempo de scene.update e de renderização (ms) em cena pesada, com habilidades e supremas.
+// Uso: node tools/e2e.mjs perfcpu <saida> [classe]
+scenarios.perfcpu = async () => {
+  const cls = rest[0] ?? 'mage';
+  const { app, page } = await launch('perfcpu', []);
+  await soloStart(page, cls);
+  await page.evaluate(() => {
+    const gs = window.__app.game;
+    window.__perf = { upd: [], frame: [] };
+    window.__perf.parts = {};
+    for (const m of ['updateLighting', 'updateMatch', 'drawLightReflections', 'ambientParticles', 'updatePlayerReflections']) { const o = gs[m].bind(gs); window.__perf.parts[m] = 0; gs[m] = (...a) => { const t = performance.now(); const r = o(...a); window.__perf.parts[m] += performance.now() - t; return r; }; }
+    { const o = gs.fx.update.bind(gs.fx); window.__perf.parts.fxUpdate = 0; gs.fx.update = (d) => { const t = performance.now(); o(d); window.__perf.parts.fxUpdate += performance.now() - t; }; }
+    gs.events.on('preupdate', () => { window.__perf.u0 = performance.now(); });
+    gs.events.on('postupdate', () => { window.__perf.upd.push(performance.now() - window.__perf.u0); });
+    gs.game.events.on('prerender', () => { window.__perf.t0 = performance.now(); });
+    gs.game.events.on('postrender', () => { window.__perf.frame.push(performance.now() - window.__perf.t0); });
+  });
+  await dbg(page, 'god');
+  for (const [n, t] of [[60, 'shambler'], [20, 'runner'], [8, 'acolyte'], [6, 'werewolf'], [6, 'father']]) await dbg(page, 'spawn', n, t);
+  await sleep(1500);
+  await page.evaluate(() => { window.__perf.upd.length = 0; window.__perf.frame.length = 0; for (const k in window.__perf.parts) window.__perf.parts[k] = 0; });
+  const t0 = Date.now();
+  while (Date.now() - t0 < 12000) {
+    await dbg(page, 'ult', 100);
+    await page.mouse.move(600 + Math.random() * 300, 300 + Math.random() * 150);
+    await page.mouse.down();
+    for (const k of ['KeyQ', 'KeyE', 'KeyR']) { await page.keyboard.press(k); await sleep(120); }
+    await page.mouse.up();
+    await sleep(150);
+  }
+  const res = await page.evaluate(() => {
+    const q = (a) => { if (!a.length) return { n: 0 }; const b = [...a].sort((x, y) => x - y); return { n: b.length, avg: +(b.reduce((s, v) => s + v, 0) / b.length).toFixed(3), p50: +b[Math.floor(b.length * 0.5)].toFixed(3), p95: +b[Math.floor(b.length * 0.95)].toFixed(3), max: +b[b.length - 1].toFixed(3) }; };
+    const gs = window.__app.game;
+    return { partes: Object.fromEntries(Object.entries(window.__perf.parts).map(([k, v]) => [k, +(v / window.__perf.upd.length).toFixed(3)])), update: q(window.__perf.upd), render: q(window.__perf.frame), particulas: gs.fx.particleCount, objetos: gs.children.length, inimigos: window.__app.session.latest().e.length };
+  });
+  console.log(JSON.stringify({ classe: cls, ...res }));
+  await shot(page, 'perfcpu');
+  await app.close();
+};
+
 const fn = scenarios[scenario];
 if (!fn) {
   console.error('cenário desconhecido');
