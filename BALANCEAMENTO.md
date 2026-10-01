@@ -423,3 +423,33 @@ Os efeitos ficavam por baixo da máscara de escuridão e "apagavam" à noite. Ag
 emite luz aditiva por cima dela (clarões, ondas de choque, faíscas, raios, colunas de luz, rastro
 luminoso nos arcos de golpe e luz dinâmica que recorta a noite). Ajustável em **Configurações →
 Brilho das habilidades** (0 = só pixels).
+
+## v1.6 — Variedade procedural das ondas (`waveVariety.ts`)
+
+As 30 ondas continuam sendo a espinha da campanha (`WAVES`), mas cada partida agora **reinclina**
+a mistura das ondas comuns. Tudo sai de um `Rng` próprio semeado por `(semente da partida, onda)`:
+mesma semente = mesmo plano (inclusive ao refazer a onda após um checkpoint), sem consumir o `Rng`
+do mundo nas escolhas de plano.
+
+**O que não muda:** o orçamento total por onda (`scaledBudget`), os elites garantidos, os
+desbloqueios/limites de especiais, as ondas 1–2, as ondas de respiro e de evento (sem modificador)
+e **as ondas de checkpoint 5/10/15/20/25/30, que saem idênticas à definição** (mesmos pesos, mesmo
+ritmo, sem inclinação nem modificador, mesma sequência do `Rng`). Só se reponderam tipos que a onda
+já declara; nenhum tipo novo entra.
+
+| Peça | Regra |
+|---|---|
+| Arquétipos | enxame (zumbi), velocistas (corredor, caçador de névoa, lobisomem), brutamontes (pai, portador do ossário), conjuradores (acólitos). Não existe inimigo voador na campanha. |
+| Inclinação | A partir da onda 3, um arquétipo presente na onda ganha **peso ×1,8**. |
+| Modificadores | Chance **28%** nas ondas elegíveis (onda ≥ 3, sem chefe/minichefe/respiro/evento). Aviso no HUD pelo canal `msg` já existente. |
+| Horda (onda ≥ 3) | comuns ×1,8, elites ×0,5; grupos +1/+2; intervalo ×0,85; simultâneos ×1,15. |
+| Elites (onda ≥ 6) | elites ×2,2, comuns ×0,8; grupo máximo −1; intervalo ×1,1. |
+| Cerco (onda ≥ 4) | spawns só por **2 portões** sorteados; grupo mínimo +1; intervalo ×0,9. |
+| Direção | Em mapas com 4+ portões, toda onda comum descarta 1 portão (se todos os restantes estiverem perto de jogadores, volta a usar todos). |
+| Noite escura | Não implementada (exigiria um efeito de visibilidade no cliente/servidor). |
+
+**Orçamento:** o preenchimento da fila é o mesmo laço de sempre (`fillQueue`: sorteia até esgotar
+o orçamento; o último sorteio pode estourar até o custo do maior inimigo, 8). Teste em 200
+sementes por onda: a fila fica em `[orçamento − 0,5, orçamento + 8)` e a **média do custo difere
+menos de 6%** da fila sem variedade. A contagem de inimigos varia (horda: mais e mais fracos;
+elites: menos e mais fortes), o orçamento não.
