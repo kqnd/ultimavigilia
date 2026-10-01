@@ -45,10 +45,16 @@ function trackStuck(w: World, e: Enemy, speed: number, close: boolean): void {
   if (e.aiUnstickT > 0) e.aiUnstickT--;
   if ((w.tick + e.id) % STEER.stuckWindow !== 0) return;
   const moved = Math.hypot(e.x - e.aiLastX, e.y - e.aiLastY);
-  const expected = speed * DT * STEER.stuckWindow;
+  // velocidade efetiva (mesmos multiplicadores aplicados no movimento): lento por gelo/armadilha não é "travado"
+  let spMul = w.enemySpeedMul(e);
+  if (e.cc.slow > 0 && e.cc.slowMul > 0) spMul *= e.cc.slowMul;
+  if (e.bastionSlow) spMul *= 0.8;
+  const expected = speed * spMul * DT * STEER.stuckWindow;
+  const sampledOn = e.state === 'move' && e.slideT <= 0;
   e.aiLastX = e.x;
   e.aiLastY = e.y;
-  if (close || e.cc.root > 0 || e.cc.stun > 0 || e.kvx !== 0 || e.kvy !== 0) return;
+  // amostra contaminada por ataque/stagger/escorregão: só reinicia a janela
+  if (!sampledOn || close || e.cc.root > 0 || e.cc.stun > 0 || e.kvx !== 0 || e.kvy !== 0) return;
   if (moved < expected * STEER.stuckMinFrac) {
     e.aiUnstickT = STEER.unstickTicks;
     e.aiSide = (e.aiSide === 1 ? -1 : 1) as 1 | -1;
@@ -216,7 +222,36 @@ function awayFromPlayers(w: World, e: Enemy, within: number): Vec {
     ay += ((e.y - p.y) / (pd || 1)) * k;
   }
   const l = Math.hypot(ax, ay);
-  return l < 0.001 ? STILL : [ax / l, ay / l];
+  if (l >= 0.001) {
+    const ux = ax / l;
+    const uy = ay / l;
+    // caminho livre à frente: segue direto
+    if (circleFree(w.map, e.x + ux * 36, e.y + uy * 36, e.r)) return [ux, uy];
+    return openestExit(w, e, ux, uy);
+  }
+  // jogadores em lados opostos cancelam o vetor (ou ninguém por perto): sai pela direção mais aberta
+  return within > 0 && w.alivePlayers().some((p) => dist(e.x, e.y, p.x, p.y) < within) ? openestExit(w, e, 0, 0) : STILL;
+}
+
+/** Entre 8 direções, a mais livre (sonda a 28 e 56 px), com preferência pela direção de fuga desejada. */
+function openestExit(w: World, e: Enemy, wx: number, wy: number): Vec {
+  let best: Vec = STILL;
+  let bestScore = -Infinity;
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2 + e.aiSide * 0.1;
+    const dx = Math.cos(a);
+    const dy = Math.sin(a);
+    let free = 0;
+    if (circleFree(w.map, e.x + dx * 28, e.y + dy * 28, e.r)) free++;
+    if (free && circleFree(w.map, e.x + dx * 56, e.y + dy * 56, e.r)) free++;
+    if (!free) continue;
+    const score = free + (dx * wx + dy * wy) * 0.8;
+    if (score > bestScore) {
+      bestScore = score;
+      best = [dx, dy];
+    }
+  }
+  return best;
 }
 
 /** Manter distância: recua se perto demais, aproxima se longe/sem visão, circula na faixa ideal. */

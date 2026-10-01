@@ -10,10 +10,15 @@ const DIRS: readonly [number, number, number][] = [
   [1, 1, 14], [1, -1, 14], [-1, 1, 14], [-1, -1, 14],
 ];
 
+/** Custo extra de pisar num tile encostado em obstáculo (um passo reto custa 10). */
+const WALL_COST = 6;
+
 export class FlowField {
   readonly dist: Uint16Array;
+  private readonly nearWall: Uint8Array;
   constructor(private readonly map: ArenaMap) {
     this.dist = new Uint16Array(map.w * map.h).fill(0xffff);
+    this.nearWall = new Uint8Array(map.w * map.h);
   }
 
   /** Recalcula a partir do tile alvo (px). Fila de baldes (custos 10/14). */
@@ -27,6 +32,16 @@ export class FlowField {
     ty = Math.max(0, Math.min(h - 1, ty));
     const start = ty * w + tx;
     dist[start] = 0;
+    // folga: tiles encostados em parede custam mais, então o caminho prefere o meio dos corredores
+    // (menos roçar em quinas, e a horda se espalha em vez de formar fila colada na parede)
+    const near = this.nearWall;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let n = 0;
+        for (let oy = -1; oy <= 1 && !n; oy++) for (let ox = -1; ox <= 1; ox++) if ((ox || oy) && isSolidTile(this.map, x + ox, y + oy)) { n = 1; break; }
+        near[y * w + x] = n;
+      }
+    }
     // Dijkstra simples com fila de prioridade em baldes
     const buckets: number[][] = [[start]];
     for (let d = 0; d < buckets.length; d++) {
@@ -44,7 +59,7 @@ export class FlowField {
           if (isSolidTile(this.map, nx, ny)) continue;
           if (dx !== 0 && dy !== 0 && (isSolidTile(this.map, x + dx, y) || isSolidTile(this.map, x, y + dy))) continue;
           const ni = ny * w + nx;
-          const nd = d + c;
+          const nd = d + c + (near[ni] ? WALL_COST : 0);
           if (nd < (dist[ni] as number)) {
             dist[ni] = nd;
             (buckets[nd] ??= []).push(ni);

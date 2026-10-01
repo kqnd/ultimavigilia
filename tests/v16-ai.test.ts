@@ -427,6 +427,7 @@ describe('chefes: utilidade de ataques', () => {
     const boss = spawn(w, 'moonDevourer', at.x, at.y);
     boss.maxHp = boss.hp = 9_999_999;
     boss.cds.leap = 0;
+    boss.cds.moonRays = sec(60); // isola o gap-closer do ataque de arena (v1.7)
     // dano de longe aquece o chefe
     w.hitEnemy(p, boss, 30, { poise: 0, kb: 0, fromX: p.x, fromY: p.y, kind: 'proj' });
     expect(boss.heatT).toBeGreaterThan(0);

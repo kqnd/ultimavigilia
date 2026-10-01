@@ -344,6 +344,8 @@ export class App {
       this.hud.message(ev.pi === me ? 'Você caiu!' : `${this.session.nameOf(ev.pi)} caiu!`, 0xec6a5e, 2000);
     } else if (ev.k === 'revived') {
       this.hud.message(`${this.session.nameOf(ev.pi)} foi revivido por ${this.session.nameOf(ev.by)}`, 0x7fc47a, 2000);
+    } else if (ev.k === 'boss' && ev.ph === 3) {
+      this.hud.showBanner('FASE 3', 'Lua cheia: os raios não param!', 0xec6a5e, 2400);
     } else if (ev.k === 'boss' && ev.ph === 2) {
       audio.setBossPhase(2);
       this.hud.showBanner('FASE 2', 'O chefe mudou de padrão!', 0xe07cff, 2200);
@@ -506,8 +508,23 @@ export class App {
   private initUpdates(): void {
     this.session.bridge.update.onStatus((st) => {
       this.update = st;
-      if (this.screen === 'menu') this.renderUpdate();
+      if (this.screen !== 'menu') return;
+      // progresso de download: só atualiza a barra existente (sem recriar o painel)
+      if (st.state === 'downloading' && this.patchDownloadPanel(st)) return;
+      this.renderUpdate();
     });
+  }
+
+  /** Atualiza barra e texto do painel de download já desenhado. false = não há painel para atualizar. */
+  private patchDownloadPanel(st: Extract<UpdateStatus, { state: 'downloading' }>): boolean {
+    const panel = document.getElementById('update');
+    const bar = panel?.querySelector<HTMLElement>('[data-upd-bar]');
+    const txt = panel?.querySelector<HTMLElement>('[data-upd-txt]');
+    if (!bar || !txt) return false;
+    const frac = st.total > 0 ? Math.min(1, st.received / st.total) : 0;
+    bar.style.width = `${Math.round(frac * 100)}%`;
+    txt.textContent = `${formatBytes(st.received)} de ${formatBytes(st.total)} · ${Math.round(frac * 100)}%`;
+    return true;
   }
 
   private maybeCheckUpdate(): void {
@@ -564,8 +581,8 @@ export class App {
       panel.append(
         h('h2', { text: `Baixando v${st.update.version}` }),
         h('div', { style: 'height:6px;background:#0b0a12;box-shadow:inset 0 0 0 1px #37507e;margin:2px 0' },
-          h('div', { style: `height:100%;width:${Math.round(frac * 100)}%;background:#a8591a` })),
-        h('div', { class: 'small hint', text: `${formatBytes(st.received)} de ${formatBytes(st.total)} · ${Math.round(frac * 100)}%` }),
+          h('div', { 'data-upd-bar': '', style: `height:100%;width:${Math.round(frac * 100)}%;background:#a8591a` })),
+        h('div', { 'data-upd-txt': '', class: 'small hint', text:`${formatBytes(st.received)} de ${formatBytes(st.total)} · ${Math.round(frac * 100)}%` }),
       );
       this.layer.append(panel);
       return;
@@ -830,9 +847,10 @@ export class App {
         'div',
         { class: `classcard${mine ? ' mine' : ''}${owner && !mine ? ' taken' : ''}`, tabindex: 0, role: 'button', 'aria-label': `${CLASSES[c].name}${owner ? (mine ? ' (sua classe)' : ` (ocupado por ${owner.name})`) : ''}`, 'data-autofocus': mine || (!me?.cls && c === info) },
         classSprite(c, 1, mine ? 'walk' : 'idle'),
-        h('div', { text: CLASSES[c].name, class: mine ? 'amber' : '' }),
-        h('div', { class: owner && !mine ? 'red' : 'hint', text: owner ? (mine ? 'você' : `ocupado: ${owner.name}`) : CLASSES[c].tag }),
+        h('div', { text: CLASSES[c].name, class: `ellipsis ${mine ? 'amber' : owner ? 'red' : ''}` }),
       );
+      // com 10 classes a carta fica só com sprite + nome; o resto vai no tooltip e no painel de detalhes
+      card.title = owner ? (mine ? `${CLASSES[c].name} — você` : `${CLASSES[c].name} — ocupado por ${owner.name}`) : `${CLASSES[c].name} — ${CLASSES[c].tag}`;
       const showInfo = (): void => {
         if (this.selectedInfo !== c) {
           this.selectedInfo = c;
@@ -857,19 +875,19 @@ export class App {
     this.renderClassInfo(detail, info, taken);
 
     // jogadores
-    const list = h('div', { class: 'scroll', style: 'max-height:44px' });
+    // ocupa o espaço que sobra no painel e rola por dentro: nunca estoura para fora dele
+    const list = h('div', { class: 'scroll', style: 'flex:1 1 0;min-height:28px;overflow-y:auto' });
     for (const p of s.lobby) {
       list.append(
         h(
           'div',
-          { class: 'row', style: 'margin-bottom:2px' },
-          h('div', { style: 'flex:3', class: p.id === s.myId ? 'amber' : '', text: `${p.host ? '♛ ' : ''}${p.name}${p.conn ? '' : ' (caiu)'}` }),
-          h('div', { style: 'flex:2', class: 'hint', text: p.cls ? CLASSES[p.cls].name : '—' }),
-          h('div', { style: 'flex:1', class: p.ready ? 'ok' : 'hint', text: p.ready ? 'pronto' : '…' }),
+          { class: 'row', style: 'margin-bottom:1px;gap:3px;font-size:10px;line-height:12px' },
+          h('div', { style: 'flex:3;min-width:0', class: `ellipsis ${p.id === s.myId ? 'amber' : p.ready ? 'ok' : ''}`, text: `${p.ready ? '✓ ' : ''}${p.host ? '♛' : ''}${p.name}${p.conn ? '' : ' (caiu)'}` }),
+          h('div', { style: 'flex:2;min-width:0', class: 'ellipsis hint', text: p.cls ? CLASSES[p.cls].name : '—' }),
         ),
       );
     }
-    for (let i = s.lobby.length; i < s.maxPlayers; i++) list.append(h('div', { class: 'hint', text: '· vaga livre' }));
+    if (s.lobby.length < s.maxPlayers) list.append(h('div', { class: 'hint', style: 'font-size:10px', text: `· ${s.maxPlayers - s.lobby.length} ${s.maxPlayers - s.lobby.length === 1 ? 'vaga livre' : 'vagas livres'}` }));
     const allReady = s.lobby.length > 0 && s.lobby.every((p) => p.ready && p.cls);
     const readyBtn = h('button', { class: `btn${me?.ready ? ' sel' : ''}`, disabled: !me?.cls }, me?.ready ? '✓ Pronto (clique para cancelar)' : 'Marcar pronto');
     readyBtn.addEventListener('click', () => {
@@ -888,11 +906,8 @@ export class App {
       { class: 'panel fade-in', style: 'left:8px;top:28px;width:228px;height:292px' },
       h('h2', { text: s.solo ? 'Modo solo — escolha sua classe' : 'Escolha sua classe' }),
       grid,
-      h('div', { style: 'height:6px' }),
-      s.solo ? null : h('h2', { text: `Jogadores ${s.lobby.length}/${s.maxPlayers}` }),
-      s.solo ? null : list,
     );
-    const right = h('div', { class: 'panel', style: 'left:492px;top:28px;width:140px;height:292px' });
+    const right = h('div', { class: 'panel', style: 'left:492px;top:28px;width:140px;height:292px;display:flex;flex-direction:column;overflow:hidden' });
     if (!s.solo) {
       if (host && s.shareAddress) {
         right.append(
@@ -917,7 +932,10 @@ export class App {
       me?.cls ? null : h('div', { class: 'hint', style: 'margin-bottom:4px', text: 'Clique numa classe livre para escolher.' }),
       s.solo ? null : readyBtn,
       host ? startBtn : null,
-      h('div', { style: 'height:6px' }),
+      // jogadores: ocupam o que sobra do painel e rolam por dentro (10 classes + 6 jogadores nunca estouram)
+      s.solo ? null : h('h2', { style: 'margin-top:4px;flex:none', text: `Jogadores ${s.lobby.length}/${s.maxPlayers}` }),
+      s.solo ? null : list,
+      h('div', { style: 'height:4px;flex:none' }),
       h('button', { class: 'btn', onclick: () => this.openSettings() }, 'Configurações'),
       h('button', { class: 'btn danger', onclick: () => void this.leave(true) }, host && !s.solo ? 'Fechar sala' : 'Sair'),
     );

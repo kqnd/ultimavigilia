@@ -152,6 +152,18 @@ export const ATK = {
     crescent: { windup: 24, active: 4, recovery: 20, damage: 26, radius: 78, cooldown: 5 },
     phase2Speed: 1.25,
     phase2Leaps: 3,
+    /**
+     * Raios Lunares: pilares de pedra sobem primeiro (cobertura) e depois os raios explodem em
+     * linha a partir do chefe. Quem está atrás de um pilar (sem linha de visão do chefe) não leva dano.
+     */
+    moonRays: {
+      windup: 44, recovery: 24, damage: 24, length: 360, width: 30, rays: 3, phase2Rays: 5, segments: 9, cooldown: 10,
+      pillars: 3, pillarDelay: 16, pillarSeconds: 14, pillarRing: [90, 190],
+      /** Fase 3 (lua cheia): mais raios, 3 ondas, um pilar a mais e o ataque volta mais cedo. */
+      phase3Rays: 6, phase3Pillars: 4, phase3CooldownMul: 0.6,
+    },
+    /** Fração de vida em que entra a fase 3. */
+    phase3At: 0.25,
   },
   patriarch: {
     eruption: { windup: 32, radius: 44, damage: 26, cooldown: 5.5, phase2Waves: 3, waveGap: 12 },
@@ -162,6 +174,8 @@ export const ATK = {
     transform: { windup: 60 },
     /** Protegido pelos totens: fração do dano que passa enquanto houver totem de pé. */
     shieldedDamageMul: 0.15,
+    /** Fendas do Abismo: buracos que puxam e ferem; surgem depois do aviso e ficam por alguns segundos. */
+    rift: { windup: 36, recovery: 20, holes: 2, phase2Holes: 4, radius: 56, warn: 42, activeSeconds: 7, tickEvery: 15, tickDamage: 8, pull: 95, cooldown: 12, scatter: 170 },
     /** Fase 2: quando os totens caem. Sem totens no mapa, em 50% da vida; com totens de pé, à força em 35%. */
     phase2HpNoTotems: 0.5,
     phase2HpForced: 0.35,
@@ -174,6 +188,10 @@ export const ATK = {
     phase2Speed: 1.2,
     /** Fase 2 (estilhaços em leque maior, invocações) a partir desta fração de vida. */
     phase2At: 0.5,
+    /** Campo de Gelo: manchas que ficam no chão (lentidão + dano por pulso) depois do aviso. */
+    frostField: { windup: 34, recovery: 18, patches: 4, phase2Patches: 6, radius: 52, warn: 40, activeSeconds: 8, tickEvery: 15, tickDamage: 6, slow: 0.55, scatter: 150, cooldown: 11 },
+    /** Muralha de Gelo: linha de pilares entre ela e o alvo; bloqueia estilhaços e divide a arena. */
+    iceWall: { windup: 30, recovery: 18, pillars: 5, spacing: 34, ahead: 110, delay: 18, pillarSeconds: 10, cooldown: 13 },
   },
   falseMoon: { pulse: { interval: 6, windup: 1.2, radius: 60, damage: 12 }, damageReductionPerMoon: 0.2, minDamageMul: 0.2, exposedTime: 12, exposedDamageMul: 1.3, relightDelay: 25 },
   abyssTotem: { orb: { interval: 4, speed: 150, damage: 12, radius: 6, range: 300 } },

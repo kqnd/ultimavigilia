@@ -573,6 +573,7 @@ export class Room {
       `,"m":${JSON.stringify(snapMinions(w))}` +
       `,"it":${JSON.stringify(snapPickups(w, w.hasNecro()))}` +
       `,"bk":${JSON.stringify(snapBreaks(w))}` +
+      `,"pl":${JSON.stringify(w.snapPillars())}` +
       `,"pr":${JSON.stringify(w.snapProjectiles())}` +
       `,"z":${JSON.stringify(w.snapZones())}` +
       `,"w":${JSON.stringify(w.waveInfo())}`;

@@ -80,6 +80,9 @@ export type HitResult = 'hit' | 'blocked' | 'parried' | 'evaded' | 'ignored';
 
 const EMPTY_INPUT = (seq: number, x: number, y: number): InputFrame => ({ seq, mx: 0, my: 0, ax: x + 10, ay: y, held: 0, pressed: 0 });
 
+/** Máximo de pilares de arena vivos ao mesmo tempo. */
+const MAX_PILLARS = 12;
+
 export class World {
   /** Mapa ativo (clone mutável: caixas e barris quebram). */
   map: ArenaMap = cloneMap(getMap('village'));
@@ -98,6 +101,10 @@ export class World {
   readonly minions = new Map<number, Minion>();
   projectiles: Projectile[] = [];
   zones: Zone[] = [];
+  /** Pilares temporários de arena (v1.7): índice do tile -> ticks restantes. Sólidos no clone do mapa. */
+  readonly pillars = new Map<number, number>();
+  /** Último tick em que um raio lunar acertou cada jogador (evita acerto duplo por segmentos). */
+  private readonly rayHit = new Map<number, number>();
   pickups: Pickup[] = [];
   breakHp = new Float32Array(0);
   readonly hash = new SpatialHash<Enemy>(64);
@@ -356,6 +363,7 @@ export class World {
     const ch = CHAPTERS[n - 1] ?? (CHAPTERS[0] as ChapterDef);
     this.chapter = ch;
     this.map = cloneMap(getMap(ch.map));
+    this.pillars.clear();
     this.clearTransient();
     resetBreakables(this);
     for (const id of this.fields.keys()) this.fields.set(id, new FlowField(this.map));
@@ -890,6 +898,7 @@ export class World {
     stepMinions(this);
     this.stepProjectiles();
     this.stepZones();
+    this.stepPillars();
     stepPickups(this);
     this.objectives.tick();
     this.cleanup();
@@ -1755,12 +1764,107 @@ export class World {
       // chefe morto limpa lacaios, objetivos e projéteis
       for (const o of this.enemies.values()) if (o !== e && o.state !== 'dead') this.killEnemy(o, null);
       this.projectiles = this.projectiles.filter((pr) => pr.team === 'p');
+      this.clearPillars();
     }
   }
 
   private clearEnemyZones(eid: number): void {
     for (const z of this.zones) {
-      if (z.owner === -eid && (z.kind === 'rune' || z.kind === 'leapMark' || z.kind === 'eruption' || z.kind === 'nova' || z.kind === 'iceSpike' || z.kind === 'moonPulse')) z.dead = true;
+      if (z.owner === -eid && (z.kind === 'rune' || z.kind === 'leapMark' || z.kind === 'eruption' || z.kind === 'nova' || z.kind === 'iceSpike' || z.kind === 'moonPulse'
+        || z.kind === 'moonRay' || z.kind === 'rockWarn' || z.kind === 'frostPatch' || z.kind === 'abyssHole')) z.dead = true;
+    }
+  }
+
+  // ------------------------------------------------------------------ arena (v1.7)
+
+  /** Há alguém (jogador, inimigo ou servo) a menos de `r` px do ponto? */
+  private occupied(x: number, y: number, r: number): boolean {
+    const r2 = r * r;
+    for (const p of this.players.values()) if (dist2(p.x, p.y, x, y) < r2) return true;
+    for (const e of this.enemies.values()) if (e.state !== 'dead' && dist2(e.x, e.y, x, y) < (r + e.r) ** 2) return true;
+    for (const m of this.minions.values()) if (m.state !== 'dead' && dist2(m.x, m.y, x, y) < r2) return true;
+    return false;
+  }
+
+  /**
+   * Pilar temporário: tile sólido (para corpos, tiros e visão) que some sozinho. Só nasce em tile
+   * livre, longe das bordas e sem ninguém em cima. O clone do mapa muda aqui e nos clientes (`pl`).
+   */
+  addPillar(x: number, y: number, seconds: number): boolean {
+    const tx = Math.floor(x / TILE);
+    const ty = Math.floor(y / TILE);
+    if (tx < 2 || ty < 2 || tx >= this.map.w - 2 || ty >= this.map.h - 2) return false;
+    const i = ty * this.map.w + tx;
+    if (this.map.obst[i] !== Obst.None || this.pillars.has(i)) return false;
+    if (this.pillars.size >= MAX_PILLARS) return false; // teto: o terreno nunca vira labirinto fechado
+    const cx = (tx + 0.5) * TILE;
+    const cy = (ty + 0.5) * TILE;
+    if (this.occupied(cx, cy, TILE * 0.75)) return false;
+    // nunca fecha o ponto de nascimento dos chefes/objetivos nem o entorno da fogueira
+    if (dist2(cx, cy, this.map.campfire.x, this.map.campfire.y) < 70 * 70) return false;
+    this.map.obst[i] = Obst.Pillar;
+    this.pillars.set(i, sec(seconds));
+    this.emit({ k: 'fx', n: 'pillarRise', x: cx, y: cy, a: 0, o: 0, r: TILE });
+    return true;
+  }
+
+  private stepPillars(): void {
+    if (this.pillars.size === 0) return;
+    for (const [i, t] of this.pillars) {
+      if (t > 1) {
+        this.pillars.set(i, t - 1);
+        continue;
+      }
+      this.dropPillar(i);
+    }
+  }
+
+  private dropPillar(i: number): void {
+    this.pillars.delete(i);
+    this.map.obst[i] = Obst.None;
+    const tx = i % this.map.w;
+    const ty = Math.floor(i / this.map.w);
+    this.emit({ k: 'fx', n: 'pillarCrumble', x: (tx + 0.5) * TILE, y: (ty + 0.5) * TILE, a: 0, o: 0, r: TILE });
+  }
+
+  clearPillars(): void {
+    for (const i of [...this.pillars.keys()]) this.dropPillar(i);
+  }
+
+  snapPillars(): number[] {
+    return [...this.pillars.keys()];
+  }
+
+  /** Hazard persistente de chefe (mancha de gelo, fenda): aviso -> ativo, só fere jogadores. */
+  private stepBossHazard(z: Zone): void {
+    const src = this.enemies.get(-z.owner);
+    if (!src || src.state === 'dead') {
+      z.dead = true;
+      return;
+    }
+    if (z.extra > 0) {
+      z.extra--;
+      return;
+    }
+    const mul = this.objectives.enemyDamageMul;
+    const pulse = z.a > 0 && z.age % z.a === 0;
+    for (const p of this.players.values()) {
+      if (p.status !== 0) continue;
+      const d = Math.hypot(p.x - z.x, p.y - z.y);
+      if (d > z.r + p.r) continue;
+      if (z.kind === 'frostPatch') {
+        p.buffs.slowed = Math.max(p.buffs.slowed, 6);
+        p.slowMul = Math.min(p.slowMul, ATK.frostBride.frostField.slow);
+      } else if (d > 4) {
+        // fenda: puxa para o centro (deslocamento direto, o jogador ainda pode lutar contra com a esquiva)
+        const k = ((z.r + p.r - d) / (z.r + p.r)) * ATK.patriarch.rift.pull * DT;
+        moveCircle(this.map, p.move, p.r, ((z.x - p.x) / d) * k, ((z.y - p.y) / d) * k);
+      }
+      // dano só no miolo da fenda; a mancha de gelo fere em toda a área
+      const core = z.kind === 'abyssHole' ? z.r * 0.6 + p.r : Infinity;
+      if (pulse && d <= core) {
+        this.hitPlayer(p, { dmg: z.b * mul, heavy: false, fromX: z.x, fromY: z.y, enemy: null, proj: null, blockable: false });
+      }
     }
   }
 
@@ -2126,13 +2230,19 @@ export class World {
             e.cc.pullT = 2;
           }
           break;
+        case 'frostPatch':
+        case 'abyssHole':
+          this.stepBossHazard(z);
+          break;
         default:
           if (owner && z.owner > 0) kitFor(owner.cls).zoneTick?.(this, z, owner);
       }
       if (z.ttl <= 0 && !z.dead) {
         z.dead = true;
         if (owner) kitFor(owner.cls).zoneExpire?.(this, z, owner);
-        if (z.kind === 'rune' || z.kind === 'eruption' || z.kind === 'moonPulse' || z.kind === 'nova' || z.kind === 'iceSpike') this.enemyZoneExpire(z);
+        if (z.kind === 'rune' || z.kind === 'eruption' || z.kind === 'moonPulse' || z.kind === 'nova' || z.kind === 'iceSpike' || z.kind === 'moonRay') this.enemyZoneExpire(z);
+        // aviso de pilar: o pilar sobe onde o aviso estava (a.k.a. `a` = duração em s)
+        if (z.kind === 'rockWarn') this.addPillar(z.x, z.y, z.a);
       }
     }
   }
@@ -2145,14 +2255,21 @@ export class World {
     for (const p of this.players.values()) {
       if (p.status !== 0) continue;
       if (dist2(p.x, p.y, z.x, z.y) <= (z.r + p.r) ** 2) {
-        this.hitPlayer(p, { dmg: z.b * mul, heavy: z.kind === 'eruption' || z.kind === 'nova', fromX: z.x, fromY: z.y, enemy: null, proj: null, blockable: false });
+        // raio lunar: pilar entre o chefe e o jogador serve de cobertura
+        if (z.kind === 'moonRay') {
+          if (src && !lineOfSight(this.map, src.x, src.y, p.x, p.y)) continue;
+          // segmentos vizinhos da mesma onda explodem no mesmo tick: um raio fere uma vez só
+          if (this.rayHit.get(p.id) === this.tick) continue;
+          this.rayHit.set(p.id, this.tick);
+        }
+        this.hitPlayer(p, { dmg: z.b * mul, heavy: z.kind === 'eruption' || z.kind === 'nova' || z.kind === 'moonRay', fromX: z.x, fromY: z.y, enemy: null, proj: null, blockable: false });
       }
     }
     for (const m of this.minions.values()) if (m.state !== 'dead' && dist2(m.x, m.y, z.x, z.y) <= (z.r + m.r) ** 2) {
       const attacker = z.owner < 0 ? this.enemies.get(-z.owner) : undefined;
       hitMinion(this, m, z.b, attacker);
     }
-    const fx = z.kind === 'rune' ? 'runeBlast' : z.kind === 'moonPulse' ? 'moonBlast' : z.kind === 'nova' || z.kind === 'iceSpike' ? 'frostBlast' : 'eruptionBlast';
+    const fx = z.kind === 'rune' ? 'runeBlast' : z.kind === 'moonPulse' || z.kind === 'moonRay' ? 'moonBlast' : z.kind === 'nova' || z.kind === 'iceSpike' ? 'frostBlast' : 'eruptionBlast';
     this.emit({ k: 'fx', n: fx, x: z.x, y: z.y, a: 0, o: 0, r: z.r });
   }
 
@@ -2332,8 +2449,15 @@ export class World {
     const dx = t.x - e.x;
     const dy = t.y - e.y;
     const d = Math.hypot(dx, dy) || 1;
-    if ((d < 110 || t.isMinion || t.isPoint) && lineOfSight(this.map, e.x, e.y, t.x, t.y) && circleFree(this.map, e.x + (dx / d) * 10, e.y + (dy / d) * 10, e.r)) {
-      return [dx / d, dy / d];
+    // reta só se o caminho adiante estiver livre também para o corpo (obstáculos baixos não barram a visão,
+    // mas barram o movimento: sondar mais longe evita o vai-e-volta reta/campo na beira deles)
+    const ux = dx / d;
+    const uy = dy / d;
+    const ahead = Math.min(d, e.r + 24);
+    if ((d < 110 || t.isMinion || t.isPoint) && lineOfSight(this.map, e.x, e.y, t.x, t.y)
+      && circleFree(this.map, e.x + ux * 10, e.y + uy * 10, e.r)
+      && circleFree(this.map, e.x + ux * ahead, e.y + uy * ahead, e.r)) {
+      return [ux, uy];
     }
     const f = t.isPoint
       ? this.objectives.pointField
@@ -2342,7 +2466,9 @@ export class World {
         : this.fields.get(t.id);
     const dir = f?.direction(e.x, e.y);
     if (dir && (dir[0] !== 0 || dir[1] !== 0)) return dir;
-    return [dx / d, dy / d];
+    // alvo inalcançável pelo campo: não empurra a parede; só segue em frente se o caminho estiver livre
+    if (d > 40 && !circleFree(this.map, e.x + ux * (e.r + 10), e.y + uy * (e.r + 10), e.r)) return [0, 0];
+    return [ux, uy];
   }
 
   /**
@@ -2361,7 +2487,7 @@ export class World {
     return cur;
   }
 
-  private enemySpeedMul(e: Enemy): number {
+  enemySpeedMul(e: Enemy): number {
     let m = 1;
     if (!e.def.objective) {
       m *= this.chapter.enemies.speedMul;
@@ -2711,6 +2837,7 @@ export class World {
       if (e.cc.slow > 0) f |= ENEMY_FLAGS.slowed;
       if (e.tauntT > 0) f |= ENEMY_FLAGS.taunted;
       if (e.phase >= 2) f |= ENEMY_FLAGS.phase2;
+      if (e.phase >= 3) f |= ENEMY_FLAGS.phase3;
       if (e.cc.pullT > 0) f |= ENEMY_FLAGS.pulled;
       if (e.enraged) f |= ENEMY_FLAGS.enraged;
       if (e.def.tier === 'boss' && bossObjectiveDamageMul(this, e) < 1) f |= ENEMY_FLAGS.shielded;

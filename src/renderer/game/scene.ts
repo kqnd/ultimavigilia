@@ -10,7 +10,7 @@ import { ATK, ENEMIES, ENEMY_TYPES } from '../../shared/config/enemies.js';
 import { EVENT_RULES, CHALLENGE_RULES } from '../../shared/config/objectives.js';
 import { SHOT_HEIGHT, TICK_MS, TILE } from '../../shared/constants.js';
 import { circleFree, lineOfSight } from '../../shared/collision.js';
-import { type ArenaMap, cloneMap, getMap, mapByIndex, setBroken, WORLD_H, WORLD_W } from '../../shared/map.js';
+import { type ArenaMap, cloneMap, getMap, mapByIndex, Obst, setBroken, WORLD_H, WORLD_W } from '../../shared/map.js';
 import type { InputFrame } from '../../shared/movement.js';
 import { ACTIONS, type EnemyTuple, type GameEvent, LOB_KINDS, type MinionTuple, PROJECTILE_KINDS, type ProjTuple, type SnapPlayer, ZONE_KINDS, type ZoneTuple } from '../../shared/protocol.js';
 import { audio } from '../audio.js';
@@ -83,6 +83,8 @@ export class GameScene extends Phaser.Scene {
   private objects: { p: Placed; img: Phaser.GameObjects.Image; bounds: Phaser.Geom.Rectangle }[] = [];
   private animated: { p: Placed; img: Phaser.GameObjects.Image }[] = [];
   private breaks = new Map<number, BreakView>();
+  /** Pilares temporários dos chefes (índice do tile -> sprite). Sólidos também no clone do mapa. */
+  private pillarImgs = new Map<number, Phaser.GameObjects.Image>();
   private minions = new Map<number, MinionView>();
   survivorPosition(): { x: number; y: number } | null {
     const survivor = [...this.minions.values()].find((m) => m.kind === 'survivor');
@@ -212,6 +214,8 @@ export class GameScene extends Phaser.Scene {
     this.animated = [];
     this.glows = [];
     this.breaks.clear();
+    for (const img of this.pillarImgs.values()) img.destroy();
+    this.pillarImgs.clear();
     this.floorImg = this.add.image(0, 0, ensureFloor(this, id)).setOrigin(0, 0).setDepth(-10000);
     const look = CLIMATE_LOOK[this.map.climate];
     for (const p of placeObjects(this.map)) {
@@ -248,6 +252,28 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Pilares de arena dos chefes: sólidos no clone do mapa (colisão/predição) e desenhados como o pilar do mapa. */
+  private applyPillars(pl: readonly number[]): void {
+    const want = new Set(pl);
+    for (const [i, img] of this.pillarImgs) {
+      if (want.has(i)) continue;
+      img.destroy();
+      this.pillarImgs.delete(i);
+      this.map.obst[i] = Obst.None;
+    }
+    for (const i of want) {
+      if (this.pillarImgs.has(i)) continue;
+      this.map.obst[i] = Obst.Pillar;
+      const tx = i % this.map.w;
+      const ty = Math.floor(i / this.map.w);
+      const y = (ty + 1) * TILE - 2;
+      const img = pixelOrigin(this.add.image(Math.round((tx + 0.5) * TILE), y, ...tf('pillar'))).setDepth(y);
+      // sobe do chão
+      this.tweens.add({ targets: img, scaleY: { from: 0.1, to: 1 }, duration: 240, ease: 'Back.easeOut' });
+      this.pillarImgs.set(i, img);
+    }
+  }
+
   // ---------------------------------------------------------------- ciclo da partida
 
   startMatch(): void {
@@ -268,6 +294,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   clearEntities(): void {
+    this.applyPillars([]);
     for (const d of this.debris) d.img.destroy();
     this.debris = [];
     this.shotStarts.clear();
@@ -324,6 +351,7 @@ export class GameScene extends Phaser.Scene {
       this.predictor.active = false;
     }
     this.applyBreaks(s.bk ?? []);
+    this.applyPillars(s.pl ?? []);
     this.storm = s.w.st;
     const me = s.p.find((p) => p.id === this.session.myId);
     if (!me) return;
@@ -1051,6 +1079,14 @@ export class GameScene extends Phaser.Scene {
         f.burst('p_frost', ev.x, ev.y, 14, 100, 0.5);
         audio.play('runeBlast', ev.x, ev.y, 0.6);
         break;
+      case 'pillarRise':
+        f.burst('p_dust', ev.x, ev.y, 14, 90, 0.5, { up: 20 });
+        f.shake(3, 140);
+        break;
+      case 'pillarCrumble':
+        f.burst('p_dust', ev.x, ev.y - 8, 22, 110, 0.6, { up: 30, g: 140 });
+        f.ring(ev.x, ev.y, 4, ev.r, 0xb9a98a, 0.3, 2);
+        break;
       case 'frostBlast':
         f.ring(ev.x, ev.y, 4, ev.r, 0xd8f6ff, 0.35, 3);
         f.burst('p_frost', ev.x, ev.y, 18, 120, 0.5, { up: 30 });
@@ -1251,6 +1287,9 @@ export class GameScene extends Phaser.Scene {
       }
       case 'rain': ring(LIGHT.hunter, 0.25); break;
       case 'leapLand': ring(LIGHT.berserker, 0.4); break;
+      case 'moonRay': disc(LIGHT.ice, 0.1 + (extra > 0 ? (1 - ttl / extra) * 0.22 : 0)); break;
+      case 'frostPatch': if (extra === 0) { ring(LIGHT.ice, 0.4); disc(LIGHT.ice, 0.16); } break;
+      case 'abyssHole': ring(LIGHT.abyss, 0.45); break;
       case 'choke': disc(extra ? LIGHT.mayconFlame : 0x3a4050, extra ? 0.22 : 0.12); ring(extra ? LIGHT.mayconFlame : LIGHT.smoke, 0.18); break;
       case 'brew': {
         const fade = Math.min(1, ttl / 20);

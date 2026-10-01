@@ -668,6 +668,54 @@ export interface RenderEnemy {
   moving: boolean;
 }
 
+/**
+ * Pose procedural por ataque de chefe: elevação em px e escala (sx, sy). `null` = sem pose especial.
+ * Usa só estado + ataque + tempo do snapshot, igual aos telegraphs.
+ */
+function attackPose(r: RenderEnemy): { lift: number; sx: number; sy: number } | null {
+  const st = r.state;
+  if (st !== 'windup' && st !== 'recover') return null;
+  const wind = (n: number): number => Math.min(1, r.stateT / n);
+  const ease = (k: number): number => 1 - (1 - k) * (1 - k);
+  switch (r.atk) {
+    case 'moonRays': {
+      // empina e uiva: sobe durante o aviso e desce devagar na recuperação
+      const k = st === 'windup' ? ease(wind(ATK.moonDevourer.moonRays.windup)) : 1 - wind(ATK.moonDevourer.moonRays.recovery);
+      return { lift: 10 * k, sx: 1 + 0.05 * k, sy: 1 + 0.1 * k };
+    }
+    case 'leap': {
+      // agacha para o salto
+      if (st !== 'windup') return null;
+      const k = ease(wind(ATK.moonDevourer.leap.windup));
+      return { lift: 0, sx: 1 + 0.1 * k, sy: 1 - 0.14 * k };
+    }
+    case 'rift': {
+      // agacha e bate o chão; na recuperação estica de volta
+      const k = st === 'windup' ? ease(wind(ATK.patriarch.rift.windup)) : 0;
+      const up = st === 'recover' ? 1 - wind(ATK.patriarch.rift.recovery) : 0;
+      return { lift: 0, sx: 1 + 0.08 * k, sy: 1 - 0.12 * k + 0.08 * up };
+    }
+    case 'frostField':
+    case 'iceWall': {
+      // a Noiva se eleva e balança enquanto conjura o gelo
+      const k = st === 'windup' ? ease(wind(ATK.frostBride.frostField.windup)) : 1 - wind(ATK.frostBride.frostField.recovery);
+      return { lift: 14 * k + Math.sin(performance.now() / 120) * 2 * k, sx: 1, sy: 1 + 0.04 * k };
+    }
+    case 'pounce': {
+      if (st !== 'windup') return null;
+      const k = ease(wind(ATK.werewolf.pounce.windup));
+      return { lift: 0, sx: 1 + 0.08 * k, sy: 1 - 0.12 * k };
+    }
+    case 'slam': {
+      if (st !== 'windup') return null;
+      const k = ease(wind(ATK.father.slam.windup));
+      return { lift: 3 * k, sx: 1 - 0.04 * k, sy: 1 + 0.08 * k };
+    }
+    default:
+      return null;
+  }
+}
+
 export class EnemyView {
   readonly shadow: Phaser.GameObjects.Image;
   readonly body: Phaser.GameObjects.Image;
@@ -804,6 +852,15 @@ export class EnemyView {
       this.body.setScale(1, 1);
       this.sprung = false;
     }
+    // poses por ataque (chefes/minichefes): ergue, agacha e estica o mesmo sprite, para cada golpe ter leitura própria
+    if ((isBoss || def.miniboss) && !hitstop) {
+      const pose = attackPose(r);
+      if (pose) {
+        lift += pose.lift;
+        if (!springing) this.body.setScale(pose.sx, pose.sy);
+        this.sprung = true;
+      }
+    }
     this.body.setPosition(x + shakeX + Math.round(kbX), y - lift + Math.round(kbY));
     this.body.setDepth(y);
     this.shadow.setPosition(x, y).setDepth(y - 60).setScale(lift > 6 ? Math.max(0.5, 1 - lift / 120) : 1);
@@ -823,6 +880,7 @@ export class EnemyView {
     else if (r.flags & ENEMY_FLAGS.slowed) this.body.setTint(0x9fd8f0).setTintMode(Phaser.TintModes.MULTIPLY);
     else if (r.flags & ENEMY_FLAGS.cursed) this.body.setTint(0xb8d88a).setTintMode(Phaser.TintModes.MULTIPLY);
     else if (r.flags & ENEMY_FLAGS.enraged) this.body.setTint(Math.floor(now / 150) % 2 ? 0xff8080 : 0xffffff).setTintMode(Phaser.TintModes.MULTIPLY);
+    else if (r.flags & ENEMY_FLAGS.phase3) this.body.setTint(Math.floor(now / 260) % 2 ? 0xffb0a0 : 0xffe0d8).setTintMode(Phaser.TintModes.MULTIPLY);
     else this.body.clearTint();
     if (r.state !== 'spawn') {
       // véu de névoa: quase transparente, mas os olhos continuam visíveis

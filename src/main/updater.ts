@@ -252,9 +252,9 @@ export async function downloadUpdate(): Promise<UpdateStatus> {
           reject(new Error('arquivo maior que o esperado'));
           return;
         }
-        // no máximo ~20 avisos por segundo para a interface
+        // no máximo ~7 avisos por segundo para a interface
         const now = Date.now();
-        if (now - lastTick > 50) {
+        if (now - lastTick > 150) {
           lastTick = now;
           setStatus({ state: 'downloading', update: release, received, total: asset.size });
         }

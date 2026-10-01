@@ -71,6 +71,8 @@ export const ENEMY_ATTACKS = [
   'march', 'mistLeap', 'bash',
   /** Ferida Profana (Acólito Sombrio) e canalização contra objetivo (fogueira/altar). */
   'wound', 'siege',
+  /** v1.7 — dinâmica de arena dos chefes: raios lunares, campo de gelo, muralha de gelo e fendas do abismo. */
+  'moonRays', 'frostField', 'iceWall', 'rift',
 ] as const;
 export type EnemyAttackName = (typeof ENEMY_ATTACKS)[number];
 export const enemyAttackCode = (s: EnemyAttackName): number => ENEMY_ATTACKS.indexOf(s);
@@ -108,6 +110,8 @@ export const ENEMY_FLAGS = {
   sliding: 262144,
   /** Marcado pela Visão Sombria do Maycon (+dano recebido). */
   darkSight: 524288,
+  /** v1.7: terceira fase do Devorador da Lua (lua cheia). */
+  phase3: 67108864,
 } as const;
 
 export const PROJECTILE_KINDS = [
@@ -131,6 +135,8 @@ export const ZONE_KINDS = [
   'choke', 'brew',
   /** Jota: bomba de medo (Modo Batman) e a sombra do Rewind (posição de 3 s atrás). */
   'fear', 'rewind',
+  /** v1.7 — chefes: raio lunar (explode no fim do aviso), aviso de pilar, mancha de gelo e fenda do abismo (persistentes). */
+  'moonRay', 'rockWarn', 'frostPatch', 'abyssHole',
 ] as const;
 export type ZoneKind = (typeof ZONE_KINDS)[number];
 
@@ -427,6 +433,8 @@ export type ServerMessage =
       m: MinionTuple[];
       it: PickupTuple[];
       bk: BreakTuple[];
+      /** Pilares temporários de arena (índices de tile, sólidos no clone do mapa). */
+      pl?: number[];
       pr: ProjTuple[];
       z: ZoneTuple[];
       ev: GameEvent[];

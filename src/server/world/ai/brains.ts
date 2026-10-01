@@ -12,7 +12,7 @@ import { angleDiff, dist } from '../../../shared/math.js';
 import { countObjectives } from '../objectives.js';
 import type { Enemy, Player, Target } from '../types.js';
 import type { World } from '../world.js';
-import { aiSkill } from '../../../shared/config/enemyAI.js';
+import { aiSkill, FAIR } from '../../../shared/config/enemyAI.js';
 import { claimAttack } from './context.js';
 import { approachDir, locomote, steer } from './steer.js';
 import { type AttackOption, kiteHeat, pickOption, ramp, window4 } from './utility.js';
@@ -118,6 +118,9 @@ function airVelocity(e: Enemy, remaining: number): [number, number] {
   return [((e.tx - e.x) / remaining) * 30, ((e.ty - e.y) / remaining) * 30];
 }
 
+/** Duração dos pilares levantados pelos minichefes (s). */
+const MINIBOSS_PILLAR_SECONDS = 8;
+
 // ---------------------------------------------------------------- comuns
 
 const shambler: Brain = {
@@ -203,6 +206,11 @@ const werewolf: Brain = {
           // minichefe: telegraph mais longo e atordoamento breve no impacto
           w.enemyCircle(e, e.tx, e.ty, lr, P.damage, true, false, e.def.miniboss ? P.minibossStun : 0);
           w.emit({ k: 'fx', n: 'land', x: e.tx, y: e.ty, a: 0, o: 0, r: lr });
+          // Lobo Alfa: o impacto levanta entulho dos dois lados do pouso (cobertura/obstáculo por alguns segundos)
+          if (e.def.miniboss) {
+            const side = Math.atan2(e.ty - e.y, e.tx - e.x) + Math.PI / 2;
+            for (const s of [-1, 1]) warnPillar(w, e, e.tx + Math.cos(side) * s * (lr + 26), e.ty + Math.sin(side) * s * (lr + 26), 14, MINIBOSS_PILLAR_SECONDS);
+          }
           w.setEnemyState(e, 'recover');
           setCd(e, 'pounce', P.cooldown);
         }
@@ -256,9 +264,11 @@ const acolyte: Brain = {
       if (e.atk === 'orb') {
         const t = w.players.get(e.targetId);
         if (t && t.status === 0 && e.stateT < need - 6) {
-          e.tx = t.x;
-          e.ty = t.y;
-          faceTo(e, t.x, t.y);
+          // mira com antecipação curta do movimento atual: cresce com a onda (aiSkill) e nunca passa de FAIR.maxLead
+          const lead = Math.min(FAIR.maxLead, t.base.speed * 0.3 * aiSkill(w.wave));
+          e.tx = t.x + t.last.mx * lead;
+          e.ty = t.y + t.last.my * lead;
+          faceTo(e, e.tx, e.ty);
         }
       }
       if (e.stateT >= need) {
@@ -314,6 +324,18 @@ const acolyte: Brain = {
         w.startEnemyAttack(e, 'rune', t.x, t.y);
         const z = w.addZone({ kind: 'rune', x: t.x, y: t.y, r: R.radius * (e.type === 'highAcolyte' ? 1.4 : 1), ttl: R.windup, owner: -e.id, b: R.damage * w.edm(e) });
         z.extra = R.windup;
+        // Acólito Supremo: trilha de runas em sequência (1-2-3) afastando-se dele; obriga a sair do caminho em vez de só do ponto
+        if (e.type === 'highAcolyte') {
+          const a = Math.atan2(t.y - e.y, t.x - e.x);
+          for (let i = 1; i <= 2; i++) {
+            const x = t.x + Math.cos(a) * i * 58;
+            const y = t.y + Math.sin(a) * i * 58;
+            if (!circleFree(w.map, x, y, 6)) break;
+            const ttl = R.windup + i * 12;
+            const rz = w.addZone({ kind: 'rune', x, y, r: R.radius * 1.1, ttl, owner: -e.id, b: R.damage * w.edm(e) });
+            rz.extra = ttl;
+          }
+        }
         e.counter++;
         return STILL;
       }
@@ -335,7 +357,17 @@ const father: Brain = {
     if (e.atk === 'slam' && e.state !== 'move') {
       // Pai Ancestral: telegraph mais longo e atordoamento breve
       meleeRoutine(w, e, e.def.miniboss ? { ...S, windup: S.minibossWindup } : S, true, e.def.miniboss ? S.minibossStun : 0);
-      if (e.state === 'active' && e.stateT === 1) w.emit({ k: 'fx', n: 'slam', x: e.x + Math.cos(e.facing) * 20, y: e.y + Math.sin(e.facing) * 20, a: e.facing, o: 0, r: S.range });
+      if (e.state === 'active' && e.stateT === 1) {
+        w.emit({ k: 'fx', n: 'slam', x: e.x + Math.cos(e.facing) * 20, y: e.y + Math.sin(e.facing) * 20, a: e.facing, o: 0, r: S.range });
+        // Pai Ancestral: a pancada ergue pilares de osso à frente (fecham o espaço de fuga em linha reta)
+        if (e.def.miniboss) {
+          for (const s of [-1, 1]) {
+            const px = e.x + Math.cos(e.facing) * (S.range + 46) - Math.sin(e.facing) * s * 34;
+            const py = e.y + Math.sin(e.facing) * (S.range + 46) + Math.cos(e.facing) * s * 34;
+            warnPillar(w, e, px, py, 14, MINIBOSS_PILLAR_SECONDS);
+          }
+        }
+      }
       if (e.state === 'recover' && e.stateT === 1) setCd(e, 'slam', S.cooldown);
       return STILL;
     }
@@ -407,6 +439,73 @@ function pushPlayersAway(w: World, x: number, y: number, radius: number, speed: 
   }
 }
 
+// ---------------------------------------------------------------- dinâmica de arena (v1.7)
+
+/** Ponto livre perto de (cx,cy), sorteado pela semente da partida (determinístico). */
+function scatterPoint(w: World, cx: number, cy: number, radius: number): { x: number; y: number } {
+  for (let k = 0; k < 8; k++) {
+    const a = w.rng.next() * Math.PI * 2;
+    const d = Math.sqrt(w.rng.next()) * radius;
+    const x = cx + Math.cos(a) * d;
+    const y = cy + Math.sin(a) * d;
+    if (circleFree(w.map, x, y, 18)) return { x, y };
+  }
+  return { x: cx, y: cy };
+}
+
+/** Aviso de pilar: sobe um pilar de pedra onde o aviso estava, depois de `delay` ticks, por `seconds`. */
+function warnPillar(w: World, e: Enemy, x: number, y: number, delay: number, seconds: number): void {
+  const z = w.addZone({ kind: 'rockWarn', x, y, r: 18, ttl: delay, owner: -e.id });
+  z.extra = delay;
+  z.a = seconds;
+}
+
+/** Hazard persistente (mancha/fenda): `warn` ticks de aviso, depois ativo por `activeSeconds`. */
+function addHazard(w: World, e: Enemy, kind: 'frostPatch' | 'abyssHole', x: number, y: number, r: number, warn: number, activeSeconds: number, tickEvery: number, dmg: number): void {
+  const z = w.addZone({ kind, x, y, r, ttl: warn + sec(activeSeconds), owner: -e.id, b: dmg * w.edm(e) });
+  z.extra = warn; // ticks de aviso restantes (zera quando fica ativo)
+  z.a = tickEvery;
+}
+
+const moonRayWaves = (e: Enemy): number => (e.phase >= 3 ? 3 : e.phase >= 2 ? 2 : 1);
+
+/** Raios Lunares: pilares-cobertura sobem primeiro; depois raios em estrela explodem (2 ondas na fase 2). */
+function startMoonRays(w: World, e: Enemy, t: Target): void {
+  const R = ATK.moonDevourer.moonRays;
+  const phase2 = e.phase >= 2;
+  const phase3 = e.phase >= 3;
+  w.startEnemyAttack(e, 'moonRays', t.x, t.y);
+  const players = w.alivePlayers();
+  for (let i = 0; i < (phase3 ? R.phase3Pillars : R.pillars); i++) {
+    const p = players[i % Math.max(1, players.length)] ?? t;
+    const a = Math.atan2(p.y - e.y, p.x - e.x);
+    const d = Math.min(R.pillarRing[1], Math.max(R.pillarRing[0], dist(e.x, e.y, p.x, p.y) * 0.5));
+    const jitter = (i >= players.length ? 1 : 0.4) * (w.rng.next() - 0.5) * 90;
+    const px = e.x + Math.cos(a) * d - Math.sin(a) * jitter;
+    const py = e.y + Math.sin(a) * d + Math.cos(a) * jitter;
+    warnPillar(w, e, px, py, R.pillarDelay, R.pillarSeconds);
+  }
+  const rays = phase3 ? R.phase3Rays : phase2 ? R.phase2Rays : R.rays;
+  const base = Math.atan2(t.y - e.y, t.x - e.x);
+  const step = R.length / R.segments;
+  const waves = moonRayWaves(e);
+  for (let wave = 0; wave < waves; wave++) {
+    const ttl = R.windup + wave * 22;
+    // ondas seguintes: raios nos vãos das anteriores (quem ficou no "seguro" precisa se mexer)
+    const off = base + (wave * (Math.PI * 2 / rays)) / waves;
+    for (let i = 0; i < rays; i++) {
+      const a = off + (i / rays) * Math.PI * 2;
+      for (let k = 1; k <= R.segments; k++) {
+        const x = e.x + Math.cos(a) * step * k;
+        const y = e.y + Math.sin(a) * step * k;
+        if (!circleFree(w.map, x, y, 4)) break; // o raio para na parede
+        const z = w.addZone({ kind: 'moonRay', x, y, r: R.width / 2 + 2, ttl, owner: -e.id, b: R.damage * w.edm(e) });
+        z.extra = ttl;
+      }
+    }
+  }
+}
+
 const moonDevourer: Brain = {
   tick(w, e) {
     const A = ATK.moonDevourer;
@@ -419,6 +518,16 @@ const moonDevourer: Brain = {
       e.atk = 'howl';
       w.emit({ k: 'boss', et: e.typeIdx, ph: 2 });
       w.emit({ k: 'sfx', n: 'howl', x: e.x, y: e.y });
+      return STILL;
+    }
+    // fase 3: lua cheia — mais raios, em 3 ondas
+    if (e.phase === 2 && e.hp <= e.maxHp * A.phase3At && e.state === 'move') {
+      e.phase = 3;
+      w.setEnemyState(e, 'roar');
+      e.atk = 'howl';
+      w.emit({ k: 'boss', et: e.typeIdx, ph: 3 });
+      w.emit({ k: 'sfx', n: 'howl', x: e.x, y: e.y });
+      e.cds.moonRays = 0;
       return STILL;
     }
     if (e.state === 'roar') {
@@ -497,6 +606,19 @@ const moonDevourer: Brain = {
       }
       return STILL;
     }
+    if (e.atk === 'moonRays' && e.state !== 'move') {
+      e.stateT++;
+      const R = A.moonRays;
+      if (e.state === 'windup' && e.stateT >= R.windup) {
+        w.setEnemyState(e, 'recover');
+        w.emit({ k: 'fx', n: 'howl', x: e.x, y: e.y, a: 0, o: 0, r: 70 });
+      } else if (e.state === 'recover' && e.stateT >= R.recovery + (moonRayWaves(e) - 1) * 22) {
+        w.setEnemyState(e, 'move');
+        e.atk = 'none';
+        setCd(e, 'moonRays', R.cooldown * (e.phase >= 3 ? R.phase3CooldownMul : 1));
+      }
+      return STILL;
+    }
     if (e.atk === 'crescent' && e.state !== 'move') {
       e.stateT++;
       const C = A.crescent;
@@ -525,8 +647,14 @@ const moonDevourer: Brain = {
       { atk: 'crescent', ready: phase2 && ready(e, 'crescent'), score: d < A.crescent.radius + 10 ? 0.62 + 0.12 * Math.min(3, nearC) : 0 },
       { atk: 'claws', ready: ready(e, 'claws'), score: d < A.claws.range + 10 ? 0.7 + 0.2 * closeness : 0 },
       { atk: 'leap', ready: ready(e, 'leap'), score: Math.min(1, Math.max(ramp(d, 100, 260) * 0.72, e.progressT > 60 ? 0.7 : 0) + 0.3 * heat + (e.desperate ? 0.1 : 0)) },
+      // dinâmica de arena: cobertura de pedra + raios em estrela; pune quem fica parado de longe
+      { atk: 'moonRays', ready: ready(e, 'moonRays'), score: 0.82 + 0.06 * Math.min(3, w.alivePlayers().length - 1) + 0.15 * heat + 0.08 * ramp(d, 60, 220) },
     ];
     const pick = pickOption(w, e, opts);
+    if (pick?.atk === 'moonRays') {
+      startMoonRays(w, e, t);
+      return STILL;
+    }
     if (pick?.atk === 'crescent') {
       w.startEnemyAttack(e, 'crescent', e.x, e.y);
       return STILL;
@@ -550,6 +678,26 @@ function startLeap(w: World, e: Enemy, t: Target): void {
   w.startEnemyAttack(e, 'leap', lp.x, lp.y);
   const z = w.addZone({ kind: 'leapMark', x: lp.x, y: lp.y, r: A.radius, ttl: A.windup + A.airTicks, owner: -e.id });
   z.extra = A.windup + A.airTicks;
+}
+
+/** Fendas do Abismo: uma sobre cada jogador (com antecipação leve) e o resto espalhado pela arena. */
+function startRift(w: World, e: Enemy, t: Target): void {
+  const F = ATK.patriarch.rift;
+  w.startEnemyAttack(e, 'rift', t.x, t.y);
+  const n = e.phase >= 2 ? F.phase2Holes : F.holes;
+  const players = w.alivePlayers();
+  const spots: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = players[i];
+    if (p) spots.push({ x: p.x + p.last.mx * 22, y: p.y + p.last.my * 22 });
+    else spots.push(scatterPoint(w, (e.x + t.x) / 2, (e.y + t.y) / 2, F.scatter));
+  }
+  for (const s of spots) {
+    // não sobrepõe outra fenda
+    if (spots.some((o) => o !== s && o.x === s.x && o.y === s.y)) continue;
+    if (!circleFree(w.map, s.x, s.y, 10)) continue;
+    addHazard(w, e, 'abyssHole', s.x, s.y, F.radius, F.warn, F.activeSeconds, F.tickEvery, F.tickDamage);
+  }
 }
 
 const patriarch: Brain = {
@@ -651,6 +799,17 @@ const patriarch: Brain = {
           }
           break;
         }
+        case 'rift': {
+          const F = A.rift;
+          if (e.state === 'windup' && e.stateT >= F.windup) {
+            w.setEnemyState(e, 'recover');
+            w.emit({ k: 'fx', n: 'abyssBurst', x: e.x, y: e.y, a: 0, o: 0, r: 60 });
+          } else if (e.state === 'recover' && e.stateT >= F.recovery) {
+            w.setEnemyState(e, 'move');
+            setCd(e, 'rift', F.cooldown);
+          }
+          break;
+        }
         case 'dash': {
           const D = A.dash;
           if (e.state === 'windup' && e.stateT >= D.windup) {
@@ -690,8 +849,14 @@ const patriarch: Brain = {
       { atk: 'burst', ready: phase2 && ready(e, 'burst'), score: 0.3 + 0.35 * window4(d, 80, 140, 300, 420) + 0.1 * others },
       { atk: 'eruption', ready: ready(e, 'eruption'), score: 0.5 + 0.2 * ramp(d, 60, 200) + 0.08 * others + 0.12 * heat },
       { atk: 'summon', ready: e.summonsLeft > 0 && minions < A.summon.maxAlive && ready(e, 'summon'), score: 0.45 + 0.35 * ramp(d, 90, 200) },
+      // terreno: fendas que puxam e ferem; pune quem fica parado e tira o espaço de manobra
+      { atk: 'rift', ready: ready(e, 'rift'), score: 0.5 + 0.08 * others + 0.12 * heat + (phase2 ? 0.08 : 0) },
     ];
     const pick = pickOption(w, e, opts);
+    if (pick?.atk === 'rift') {
+      startRift(w, e, t);
+      return STILL;
+    }
     if (pick) {
       const self = pick.atk === 'burst' || pick.atk === 'summon';
       w.startEnemyAttack(e, pick.atk as 'sweep', self ? e.x : t.x, self ? e.y : t.y);
@@ -772,6 +937,26 @@ const frostBride: Brain = {
           }
           break;
         }
+        case 'frostField': {
+          const F = A.frostField;
+          if (e.state === 'windup' && e.stateT >= F.windup) w.setEnemyState(e, 'recover');
+          else if (e.state === 'recover' && e.stateT >= F.recovery) {
+            w.setEnemyState(e, 'move');
+            setCd(e, 'frostField', F.cooldown);
+          }
+          break;
+        }
+        case 'iceWall': {
+          const F = A.iceWall;
+          if (e.state === 'windup' && e.stateT >= F.windup) {
+            w.setEnemyState(e, 'recover');
+            w.emit({ k: 'fx', n: 'frostBlast', x: e.x, y: e.y, a: 0, o: 0, r: 60 });
+          } else if (e.state === 'recover' && e.stateT >= F.recovery) {
+            w.setEnemyState(e, 'move');
+            setCd(e, 'iceWall', F.cooldown);
+          }
+          break;
+        }
         case 'frostSummon': {
           const F = A.summon;
           if (e.state === 'windup' && e.stateT >= F.windup) {
@@ -803,8 +988,36 @@ const frostBride: Brain = {
       { atk: 'frostSummon', ready: phase2 && ready(e, 'frostSummon') && minions < A.summon.maxAlive, score: 0.5 + 0.3 * ramp(d, 80, 160) },
       // projétil: resposta a quem fica longe/fustiga de fora
       { atk: 'shards', ready: ready(e, 'shards') && d < A.shards.range && los, score: 0.42 + 0.18 * ramp(d, 90, 200) + 0.35 * heat },
+      // terreno: manchas de gelo no chão e muralha de pilares que divide a arena
+      { atk: 'frostField', ready: ready(e, 'frostField'), score: 0.46 + 0.08 * Math.min(3, w.alivePlayers().length - 1) + 0.15 * heat },
+      { atk: 'iceWall', ready: ready(e, 'iceWall') && los && d > 90 && d < 320, score: 0.44 + 0.25 * ramp(d, 100, 220) + 0.2 * heat },
     ];
     const pick = pickOption(w, e, opts);
+    if (pick?.atk === 'frostField') {
+      const F = A.frostField;
+      w.startEnemyAttack(e, 'frostField', t.x, t.y);
+      const n = phase2 ? F.phase2Patches : F.patches;
+      const players = w.alivePlayers();
+      for (let i = 0; i < n; i++) {
+        const p = players[i];
+        const s = p ? { x: p.x + p.last.mx * 20, y: p.y + p.last.my * 20 } : scatterPoint(w, (e.x + t.x) / 2, (e.y + t.y) / 2, F.scatter);
+        if (!circleFree(w.map, s.x, s.y, 10)) continue;
+        addHazard(w, e, 'frostPatch', s.x, s.y, F.radius, F.warn, F.activeSeconds, F.tickEvery, F.tickDamage);
+      }
+      return STILL;
+    }
+    if (pick?.atk === 'iceWall') {
+      const F = A.iceWall;
+      w.startEnemyAttack(e, 'iceWall', t.x, t.y);
+      const a = Math.atan2(t.y - e.y, t.x - e.x);
+      const cx = e.x + Math.cos(a) * F.ahead;
+      const cy = e.y + Math.sin(a) * F.ahead;
+      for (let i = 0; i < F.pillars; i++) {
+        const off = (i - (F.pillars - 1) / 2) * F.spacing;
+        warnPillar(w, e, cx - Math.sin(a) * off, cy + Math.cos(a) * off, F.delay, F.pillarSeconds);
+      }
+      return STILL;
+    }
     if (pick?.atk === 'nova') {
       w.startEnemyAttack(e, 'nova', e.x, e.y);
       const z = w.addZone({ kind: 'nova', x: e.x, y: e.y, r: A.nova.radius, ttl: A.nova.windup, owner: -e.id, b: A.nova.damage * w.edm(e) });
@@ -920,6 +1133,12 @@ function moveToward(w: World, e: Enemy, x: number, y: number, speed: number, fal
   const nx = e.x + ((x - e.x) / d) * step;
   const ny = e.y + ((y - e.y) / d) * step;
   if (circleFree(w.map, nx, ny, e.r)) return [((x - e.x) / d) * speed, ((y - e.y) / d) * speed];
+  // ponto de cobertura bloqueado: descarta (quem chama recalcula) e sai do lugar sem correr para o jogador
+  if (e.type === 'shadowAcolyte') {
+    e.coverX = e.x;
+    e.coverY = e.y;
+    return STILL;
+  }
   return chase(w, e, fallback, speed);
 }
 
@@ -1291,7 +1510,8 @@ const mistStalkerMove = (w: World, e: Enemy): [number, number] => {
       const fy = Math.sin(base);
       if (circleFree(w.map, e.x + fx * 14, e.y + fy * 14, e.r)) {
         faceTo(e, t.x, t.y);
-        return [fx * sp, fy * sp];
+        // pelo steer: separação entre Caçadores, zonas perigosas e desatolar
+        return steer(w, e, [fx, fy], sp, { face: 'keep' });
       }
     }
     return chase(w, e, t, sp);

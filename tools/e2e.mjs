@@ -617,6 +617,75 @@ scenarios.boss = async () => {
   await app.close();
 };
 
+// v1.7: lobby cheio (6 jogadores, 10 classes) — a lista de jogadores precisa caber no painel. Uso: lobbyfull <pasta>
+scenarios.lobbyfull = async () => {
+  const { app, page, logs } = await launch('lobby-full');
+  try {
+    await sleep(800);
+    await setName(page, 'Álex');
+    await clickText(page, 'Jogar sozinho');
+    await page.waitForSelector('.classcard', { timeout: 15000 });
+    await page.evaluate(() => {
+      const { session, app } = window.__app;
+      const cls = ['hunter', 'tank', 'mage', 'berserker', 'necromancer', 'vampire'];
+      session.solo = false;
+      session.maxPlayers = 6;
+      session.lobby = cls.map((c, i) => ({ id: i + 1, name: i === 0 ? 'AnfitriãoLongo' : `Jogador${i + 1}`, cls: c, ready: i % 2 === 0, host: i === 0, conn: i !== 4 }));
+      session.myId = 2;
+      app.renderLobby();
+    });
+    await sleep(500);
+    await shot(page, 'lobby-full');
+    const overflow = await page.evaluate(() => {
+      const panel = document.querySelector('.panel');
+      const kids = [...panel.children].map((c) => c.getBoundingClientRect().bottom);
+      return { panelBottom: panel.getBoundingClientRect().bottom, maxChildBottom: Math.max(...kids) };
+    });
+    console.log('lobby:', JSON.stringify(overflow));
+    assert.ok(overflow.maxChildBottom <= overflow.panelBottom + 1, 'a lista de jogadores não pode sair do painel');
+  } finally {
+    await app.close();
+  }
+};
+
+// v1.7: observa os snapshots durante a luta e fotografa a primeira vez que cada mecânica de arena aparece
+// (raio lunar, aviso de pilar, pilar sólido, mancha de gelo, fenda). Uso: arena <pasta> <onda> [segundos]
+scenarios.arena = async () => {
+  const wave = Number(rest[0] ?? 10);
+  const secs = Number(rest[1] ?? 70);
+  const { app, page, logs } = await launch(`arena-${wave}`);
+  try {
+    await soloStart(page, 'hunter');
+    await dbg(page, 'god');
+    await dbg(page, 'wave', wave);
+    await page.waitForFunction((n) => window.__app.session.latest()?.w.n === n && !!window.__app.session.latest()?.w.intro, wave, { timeout: 25000 });
+    await page.waitForSelector('#boss-intro', { state: 'detached', timeout: 15000 });
+    const names = { 24: 'moonRay', 25: 'rockWarn', 26: 'frostPatch', 27: 'abyssHole' };
+    const seen = new Set();
+    const end = Date.now() + secs * 1000;
+    while (Date.now() < end) {
+      const found = await page.evaluate((names) => {
+        const s = window.__app.session.latest();
+        const kinds = new Set((s?.z ?? []).map((z) => names[z[1]]).filter(Boolean));
+        if ((s?.pl ?? []).length) kinds.add('pillar');
+        return [...kinds];
+      }, names);
+      for (const k of found) {
+        if (seen.has(k)) continue;
+        seen.add(k);
+        await sleep(350);
+        await shot(page, `arena${wave}-${k}`);
+      }
+      await sleep(250);
+    }
+    console.log('mecânicas vistas:', [...seen].join(', ') || 'nenhuma');
+    fs.writeFileSync(path.join(out, `logs-arena${wave}.txt`), logs.join('\n'));
+    if (logs.some((l) => l.includes('[pageerror]'))) throw new Error(logs.filter((l) => l.includes('[pageerror]')).join('\n'));
+  } finally {
+    await app.close();
+  }
+};
+
 scenarios.bossintro = async () => {
   const wave = Number(rest[0] ?? 10);
   const { app, page, logs } = await launch(`boss-intro-${wave}`);

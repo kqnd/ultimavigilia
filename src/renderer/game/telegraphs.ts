@@ -206,6 +206,20 @@ export function drawTelegraph(g: Phaser.GameObjects.Graphics, e: RenderEnemy, r:
     case 'bash':
       sector(g, e.x, e.y, ATK.ossuaryBearer.bash.range + r * 0.5, e.facing, ATK.ossuaryBearer.bash.arc, t / ATK.ossuaryBearer.bash.windup, RED_HOT, true);
       return true;
+    case 'moonRays': {
+      // o aviso está nas zonas; no chefe, anel de luar que se contrai até o disparo
+      const R = ATK.moonDevourer.moonRays;
+      const k = Math.min(1, t / R.windup);
+      g.lineStyle(2, pulse ? 0xffffff : 0x9ad4ff, 0.9).strokeCircle(e.x, e.y - 12, 44 - k * 22);
+      return true;
+    }
+    case 'frostField':
+    case 'iceWall':
+      g.lineStyle(2, pulse ? 0xffffff : ICE, 0.9).strokeCircle(e.x, e.y - 12, 16 + (t % 14));
+      return true;
+    case 'rift':
+      g.lineStyle(2, pulse ? 0xffffff : 0xe07cff, 0.9).strokeCircle(e.x, e.y - 8, 18 + (t % 16));
+      return true;
     case 'leap':
     case 'eruption':
       return false;
@@ -385,6 +399,66 @@ export function drawZone(g: Phaser.GameObjects.Graphics, z: ZoneTuple, now: numb
     case 'leapLand': {
       const prog = extra > 0 ? 1 - ttl / extra : 0;
       circle(g, x, y, r, prog, 0xd9512c);
+      break;
+    }
+    case 'moonRay': {
+      // segmento de um raio lunar: tira luminosa que enche até o disparo (sem contorno, para parecer um feixe contínuo)
+      const prog = extra > 0 ? 1 - ttl / extra : 0;
+      g.fillStyle(0x9ad4ff, 0.1 + 0.22 * prog).fillCircle(x, y, r);
+      g.fillStyle(0xffffff, 0.1 + 0.5 * prog * prog).fillCircle(x, y, r * 0.45);
+      if (prog > 0.85 && pulse) g.fillStyle(0xffffff, 0.45).fillCircle(x, y, r);
+      break;
+    }
+    case 'rockWarn': {
+      // tile onde um pilar vai subir: contorno quadrado + poeira subindo
+      const prog = extra > 0 ? 1 - ttl / extra : 0;
+      const tx = Math.floor(x / 32) * 32;
+      const ty = Math.floor(y / 32) * 32;
+      g.fillStyle(0xb9a98a, 0.12 + 0.28 * prog).fillRect(tx, ty, 32, 32);
+      g.lineStyle(prog > 0.8 ? 2 : 1, prog > 0.8 ? 0xffffff : 0xd9c9a6, 0.9).strokeRect(tx + 1, ty + 1, 30, 30);
+      for (let i = 0; i < 4; i++) {
+        const k = (now / 500 + i / 4) % 1;
+        g.fillStyle(0xd9c9a6, 0.6 * (1 - k)).fillRect(tx + 4 + i * 7, Math.round(ty + 28 - k * 18), 2, 2);
+      }
+      break;
+    }
+    case 'frostPatch': {
+      const warn = ATK.frostBride.frostField.warn;
+      if (extra > 0) {
+        // aviso: círculo que enche antes de congelar o chão
+        circle(g, x, y, r, 1 - extra / warn, ICE);
+        break;
+      }
+      // ativo: gelo no chão (cintila e fica mais fraco nos últimos instantes)
+      const fade = Math.min(1, ttl / 20);
+      g.fillStyle(0x6fb8e0, 0.3 * fade).fillCircle(x, y, r);
+      g.fillStyle(0xd8f6ff, 0.12 * fade).fillCircle(x, y, r * 0.65);
+      g.lineStyle(2, 0xd8f6ff, (pulse ? 0.9 : 0.55) * fade).strokeCircle(x, y, r);
+      for (let i = 0; i < 12; i++) {
+        const a = i * 2.4 + now / 2500;
+        const d = ((i * 37) % 100) / 100;
+        g.fillStyle(0xffffff, (0.5 + 0.4 * Math.sin(now / 200 + i)) * fade).fillRect(Math.round(x + Math.cos(a) * r * d), Math.round(y + Math.sin(a) * r * d * 0.8), 2, 2);
+      }
+      break;
+    }
+    case 'abyssHole': {
+      const warn = ATK.patriarch.rift.warn;
+      if (extra > 0) {
+        circle(g, x, y, r, 1 - extra / warn, 0x9a2cc0);
+        break;
+      }
+      // ativa: buraco escuro com rebordo roxo e partículas sendo sugadas para o centro
+      const fade = Math.min(1, ttl / 20);
+      g.fillStyle(0x07030f, 0.88 * fade).fillCircle(x, y, r);
+      g.fillStyle(0x2a0a3a, 0.7 * fade).fillCircle(x, y, r * 0.55);
+      g.lineStyle(3, 0xe07cff, (pulse ? 0.95 : 0.65) * fade).strokeCircle(x, y, r);
+      g.lineStyle(1, 0x9a2cc0, 0.8 * fade).strokeCircle(x, y, r * 0.6);
+      for (let i = 0; i < 14; i++) {
+        const k = (now / 1000 + i / 14) % 1;
+        const a = i * 0.9 + k * 4;
+        const d = r * (1 - k);
+        g.fillStyle(0xe07cff, 0.8 * (1 - k) * fade).fillRect(Math.round(x + Math.cos(a) * d), Math.round(y + Math.sin(a) * d * 0.85), 2, 2);
+      }
       break;
     }
     case 'assaultWarn':
